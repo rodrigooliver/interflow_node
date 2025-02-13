@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase.js';
+import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
 import { findExistingChat } from './utils.js';
 
@@ -6,6 +7,16 @@ export async function handleIncomingMessage(channel, webhookData) {
   const { organization } = channel;
   
   try {
+    // Start a new transaction for error tracking
+    const transaction = Sentry.startTransaction({
+      name: 'handle-incoming-message',
+      op: 'message.incoming',
+      data: {
+        channelType: channel.type,
+        organizationId: organization.id
+      }
+    });
+
     // Check if customer exists
     let { data: customer } = await supabase
       .from('customers')
@@ -61,7 +72,15 @@ export async function handleIncomingMessage(channel, webhookData) {
         }
       });
 
+    // Finish the transaction
+    transaction.finish();
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channel,
+        webhookData
+      }
+    });
     console.error('Error handling incoming message:', error);
     throw error;
   }
@@ -69,6 +88,16 @@ export async function handleIncomingMessage(channel, webhookData) {
 
 export async function handleStatusUpdate(channel, webhookData) {
   try {
+    // Start a new transaction for error tracking
+    const transaction = Sentry.startTransaction({
+      name: 'handle-status-update',
+      op: 'message.status',
+      data: {
+        channelType: channel.type,
+        status: webhookData.status
+      }
+    });
+
     // Update message status based on webhook data
     const { data: message } = await supabase
       .from('messages')
@@ -85,7 +114,16 @@ export async function handleStatusUpdate(channel, webhookData) {
         })
         .eq('id', message.id);
     }
+
+    // Finish the transaction
+    transaction.finish();
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channel,
+        webhookData
+      }
+    });
     console.error('Error handling status update:', error);
     throw error;
   }
