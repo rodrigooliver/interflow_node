@@ -1,10 +1,13 @@
 import express from 'express';
-import { handleWapiWebhook } from '../controllers/channels/wapi.js';
+import { handleWapiWebhook, testWapiConnection } from '../controllers/channels/wapi.js';
 import { handleWhatsAppOfficialWebhook } from '../controllers/channels/whatsapp-official.js';
 import { handleInstagramWebhook } from '../controllers/channels/instagram.js';
 import { handleFacebookWebhook } from '../controllers/channels/facebook.js';
 
 const router = express.Router();
+
+// WhatsApp WApi test connection
+router.post('/wapi/test', testWapiConnection);
 
 // WhatsApp WApi webhook handler
 router.post('/wapi/:channelId', handleWapiWebhook);
