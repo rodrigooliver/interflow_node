@@ -1,0 +1,170 @@
+# Interflow Backend
+
+Backend service for Interflow - A multi-channel customer service and CRM platform.
+
+## Overview
+
+Interflow's backend service handles:
+- Multi-channel messaging (WhatsApp, Facebook, Instagram, Email)
+- Real-time chat functionality
+- File attachments and media handling
+- Webhook processing for various messaging platforms
+- Payment processing with Stripe
+- Email integration with IMAP/SMTP
+
+## Technologies
+
+- Node.js
+- Express.js
+- Supabase (PostgreSQL + Real-time)
+- Stripe for payments
+- IMAP/SMTP for email integration
+- WebSocket for real-time updates
+
+## Prerequisites
+
+- Node.js 18+
+- PostgreSQL 15+
+- Supabase project
+- Stripe account (for payments)
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```env
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Supabase
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_KEY=your_supabase_service_key
+
+# Stripe
+STRIPE_SECRET_KEY=your_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+
+# Storage
+STORAGE_BUCKET=attachments
+MAX_FILE_SIZE=10485760 # 10MB in bytes
+```
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/rodrigooliver/interflow_node.git
+```
+
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+4. Start the development server:
+```bash
+npm run dev
+```
+
+## API Routes
+
+### Messaging Webhooks
+- `POST /api/webhook/wapi/:channelId` - WhatsApp WApi webhook
+- `POST /api/webhook/whatsapp-official/:channelId` - WhatsApp Business API webhook
+- `POST /api/webhook/instagram/:channelId` - Instagram webhook
+- `POST /api/webhook/facebook/:channelId` - Facebook webhook
+
+### Email Integration
+- `POST /api/test-email-connection` - Test IMAP/SMTP connection
+
+### Payments (Stripe)
+- `POST /api/stripe/create-checkout-session` - Create payment checkout session
+- `POST /api/stripe/create-portal-session` - Create customer portal session
+- `POST /api/stripe/webhook` - Stripe webhook handler
+
+## Features
+
+### Multi-Channel Support
+- WhatsApp Business API
+- WhatsApp WApi
+- WhatsApp ZApi
+- WhatsApp Evolution API
+- Instagram Direct Messages
+- Facebook Messenger
+- Email (IMAP/SMTP)
+
+### Real-time Messaging
+- Message delivery status
+- Read receipts
+- Typing indicators
+- Online/offline status
+
+### File Handling
+- Image uploads
+- Document attachments
+- Voice messages
+- Video messages
+
+### Email Integration
+- IMAP polling
+- SMTP sending
+- Email threading
+- Attachment handling
+
+### Payment Processing
+- Subscription management
+- Usage-based billing
+- Payment history
+- Invoice generation
+
+## Development
+
+### Running Tests
+```bash
+npm test
+```
+
+### Code Style
+The project uses ESLint for code style. Run linting with:
+```bash
+npm run lint
+```
+
+### Database Migrations
+Database migrations are managed through Supabase. New migrations should be added to the `supabase/migrations` directory.
+
+## Production Deployment
+
+1. Build the application:
+```bash
+npm run build
+```
+
+2. Start in production mode:
+```bash
+npm start
+```
+
+Or use Docker:
+```bash
+docker-compose up -d
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
