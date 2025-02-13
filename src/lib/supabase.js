@@ -14,13 +14,51 @@ if (!supabaseUrl || !supabaseServiceKey) {
   );
 }
 
-// Create Supabase client with service key for admin access
+// Create Supabase client with service role key for admin access
 export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
-    persistSession: false
+    persistSession: false,
+    detectSessionInUrl: false
   },
   global: {
-    headers: { 'x-application-name': 'chat-atendimento-backend' }
+    headers: { 
+      'x-application-name': 'interflow-node',
+      // Add service role header to bypass RLS
+      'Authorization': `Bearer ${supabaseServiceKey}`,
+      'apikey': supabaseServiceKey
+    }
+  },
+  db: {
+    schema: 'public'
+  },
+  // Add request retries
+  realtime: {
+    params: {
+      eventsPerSecond: 10
+    }
+  },
+  // Add custom fetch with timeout
+  fetch: (url, options = {}) => {
+    return fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(30000) // 30 second timeout
+    });
   }
 });
+
+// Add error handler
+supabase.handleError = (error) => {
+  console.error('Supabase error:', error);
+  
+  // Check for specific error types
+  if (error.code === 'PGRST116') {
+    return null; // Return null for no rows
+  }
+  
+  if (error.code === '42703') {
+    throw new Error('Database schema mismatch. Column does not exist.');
+  }
+  
+  throw error;
+};

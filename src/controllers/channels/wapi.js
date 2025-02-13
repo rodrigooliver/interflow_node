@@ -1,5 +1,6 @@
 import { handleIncomingMessage, handleStatusUpdate } from '../webhooks/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
+import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 
 export async function handleWapiWebhook(req, res) {
@@ -103,15 +104,40 @@ export async function generateQrCode(req, res) {
   const { channelId } = req.params;
 
   try {
-    // Get channel details
-    const channel = await validateChannel(channelId, 'whatsapp_wapi');
-    
-    if (!channel) {
-      return res.status(404).json({ error: 'Channel not found' });
+    // Get channel details with explicit error handling for no rows
+    const { data: channels, error: queryError } = await supabase
+      .from('chat_channels')
+      .select(`
+        id,
+        name,
+        type,
+        status,
+        credentials,
+        settings,
+        is_connected,
+        is_tested,
+        organization:organizations (
+          id,
+          name
+        )
+      `)
+      .eq('id', channelId)
+      .eq('type', 'whatsapp_wapi');
+
+    if (queryError) throw queryError;
+
+    // Handle case where no channel is found
+    if (!channels || channels.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Channel not found' 
+      });
     }
 
+    const channel = channels[0];
+
     // Make request to WApi server to generate QR code
-    const response = await fetch(`https://${channel.credentials.apiHost}/instance/qr?connectionKey=${channel.credentials.apiConnectionKey}`, {
+    const response = await fetch(`https://${channel.credentials.apiHost}/instance/qrcode?connectionKey=${channel.credentials.apiConnectionKey}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${channel.credentials.apiToken}`
@@ -124,25 +150,28 @@ export async function generateQrCode(req, res) {
 
     const data = await response.json();
 
+    // Check for error in response
     if (data.error) {
-      throw new Error(data.error);
+      throw new Error(data.message || 'Failed to generate QR code');
     }
 
-    // Update channel with QR code
-    await supabase
+    // Update channel with QR code from base64 response
+    const { error: updateError } = await supabase
       .from('chat_channels')
       .update({
         credentials: {
           ...channel.credentials,
-          qrCode: data.qrCode
+          qrCode: `${data.qrcode}` // Add data URL prefix for base64 image
         }
       })
       .eq('id', channelId);
 
+    if (updateError) throw updateError;
+
     res.json({
       success: true,
       data: {
-        qrCode: data.qrCode
+        qrCode: data.qrcode // Return with data URL prefix
       }
     });
   } catch (error) {

@@ -69,7 +69,6 @@ export async function pollEmailChannels() {
       .select('*, organization:organizations(id, name)')
       .eq('type', 'email')
       .eq('status', 'active');
-    console.log(channels)
 
     if (error) throw error;
 
