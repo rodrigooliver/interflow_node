@@ -32,20 +32,25 @@ export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   db: {
     schema: 'public'
   },
-  // Add request retries
+  // Configure realtime
   realtime: {
     params: {
       eventsPerSecond: 10
     }
-  },
-  // Add custom fetch with timeout
-  fetch: (url, options = {}) => {
-    return fetch(url, {
-      ...options,
-      signal: AbortSignal.timeout(30000) // 30 second timeout
-    });
   }
 });
+
+// Add realtime subscription for chat channels
+// supabase 
+//   .channel('chat_channels')
+//   .on('postgres_changes', {
+//     event: '*',
+//     schema: 'public',
+//     table: 'chat_channels'
+//   }, (payload) => {
+//     console.log('Chat channel changed:', payload);
+//   })
+//   .subscribe();
 
 // Add error handler
 supabase.handleError = (error) => {
