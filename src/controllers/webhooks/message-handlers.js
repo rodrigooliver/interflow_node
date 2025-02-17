@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
 import { findExistingChat } from './utils.js';
+import { createFlowEngine } from '../../services/flow-engine.js';
 
 export async function handleIncomingMessage(channel, webhookData) {
   const { organization } = channel;
@@ -55,22 +56,13 @@ export async function handleIncomingMessage(channel, webhookData) {
       });
     }
 
-    // Create message
-    await supabase
-      .from('messages')
-      .insert({
-        chat_id: chat.id,
-        organization_id: organization.id,
-        content: webhookData.text || '',
-        sender_type: 'customer',
-        sender_id: customer.id,
-        status: 'delivered',
-        metadata: {
-          messageId: webhookData.messageId,
-          type: webhookData.type,
-          // Add any other relevant metadata
-        }
-      });
+    // Iniciar processamento do fluxo
+    const flowEngine = createFlowEngine(organization, channel, customer, chat.id);
+    await flowEngine.processMessage({
+      content: webhookData.text,
+      type: webhookData.type,
+      metadata: webhookData
+    });
 
     // Finish the transaction
     transaction.finish();

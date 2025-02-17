@@ -52,7 +52,7 @@ app.use(function onError(err, req, res, next) {
 
 // Start email polling
 const POLLING_INTERVAL = 60000; // 1 minute
-setInterval(pollEmailChannels, POLLING_INTERVAL);
+// setInterval(pollEmailChannels, POLLING_INTERVAL);
 
 // Start server
 app.listen(port, () => {
