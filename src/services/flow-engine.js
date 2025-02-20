@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
+import { OpenAI } from 'openai';
 
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
@@ -261,13 +262,22 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
 
     // Se for nó de opções, encontrar a conexão correta
     if (currentNode.type === 'input' && currentNode.data.inputType === 'options') {
-      const selectedEdge = edges.find(edge => 
-        edge.sourceHandle === `option-${message.content.toLowerCase()}`
+      // Procurar uma opção que corresponda exatamente ao texto da mensagem
+      const matchingOptionIndex = currentNode.data.options.findIndex(option => 
+        option.text.toLowerCase().trim() === message.content.toLowerCase().trim()
       );
-      if (selectedEdge) {
-        return flow.nodes.find(n => n.id === selectedEdge.target);
+
+      if (matchingOptionIndex !== -1) {
+        // Procurar edge correspondente à opção encontrada
+        const selectedEdge = edges.find(edge => 
+          edge.sourceHandle === `option${matchingOptionIndex}`
+        );
+        if (selectedEdge) {
+          return flow.nodes.find(n => n.id === selectedEdge.target);
+        }
       }
-      // Retornar nó de "no-match" se existir
+
+      // Se não encontrou correspondência exata, usar o handle 'no-match'
       const noMatchEdge = edges.find(edge => edge.sourceHandle === 'no-match');
       if (noMatchEdge) {
         return flow.nodes.find(n => n.id === noMatchEdge.target);
@@ -367,7 +377,189 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
    * Integração com OpenAI (a ser implementado)
    */
   const processOpenAI = async (node, session) => {
-    // Implementar integração com OpenAI
+    try {
+      const config = node.data.openai;
+      if (!config) throw new Error('OpenAI configuration not found');
+
+      // Buscar integração do OpenAI
+      const { data: integration } = await supabase
+        .from('integrations')
+        .select('*')
+        .eq('id', config.integrationId)
+        .single();
+
+      if (!integration) throw new Error('OpenAI integration not found');
+
+      // Configurar cliente OpenAI
+      const openai = new OpenAI({
+        apiKey: integration.credentials.apiKey
+      });
+
+      let response;
+      switch (config.apiType) {
+        case 'textGeneration':
+          response = await handleTextGeneration(openai, config, session);
+          break;
+        case 'audioGeneration':
+          response = await handleAudioGeneration(openai, config, session);
+          break;
+        case 'textToSpeech':
+          response = await handleTextToSpeech(openai, config, session);
+          break;
+        default:
+          throw new Error(`Unsupported API type: ${config.apiType}`);
+      }
+
+      // Salvar resposta na variável especificada
+      if (config.variableName) {
+        await updateSession(session.id, {
+          variables: {
+            ...session.variables,
+            [config.variableName]: response
+          }
+        });
+      }
+
+      // Se houver uma resposta de texto, enviar como mensagem
+      if (typeof response === 'string') {
+        await sendMessage(response);
+      }
+
+      return response;
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
+  };
+
+  const handleTextGeneration = async (openai, config, session) => {
+    // Preparar mensagens do contexto
+    const messages = await prepareContextMessages(config, session);
+
+    // Preparar ferramentas se existirem
+    const tools = prepareTools(config.tools);
+
+    // Fazer chamada para o OpenAI
+    const completion = await openai.chat.completions.create({
+      model: config.model,
+      messages,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      tools: tools.length > 0 ? tools : undefined,
+      tool_choice: tools.length > 0 ? "auto" : undefined
+    });
+
+    // Processar resposta
+    const choice = completion.choices[0];
+    
+    // Se houver chamadas de ferramentas
+    if (choice.message.tool_calls) {
+      for (const toolCall of choice.message.tool_calls) {
+        const tool = config.tools.find(t => t.name === toolCall.function.name);
+        if (tool && tool.targetNodeId) {
+          // Extrair argumentos da chamada
+          const args = JSON.parse(toolCall.function.arguments);
+          
+          // Atualizar variáveis com os argumentos
+          for (const [key, value] of Object.entries(args)) {
+            await updateSession(session.id, {
+              variables: {
+                ...session.variables,
+                [key]: value
+              }
+            });
+          }
+
+          // Redirecionar para o nó alvo da ferramenta
+          await updateSession(session.id, {
+            current_node_id: tool.targetNodeId
+          });
+        }
+      }
+      return null; // Retorna null pois o fluxo será redirecionado
+    }
+
+    return choice.message.content;
+  };
+
+  const prepareContextMessages = async (config, session) => {
+    const messages = [];
+
+    // Adicionar prompt do sistema
+    if (config.promptType === 'select' && config.promptId) {
+      const { data: prompt } = await supabase
+        .from('prompts')
+        .select('content')
+        .eq('id', config.promptId)
+        .single();
+      
+      if (prompt) {
+        messages.push({
+          role: 'system',
+          content: prompt.content
+        });
+      }
+    } else if (config.promptType === 'custom' && config.customPrompt) {
+      messages.push({
+        role: 'system',
+        content: config.customPrompt
+      });
+    }
+
+    // Adicionar mensagens do contexto
+    if (config.messageType === 'chatMessages') {
+      // Buscar apenas mensagens do chat atual
+      const { data: chatMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('chat_id', session.chat_id)
+        .order('created_at', { ascending: true });
+
+      chatMessages?.forEach(msg => {
+        messages.push({
+          role: msg.direction === 'inbound' ? 'user' : 'assistant',
+          content: msg.content
+        });
+      });
+    } else if (config.messageType === 'allClientMessages') {
+      // Buscar todas as mensagens do cliente neste canal
+      const { data: allMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('customer_id', session.customer_id)
+        .eq('channel_id', session.channel_id)
+        .order('created_at', { ascending: true });
+
+      allMessages?.forEach(msg => {
+        messages.push({
+          role: msg.direction === 'inbound' ? 'user' : 'assistant',
+          content: msg.content
+        });
+      });
+    }
+
+    return messages;
+  };
+
+  const prepareTools = (tools = []) => {
+    return tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters
+      }
+    }));
+  };
+
+  const handleAudioGeneration = async (openai, config, session) => {
+    // Implementar lógica para geração de áudio
+    throw new Error('Audio generation not implemented yet');
+  };
+
+  const handleTextToSpeech = async (openai, config, session) => {
+    // Implementar lógica para text-to-speech
+    throw new Error('Text to speech not implemented yet');
   };
 
   /**
