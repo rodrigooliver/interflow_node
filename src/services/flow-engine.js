@@ -199,7 +199,7 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
         break;
         
       case 'condition':
-        // Implementar lógica de condição usando variáveis da sessão
+        await processCondition(node.data, session);
         break;
         
       case 'delay':
@@ -250,6 +250,197 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
   };
 
   /**
+   * Processa condições, avaliando-as e atualizando o fluxo
+   * @param {Object} condition - Condição a ser processada
+   * @param {Object} session - Sessão atual
+   */
+  const processCondition = async (condition, session) => {
+    try {
+      const { logicOperator, subConditions } = condition;
+      
+      // Avaliar cada subcondição
+      const results = await Promise.all(
+        subConditions.map(sub => evaluateSubCondition(sub, session))
+      );
+      
+      // Aplicar operador lógico aos resultados
+      const isConditionMet = logicOperator === 'AND' 
+        ? results.every(r => r)
+        : results.some(r => r);
+
+      if (isConditionMet) {
+        // Encontrar a edge correspondente à condição
+        const conditionIndex = condition.conditions.indexOf(condition);
+        const edge = session.flow.edges.find(e => e.sourceHandle === `condition-${conditionIndex}`);
+        
+        if (edge) {
+          await updateSession(session.id, {
+            current_node_id: edge.target
+          });
+        }
+      } else {
+        // Se nenhuma condição for atendida, usar o else
+        const elseEdge = session.flow.edges.find(e => e.sourceHandle === 'else');
+        if (elseEdge) {
+          await updateSession(session.id, {
+            current_node_id: elseEdge.target
+          });
+        }
+      }
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
+  };
+
+  /**
+   * Avalia uma subcondição baseada nos critérios fornecidos
+   * @param {Object} subCondition - Subcondição a ser avaliada
+   * @param {Object} session - Sessão atual
+   * @returns {boolean} - Verdadeiro se a subcondição for atendida
+   */
+  const evaluateSubCondition = async (subCondition, session) => {
+    const { type, field, operator, value } = subCondition;
+    let fieldValue;
+
+    // Buscar valor do campo apropriado
+    if (type === 'variable') {
+      fieldValue = session.variables[field];
+    } else if (type === 'clientData') {
+      fieldValue = await getClientDataValue(field, session);
+    }
+
+    // Se o campo não existir, retornar false
+    if (fieldValue === undefined) return false;
+
+    // Avaliar baseado no operador
+    switch (operator) {
+      case 'equalTo':
+        return fieldValue === value;
+        
+      case 'notEqual':
+        return fieldValue !== value;
+        
+      case 'contains':
+        return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+        
+      case 'doesNotContain':
+        return !String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+        
+      case 'greaterThan':
+        return Number(fieldValue) > Number(value);
+        
+      case 'lessThan':
+        return Number(fieldValue) < Number(value);
+        
+      case 'isSet':
+        return fieldValue !== null && fieldValue !== undefined && fieldValue !== '';
+        
+      case 'isEmpty':
+        return fieldValue === null || fieldValue === undefined || fieldValue === '';
+        
+      case 'startsWith':
+        return String(fieldValue).toLowerCase().startsWith(String(value).toLowerCase());
+        
+      case 'endsWith':
+        return String(fieldValue).toLowerCase().endsWith(String(value).toLowerCase());
+        
+      case 'matchesRegex':
+        try {
+          const regex = new RegExp(value);
+          return regex.test(String(fieldValue));
+        } catch {
+          return false;
+        }
+        
+      case 'doesNotMatchRegex':
+        try {
+          const regex = new RegExp(value);
+          return !regex.test(String(fieldValue));
+        } catch {
+          return false;
+        }
+        
+      case 'inList':
+        const valueList = String(value).split(',').map(v => v.trim().toLowerCase());
+        if (Array.isArray(fieldValue)) {
+          return fieldValue.some(v => valueList.includes(String(v).toLowerCase()));
+        }
+        return valueList.includes(String(fieldValue).toLowerCase());
+        
+      case 'notInList':
+        const excludeList = String(value).split(',').map(v => v.trim().toLowerCase());
+        if (Array.isArray(fieldValue)) {
+          return !fieldValue.some(v => excludeList.includes(String(v).toLowerCase()));
+        }
+        return !excludeList.includes(String(fieldValue).toLowerCase());
+        
+      default:
+        return false;
+    }
+  };
+
+  /**
+   * Busca um valor de dados do cliente ou do chat
+   * @param {string} field - Campo a ser buscado
+   * @param {Object} session - Sessão atual
+   * @returns {any} - Valor do campo buscado
+   */
+  const getClientDataValue = async (field, session) => {
+    try {
+      // Buscar dados do cliente
+      if (field.startsWith('custumer_')) {
+        const { data: customer } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('id', session.customer_id)
+          .single();
+          
+        const customerField = field.replace('custumer_', '');
+        return customer?.[customerField];
+      }
+      
+      // Buscar dados do chat
+      if (field.startsWith('chat_')) {
+        const { data: chat } = await supabase
+          .from('chats')
+          .select(`
+            *,
+            team:team_id(*),
+            assigned_agent:assigned_to(*)
+          `)
+          .eq('id', session.chat_id)
+          .single();
+          
+        switch (field) {
+          case 'chat_funil':
+            return chat?.funnel_id;
+            
+          case 'chat_price':
+            return chat?.sale_value;
+            
+          case 'chat_team':
+            return chat?.team?.id;
+            
+          case 'chat_attendant':
+            return chat?.assigned_agent?.id;
+            
+          case 'chat_tag':
+            return chat?.tags;
+            
+          default:
+            return null;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      Sentry.captureException(error);
+      return null;
+    }
+  };
+
+  /**
    * Determina qual é o próximo nó baseado nas conexões e condições
    * @param {Object} flow - Fluxo atual
    * @param {Object} currentNode - Nó atual
@@ -259,6 +450,27 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
     const edges = flow.edges.filter(edge => edge.source === currentNode.id);
     
     if (!edges.length) return null;
+
+    // Se for nó de condição
+    if (currentNode.type === 'condition') {
+      for (const condition of currentNode.data.conditions || []) {
+        const isConditionMet = await evaluateCondition(condition, session);
+        
+        // Encontrar a edge correspondente à condição
+        const conditionIndex = currentNode.data.conditions.indexOf(condition);
+        const edge = edges.find(e => e.sourceHandle === `condition-${conditionIndex}`);
+        
+        if (isConditionMet && edge) {
+          return flow.nodes.find(n => n.id === edge.target);
+        }
+      }
+      
+      // Se nenhuma condição for atendida, usar o else
+      const elseEdge = edges.find(e => e.sourceHandle === 'else');
+      if (elseEdge) {
+        return flow.nodes.find(n => n.id === elseEdge.target);
+      }
+    }
 
     // Se for nó de opções, encontrar a conexão correta
     if (currentNode.type === 'input' && currentNode.data.inputType === 'options') {
