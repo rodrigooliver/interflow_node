@@ -8,8 +8,11 @@ import { OpenAI } from 'openai';
  * @param {Object} channel - Canal de comunicação
  * @param {Object} customer - Cliente
  * @param {string} chatId - ID do chat
+ * @param {Object} options - Opções adicionais
  */
-export const createFlowEngine = (organization, channel, customer, chatId) => {
+export const createFlowEngine = (organization, channel, customer, chatId, options = {}) => {
+  const { isFirstMessage, lastMessage } = options;
+
   /**
    * Processa cada mensagem recebida, gerenciando o fluxo ativo e o sistema de debounce
    * @param {Object} message - Mensagem a ser processada
@@ -849,25 +852,13 @@ export const createFlowEngine = (organization, channel, customer, chatId) => {
         if (!isWithinSchedule) continue;
       }
 
-      // Verificar se é o primeiro contato
-      const isFirstMessage = await checkFirstMessage(customer.id, channel.id);
+      // Usar a informação de primeira mensagem que veio como propriedade
       if (!isFirstMessage) continue;
 
       return flow.flow;
     }
 
     return null;
-  };
-
-  // Adicionar nova função auxiliar
-  const checkFirstMessage = async (customerId, channelId) => {
-    const { count } = await supabase
-      .from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('customer_id', customerId)
-      .eq('channel_id', channelId);
-
-    return count === 0;
   };
 
   /**

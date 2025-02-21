@@ -16,11 +16,13 @@ export async function handleWapiWebhook(req, res) {
     if (!channel) {
       return res.status(404).json({ error: 'Channel not found' });
     }
+    if(webhookData.isGroup) return;
 
     // Handle different webhook events
     switch (webhookData.event) {
-      case 'message':
-        await handleIncomingMessage(channel, webhookData);
+      case 'messageReceived':
+        const normalizedMessage = normalizeWapiMessage(webhookData);
+        await handleIncomingMessage(channel, normalizedMessage);
         break;
       case 'status':
         await handleStatusUpdate(channel, webhookData);
@@ -31,6 +33,13 @@ export async function handleWapiWebhook(req, res) {
       case 'connectedInstance':
         await handleConnectedInstance(channel, webhookData);
         break;
+      case 'disconnectedInstance':
+        // await handleDisconnectedInstance(channel, webhookData);
+        break;
+      case 'unreadMessageCount':
+        // await handleUnreadMessageCount(channel, webhookData);
+        break;
+        
       // Add more event handlers as needed
     }
 
@@ -483,4 +492,27 @@ export async function disconnectWapiInstance(req, res) {
       error: error.message
     });
   }
+}
+
+function normalizeWapiMessage(webhookData) {
+  return {
+    messageId: webhookData.messageId,
+    timestamp: webhookData.moment,
+    from: {
+      id: webhookData.sender.id,
+      name: webhookData.sender.pushName,
+      profilePicture: webhookData.sender.profilePicture
+    },
+    to: {
+      id: webhookData.recipient.id,
+      profilePicture: webhookData.recipient.profilePicture
+    },
+    message: {
+      type: 'text',
+      content: webhookData.messageText?.text || '',
+      raw: webhookData
+    },
+    isGroup: webhookData.isGroup,
+    fromMe: webhookData.fromMe
+  };
 }

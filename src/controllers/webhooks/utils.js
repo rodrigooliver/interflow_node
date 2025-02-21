@@ -9,7 +9,7 @@ export async function findExistingChat(channelId, customerId) {
       .select('*')
       .eq('channel_id', channelId)
       .eq('customer_id', customerId)
-      .eq('status', 'open')
+      .in('status', ['in_progress', 'pending'])
       .order('created_at', { ascending: false })
       .limit(1);
 
