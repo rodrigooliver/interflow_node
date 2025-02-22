@@ -80,15 +80,14 @@ const normalizeContactId = (id, channelType) => {
  * @param {Object} messageData - Dados normalizados da mensagem
  * @param {string} messageData.messageId - ID único da mensagem
  * @param {string} messageData.timestamp - Momento do envio
- * @param {Object} messageData.from - Dados do remetente
- * @param {string} messageData.from.id - ID do remetente
- * @param {string} messageData.from.name - Nome do remetente
- * @param {string} messageData.from.profilePicture - URL da foto do remetente
+ * @param {string} messageData.externalId - ID do contato externo
+ * @param {string} messageData.externalName - Nome do contato externo
+ * @param {string} messageData.externalProfilePicture - URL da foto do contato externo
  * @param {Object} messageData.message - Dados da mensagem
  * @param {string} messageData.message.type - Tipo da mensagem (text, image, etc)
  * @param {string} messageData.message.content - Conteúdo da mensagem
  * @param {Object} messageData.message.raw - Dados brutos originais
- * @param {Object} messageData.fromMe - Se foi uma mensagem enviado por mim
+ * @param {boolean} messageData.fromMe - Se foi uma mensagem enviada por mim
  */
 export async function handleIncomingMessage(channel, messageData) {
   const { organization } = channel;
@@ -109,7 +108,7 @@ export async function handleIncomingMessage(channel, messageData) {
     }
 
     // Normaliza o ID apenas para busca do customer
-    const normalizedId = normalizeContactId(messageData.from.id, channel.type);
+    const normalizedId = normalizeContactId(messageData.externalId, channel.type);
 
     // Procura o chat pelo external_id original
     let chat;
@@ -118,7 +117,7 @@ export async function handleIncomingMessage(channel, messageData) {
         .from('chats')
         .select('*, customers(*)')
         .eq('channel_id', channel.id)
-        .eq('external_id', messageData.from.id)
+        .eq('external_id', messageData.externalId)
         .single();
 
       if (error && error.code !== 'PGRST116') throw error; // PGRST116 é erro de não encontrado
@@ -140,7 +139,7 @@ export async function handleIncomingMessage(channel, messageData) {
 
       try {
         // Obtém todas as variantes possíveis do ID
-        const possibleIds = normalizeContactId(messageData.from.id, channel.type);
+        const possibleIds = normalizeContactId(messageData.externalId, channel.type);
         
         // Procura customer por qualquer uma das variantes
         const { data: existingCustomer, error: findError } = await supabase
@@ -159,8 +158,8 @@ export async function handleIncomingMessage(channel, messageData) {
           try {
             const customerData = {
               organization_id: organization.id,
-              name: messageData.from.name || messageData.from.id,
-              profile_picture: messageData.from.profilePicture,
+              name: messageData.externalName || messageData.externalId,
+              ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
               [identifierColumn]: possibleIds[0]
             };
 
@@ -192,9 +191,9 @@ export async function handleIncomingMessage(channel, messageData) {
           organization_id: organization.id,
           customer_id: customer.id,
           channel_id: channel.id,
-          external_id: messageData.from.id,
+          external_id: messageData.externalId,
           status: 'pending',
-          profile_picture: messageData.from.profilePicture,
+          ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
         });
 
         if (!chat) throw new Error('Failed to create chat');
@@ -206,7 +205,29 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
-    // Cadastra a mensagem recebida
+    // Verifica se a mensagem já existe quando for messageSent
+    if (messageData.event === 'messageSent' && messageData.fromMe) {
+      const { data: existingMessage, error: findMessageError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('external_id', messageData.messageId)
+        .single();
+
+      if (findMessageError && findMessageError.code !== 'PGRST116') throw findMessageError;
+
+      if (existingMessage) {
+        // Atualiza apenas o status da mensagem existente
+        const { error: updateError } = await supabase
+          .from('messages')
+          .update({ status: 'sent' })
+          .eq('id', existingMessage.id);
+
+        if (updateError) throw updateError;
+        return; // Encerra a função pois não precisa criar nova mensagem
+      }
+    }
+
+    // Cadastra a mensagem recebida (caso não exista)
     const { data: message, error: messageError } = await supabase
       .from('messages')
       .insert({
@@ -215,12 +236,10 @@ export async function handleIncomingMessage(channel, messageData) {
         content: messageData.message.content,
         type: messageData.message.type,
         sender_type: messageData.fromMe ? 'agent' : 'customer',
-        // status: 'delivered',
-        // attachments: messageData.message.attachments,
+        status: messageData.fromMe ? 'sent' : 'delivered',
         external_id: messageData.messageId,
-        // Define sender_customer_id apenas se não for fromMe
         ...(messageData.fromMe 
-          ? {}  // Se for fromMe, não define nenhum dos IDs
+          ? {}
           : { sender_customer_id: customer.id }
         ),
         metadata: messageData.message.raw
@@ -229,6 +248,14 @@ export async function handleIncomingMessage(channel, messageData) {
       .single();
 
     if (messageError) throw messageError;
+
+    // Atualiza o last_message_id do chat
+    const { error: updateError } = await supabase
+      .from('chats')
+      .update({ last_message_id: message.id })
+      .eq('id', chat.id);
+
+    if (updateError) throw updateError;
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
       isFirstMessage,

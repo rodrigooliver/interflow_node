@@ -21,8 +21,50 @@ export async function handleWapiWebhook(req, res) {
     // Handle different webhook events
     switch (webhookData.event) {
       case 'messageReceived':
+      case 'messageSent':
         const normalizedMessage = normalizeWapiMessage(webhookData);
+        normalizedMessage.event = webhookData.event;
         await handleIncomingMessage(channel, normalizedMessage);
+        break;
+      case 'messageDelivered':
+        if (webhookData.fromMe) {
+          // Função para tentar atualizar o status
+          const updateMessageStatus = async (retryCount = 0) => {
+            // Primeiro encontra a mensagem usando a chave estrangeira correta
+            const { data: message, error: findError } = await supabase
+              .from('messages')
+              .select(`
+                id,
+                chat:chat_id (
+                  channel_id
+                )
+              `)
+              .eq('external_id', webhookData.messageId)
+              .eq('chat.channel_id', channel.id)
+              .single();
+
+            if (findError) {
+              // Se der erro e ainda não tentou 3 vezes, tenta novamente após 2 segundos
+              if (retryCount < 3) {
+                setTimeout(() => updateMessageStatus(retryCount + 1), 2000);
+              }
+              return;
+            }
+
+            if (message) {
+              // Atualiza o status da mensagem encontrada
+              const { error: updateError } = await supabase
+                .from('messages')
+                .update({ status: 'delivered' })
+                .eq('id', message.id);
+
+              if (updateError) throw updateError;
+            }
+          };
+
+          // Inicia a primeira tentativa após 2 segundos
+          setTimeout(() => updateMessageStatus(), 2000);
+        }
         break;
       case 'status':
         await handleStatusUpdate(channel, webhookData);
@@ -299,7 +341,7 @@ export async function updateWebhook(channel) {
           restoredInstance: true,
           disconnectedInstance: true,
           newChat: true,
-          unreadMessageCount: true,
+          unreadMessageCount: false,
           numberMentioned: true,
           deletedMessage: true,
           messageDelivered: true,
@@ -495,6 +537,19 @@ export async function disconnectWapiInstance(req, res) {
 }
 
 function normalizeWapiMessage(webhookData) {
+  // Determina a origem dos dados baseado em fromMe
+  const externalData = webhookData.fromMe 
+    ? {
+        externalId: webhookData.recipient.id,
+        externalName: webhookData.recipient.pushName,
+        externalProfilePicture: webhookData.recipient.profilePicture
+      }
+    : {
+        externalId: webhookData.sender.id,
+        externalName: webhookData.sender.pushName,
+        externalProfilePicture: webhookData.sender.profilePicture
+      };
+
   return {
     messageId: webhookData.messageId,
     timestamp: webhookData.moment,
@@ -507,6 +562,7 @@ function normalizeWapiMessage(webhookData) {
       id: webhookData.recipient.id,
       profilePicture: webhookData.recipient.profilePicture
     },
+    ...externalData, // Adiciona os campos externos
     message: {
       type: 'text',
       content: webhookData.messageText?.text || '',
