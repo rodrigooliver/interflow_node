@@ -152,6 +152,7 @@ export async function handleIncomingMessage(channel, messageData) {
         .from('chats')
         .select('*, customers(*)')
         .eq('channel_id', channel.id)
+        .eq('status', 'in_progress')
         .eq('external_id', messageData.externalId)
         .single();
 
