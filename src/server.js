@@ -5,6 +5,7 @@ import Sentry from './lib/sentry.js';
 import stripeRoutes from './routes/stripe.js';
 import webhookRoutes from './routes/webhook.js';
 import { pollEmailChannels, testEmailConnection } from './services/email.js';
+import { initSystemMessageSubscription } from './controllers/webhooks/message-handlers.js';
 
 // Load environment variables
 dotenv.config();
@@ -50,11 +51,38 @@ app.use(function onError(err, req, res, next) {
   res.end(`${res.sentry}\n`);
 });
 
-// Start email polling
-const POLLING_INTERVAL = 60000; // 1 minute
-// setInterval(pollEmailChannels, POLLING_INTERVAL);
+let systemMessageSubscription;
 
-// Start server
-app.listen(port, () => {
+// Função para inicializar todas as subscriptions
+async function initializeSubscriptions() {
+  try {
+    systemMessageSubscription = await initSystemMessageSubscription();
+    console.log('System message subscription initialized successfully');
+  } catch (error) {
+    console.error('Error initializing system message subscription:', error);
+    Sentry.captureException(error);
+  }
+}
+
+// Gerencia o encerramento gracioso da aplicação
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Cleaning up...');
+  
+  if (systemMessageSubscription) {
+    await systemMessageSubscription.unsubscribe();
+  }
+  
+  process.exit(0);
+});
+
+// Start server and initialize subscriptions
+app.listen(port, async () => {
   console.log(`Server running on port ${port}`);
+  
+  // Inicializa as subscriptions após o servidor estar rodando
+  await initializeSubscriptions();
+  
+  // Start email polling if needed
+  // const POLLING_INTERVAL = 60000; // 1 minute
+  // setInterval(pollEmailChannels, POLLING_INTERVAL);
 });

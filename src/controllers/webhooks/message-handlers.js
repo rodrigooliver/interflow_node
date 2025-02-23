@@ -4,14 +4,46 @@ import { createChat } from '../../services/chat.js';
 import { findExistingChat } from './utils.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
 
-const CHANNEL_ID_MAPPING = {
-  whatsapp_official: 'whatsapp',
-  whatsapp_wapi: 'whatsapp',
-  whatsapp_zapi: 'whatsapp',
-  whatsapp_evo: 'whatsapp',
-  instagram: 'instagram_id',
-  facebook: 'facebook_id',
-  email: 'email'
+import { handleSenderMessageWApi } from '../../controllers/channels/wapi.js';
+// import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
+// import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
+// import { handleSenderMessageOfficial } from '../../services/channels/official.js';
+// import { handleSenderMessageInstagram } from '../../services/channels/instagram.js';
+// import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
+// import { handleSenderMessageEmail } from '../../services/channels/email.js';
+
+/**
+ * Configurações e handlers para cada tipo de canal
+ */
+const CHANNEL_CONFIG = {
+  whatsapp_official: {
+    identifier: 'whatsapp',
+    // handler: handleSenderMessageOfficial
+  },
+  whatsapp_wapi: {
+    identifier: 'whatsapp',
+    handler: handleSenderMessageWApi
+  },
+  whatsapp_zapi: {
+    identifier: 'whatsapp',
+    // handler: handleSenderMessageZApi
+  },
+  whatsapp_evo: {
+    identifier: 'whatsapp',
+    // handler: handleSenderMessageEvolution
+  },
+  instagram: {
+    identifier: 'instagram_id',
+    // handler: handleSenderMessageInstagram
+  },
+  facebook: {
+    identifier: 'facebook_id',
+    // handler: handleSenderMessageFacebook
+  },
+  email: {
+    identifier: 'email',
+    // handler: handleSenderMessageEmail
+  }
 };
 
 /**
@@ -102,10 +134,13 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     });
 
-    const identifierColumn = CHANNEL_ID_MAPPING[channel.type];
-    if (!identifierColumn) {
+    const channelConfig = CHANNEL_CONFIG[channel.type];
+    if (!channelConfig) {
       throw new Error(`Unsupported channel type: ${channel.type}`);
     }
+
+    // Usa o identifier do canal configurado
+    const identifierColumn = channelConfig.identifier;
 
     // Normaliza o ID apenas para busca do customer
     const normalizedId = normalizeContactId(messageData.externalId, channel.type);
@@ -320,6 +355,108 @@ export async function handleStatusUpdate(channel, messageData) {
       }
     });
     console.error('Error handling status update:', error);
+    throw error;
+  }
+}
+
+/**
+ * Inicia subscription para processar mensagens do sistema
+ */
+export async function initSystemMessageSubscription() {
+  try {
+    const subscription = supabase
+      .channel('system-messages')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: 'sent_from_system=eq.true'
+        },
+        async (payload) => {
+          const message = payload.new;
+          
+          try {
+            // Busca dados do chat e do canal
+            const { data: chat, error: chatError } = await supabase
+              .from('chats')
+              .select(`
+                external_id,
+                channel:chat_channels!chats_channel_id_fkey (
+                  *,
+                  organization:organizations(*)
+                )
+              `)
+              .eq('id', message.chat_id)
+              .single();
+
+            if (chatError) throw chatError;
+            
+            const channelConfig = CHANNEL_CONFIG[chat.channel.type];
+            if (!channelConfig) {
+              throw new Error(`Handler não encontrado para o canal tipo: ${chat.channel.type}`);
+            }
+
+            const transaction = Sentry.startTransaction({
+              name: 'process-system-message',
+              op: 'message.system',
+              data: {
+                channelType: chat.channel.type,
+                organizationId: chat.channel.organization_id
+              }
+            });
+
+            // Usa o handler específico do canal
+            const result = await channelConfig.handler(chat.channel, {
+              messageId: message.id,
+              content: message.content,
+              type: message.type,
+              attachments: message.attachments,
+              to: chat.external_id
+            });
+
+            // Atualiza status da mensagem e external_id
+            const { error: updateError } = await supabase
+              .from('messages')
+              .update({ 
+                status: 'sent',
+                external_id: result.messageId
+              })
+              .eq('id', message.id);
+
+            if (updateError) throw updateError;
+
+            transaction.finish();
+          } catch (error) {
+            console.log(error);
+            // Atualiza status da mensagem para erro
+            await supabase
+              .from('messages')
+              .update({ 
+                status: 'failed',
+                error_message: error.message
+              })
+              .eq('id', message.id);
+
+            Sentry.captureException(error, {
+              extra: { 
+                message,
+                context: 'processing_system_message'
+              }
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return subscription;
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: { 
+        context: 'system_message_subscription'
+      }
+    });
     throw error;
   }
 }

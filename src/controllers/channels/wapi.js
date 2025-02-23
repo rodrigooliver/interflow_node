@@ -572,3 +572,100 @@ function normalizeWapiMessage(webhookData) {
     fromMe: webhookData.fromMe
   };
 }
+
+/**
+ * Envia mensagem através do canal WApi
+ * @returns {Promise<{messageId: string}>} ID da mensagem enviada
+ */
+export async function handleSenderMessageWApi(channel, messageData) {
+  try {
+    const { apiHost, apiConnectionKey, apiToken } = channel.credentials;
+    const baseUrl = `https://${apiHost}`;
+    let response;
+    let responseData;
+
+    // Se tiver anexos, envia como mídia
+    if (messageData.attachments && messageData.attachments.length > 0) {
+      const attachment = messageData.attachments[0];
+      
+      let endpoint = '';
+      let body = {};
+
+      if (attachment.type.startsWith('image/')) {
+        endpoint = '/message/sendImage';
+        body = {
+          phoneNumber: messageData.to,
+          caption: messageData.content,
+          image: attachment.url
+        };
+      } else if (attachment.type.startsWith('video/')) {
+        endpoint = '/message/sendVideo';
+        body = {
+          phoneNumber: messageData.to,
+          caption: messageData.content,
+          video: attachment.url
+        };
+      } else if (attachment.type.startsWith('audio/')) {
+        endpoint = '/message/sendAudio';
+        body = {
+          phoneNumber: messageData.to,
+          audio: attachment.url
+        };
+      } else {
+        endpoint = '/message/sendDocument';
+        body = {
+          phoneNumber: messageData.to,
+          document: attachment.url,
+          fileName: attachment.name
+        };
+      }
+
+      response = await fetch(`${baseUrl}${endpoint}?connectionKey=${apiConnectionKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiToken}`
+        },
+        body: JSON.stringify(body)
+      });
+
+    } else if (messageData.content) {
+      response = await fetch(`${baseUrl}/message/send-text?connectionKey=${apiConnectionKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiToken}`
+        },
+        body: JSON.stringify({
+          phoneNumber: messageData.to,
+          text: messageData.content
+        })
+      });
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Erro ao enviar mensagem');
+    }
+
+    responseData = await response.json();
+
+    if (responseData.error) {
+      throw new Error(responseData.message || 'Erro retornado pela API');
+    }
+
+    return {
+      messageId: responseData.messageId
+    };
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        messageData,
+        context: 'wapi_sender'
+      }
+    });
+    throw error;
+  }
+}
