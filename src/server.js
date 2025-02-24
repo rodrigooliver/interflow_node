@@ -4,7 +4,8 @@ import dotenv from 'dotenv';
 import Sentry from './lib/sentry.js';
 import stripeRoutes from './routes/stripe.js';
 import webhookRoutes from './routes/webhook.js';
-import { pollEmailChannels, testEmailConnection } from './services/email.js';
+import channelRoutes from './routes/channel.js';
+import { pollEmailChannels } from './services/email.js';
 import { initSystemMessageSubscription } from './controllers/webhooks/message-handlers.js';
 
 // Load environment variables
@@ -22,23 +23,9 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-app.use('/api/stripe', stripeRoutes);
-app.use('/api/webhook', webhookRoutes);
-
-// Test email connection
-app.post('/api/test-email-connection', async (req, res) => {
-  try {
-    const result = await testEmailConnection(req.body);
-    res.json(result);
-  } catch (error) {
-    Sentry.captureException(error);
-    console.error('Error testing email connection:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
+app.use('/api/:organizationId/webhook', webhookRoutes);
+app.use('/api/:organizationId/stripe', stripeRoutes);
+app.use('/api/:organizationId/channel', channelRoutes);
 
 // The error handler must be before any other error middleware and after all controllers
 app.use(Sentry.Handlers.errorHandler());

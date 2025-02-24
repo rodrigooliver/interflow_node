@@ -2,6 +2,7 @@ import { handleIncomingMessage, handleStatusUpdate } from '../webhooks/message-h
 import { validateChannel } from '../webhooks/utils.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
+import { encrypt, decrypt } from '../../utils/crypto.js';
 
 export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
@@ -80,6 +81,24 @@ export async function handleWapiWebhook(req, res) {
         break;
       case 'unreadMessageCount':
         // await handleUnreadMessageCount(channel, webhookData);
+        break;
+      case 'codeLimitReached':
+        // Atualizar canal removendo o QR code quando limite for atingido
+            // Descriptografar credenciais
+        // channel.credentials = decryptCredentials(channel.credentials);
+        const { error: updateError } = await supabase
+          .from('chat_channels')
+          .update({
+            credentials: {
+              ...channel.credentials,
+              qrCode: null,
+              qrExpiresAt: null
+            },
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', channel.id);
+
+        if (updateError) throw updateError;
         break;
         
       // Add more event handlers as needed
@@ -195,11 +214,15 @@ export async function testWapiConnection(req, res) {
       });
     }
 
+    // Usar credenciais descriptografadas na requisição
+    const decryptedApiToken = apiToken;
+    const decryptedConnectionKey = apiConnectionKey;
+
     // Test connection by making a request to the WApi server
-    const response = await fetch(`https://${apiHost}/instance/isInstanceOnline?connectionKey=${apiConnectionKey}`, {
+    const response = await fetch(`https://${apiHost}/instance/isInstanceOnline?connectionKey=${decryptedConnectionKey}`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${apiToken}`
+        Authorization: `Bearer ${decryptedApiToken}`
       }
     });
 
@@ -270,16 +293,22 @@ export async function generateQrCode(req, res) {
     }
 
     const channel = channels[0];
+    
+    // Descriptografar credenciais antes de usar
+    const decryptedCredentials = decryptCredentials(channel.credentials);
 
     // Update webhook configuration
-    await updateWebhook(channel);
+    await updateWebhook({
+      ...channel,
+      credentials: decryptedCredentials
+    });
 
     // Make request to WApi server to generate QR code
-    const response = await fetch(`https://${channel.credentials.apiHost}/instance/getQrcode?connectionKey=${channel.credentials.apiConnectionKey}`, {
+    const response = await fetch(`https://${decryptedCredentials.apiHost}/instance/getQrcode?connectionKey=${decryptedCredentials.apiConnectionKey}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${channel.credentials.apiToken}`
+        'Authorization': `Bearer ${decryptedCredentials.apiToken}`
       }
     });
 
@@ -322,7 +351,7 @@ export async function updateWebhook(channel) {
       throw new Error(dataV3.message || 'Failed to update webhook');
     }
 
-    const webhookUrl = `${process.env.API_URL}/api/webhook/wapi/${channel.id}`;
+    const webhookUrl = `${process.env.API_URL}/api/${channel.organization?.id}/webhook/wapi/${channel.id}`;
 
     // Make request to WApi server to update webhook
     const response = await fetch(`https://${channel.credentials.apiHost}/webhook/editWebhook?connectionKey=${channel.credentials.apiConnectionKey}`, {
@@ -376,19 +405,6 @@ export async function updateWebhook(channel) {
     if (data.error) {
       throw new Error(data.message || 'Failed to update webhook');
     }
-
-    // Update channel with webhook URL
-    const { error: updateError } = await supabase
-      .from('chat_channels')
-      .update({
-        credentials: {
-          ...channel.credentials,
-          webhookUrl
-        }
-      })
-      .eq('id', channel.id);
-
-    if (updateError) throw updateError;
 
     return true;
   } catch (error) {
@@ -486,30 +502,35 @@ export async function disconnectWapiInstance(req, res) {
 
     const channel = channels[0];
 
-    // Fazer requisição para desconectar a instância na WApi
-    const response = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${channel.credentials.apiConnectionKey}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${channel.credentials.apiToken}`
+    try {
+      // Fazer requisição para desconectar a instância na WApi
+      const response = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${channel.credentials.apiConnectionKey}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${channel.credentials.apiToken}`
+        }
+      });
+
+      if (!response.ok) {
+        console.error('Failed to disconnect WApi instance, marking as disconnected anyway');
+      } else {
+        const data = await response.json();
+        if (data.error) {
+          console.error('WApi error:', data.message);
+        }
       }
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to disconnect WApi instance');
+    } catch (apiError) {
+      console.error('Error calling WApi:', apiError);
+      // Continua a execução para atualizar o status local
     }
 
-    const data = await response.json();
-
-    if (data.error) {
-      throw new Error(data.message || 'Failed to reset WApi instance');
-    }
-
-    // Atualizar status no banco de dados
+    // Atualizar status no banco de dados independente do resultado da API
     const { error: updateError } = await supabase
       .from('chat_channels')
       .update({
         is_connected: false,
+        status: 'inactive', // Desativa o canal
         credentials: {
           ...channel.credentials,
           connectedPhone: null,
@@ -667,5 +688,406 @@ export async function handleSenderMessageWApi(channel, messageData) {
       }
     });
     throw error;
+  }
+}
+
+function encryptCredentials(credentials) {
+  return {
+    ...credentials,
+    apiToken: encrypt(credentials.apiToken),
+    apiConnectionKey: encrypt(credentials.apiConnectionKey)
+  };
+}
+
+function decryptCredentials(credentials) {
+  if (!credentials) return null;
+  
+  return {
+    ...credentials,
+    apiToken: credentials.apiToken ? decrypt(credentials.apiToken) : null,
+    apiConnectionKey: credentials.apiConnectionKey ? decrypt(credentials.apiConnectionKey) : null
+  };
+}
+
+export async function createWapiChannel(req, res) {
+  const { organizationId } = req.params;
+  const channelData = req.body;
+
+  try {
+    // Validar dados necessários
+    if (!channelData.name || !channelData.credentials) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields'
+      });
+    }
+
+    // Criptografar credenciais
+    const encryptedCreds = encryptCredentials(
+      channelData.credentials
+    );
+
+    // Criar canal no banco de dados
+    const { data: channel, error } = await supabase
+      .from('chat_channels')
+      .insert({
+        organization_id: organizationId,
+        name: channelData.name,
+        type: 'whatsapp_wapi',
+        credentials: encryptedCreds,
+        settings: channelData.settings || {},
+        status: channelData.status || 'inactive',
+        is_connected: false,
+        is_tested: channelData.is_tested || false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      id: channel.id
+    });
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        channelData
+      }
+    });
+    console.error('Error creating WApi channel:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+export async function updateWapiChannel(req, res) {
+  const { organizationId, channelId } = req.params;
+  const channelData = req.body;
+
+  try {
+    // Verificar se o canal existe e pertence à organização
+    const { data: existingChannel, error: queryError } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .eq('id', channelId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (queryError || !existingChannel) {
+      return res.status(404).json({
+        success: false,
+        error: 'Channel not found'
+      });
+    }
+
+    // Preparar dados para atualização
+    const updateData = {
+      name: channelData.name,
+      updated_at: new Date().toISOString()
+    };
+
+    // Se houver novas credenciais, criptografá-las
+    if (channelData.credentials) {
+      const encryptedCreds = encryptCredentials(
+        channelData.credentials
+      );
+
+      updateData.credentials = encryptedCreds;
+    }
+
+    // Atualizar outros campos se fornecidos
+    if (channelData.settings) updateData.settings = channelData.settings;
+    if (channelData.status) updateData.status = channelData.status;
+    if (typeof channelData.is_connected !== 'undefined') updateData.is_connected = channelData.is_connected;
+    if (typeof channelData.is_tested !== 'undefined') updateData.is_tested = channelData.is_tested;
+
+    // Atualizar canal no banco de dados
+    const { error: updateError } = await supabase
+      .from('chat_channels')
+      .update(updateData)
+      .eq('id', channelId);
+
+    if (updateError) throw updateError;
+
+    res.json({
+      success: true,
+      channelId
+    });
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        channelId: channelId,
+        channelData
+      }
+    });
+    console.error('Error updating WApi channel:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+export async function createInterflowChannel(req, res) {
+  const { organizationId } = req.params;
+  const { name } = req.body;
+
+  try {
+    // Verificar se WAPI_ACCOUNT_ID está definido
+    if (!process.env.WAPI_ACCOUNT_ID) {
+      return res.status(500).json({
+        success: false,
+        error: 'Configuração WAPI_ACCOUNT_ID não encontrada'
+      });
+    }
+
+    // Validar dados necessários
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nome é obrigatório'
+      });
+    }
+
+    // Criar nova conexão na W-API
+    try {
+      const wapiResponse = await fetch(`https://api-painel.w-api.app/createNewConnection?id=${process.env.WAPI_ACCOUNT_ID}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!wapiResponse.ok) {
+        throw new Error('Falha ao criar conexão na W-API');
+      }
+
+      const wapiData = await wapiResponse.json();
+
+      if (wapiData.error) {
+        throw new Error(wapiData.message || 'Erro retornado pela W-API');
+      }
+
+      // Criar credenciais com os dados retornados
+      const credentials = {
+        apiHost: wapiData.host,
+        apiToken: encrypt(wapiData.token),
+        apiConnectionKey: encrypt(wapiData.connectionKey)
+      };
+
+      // Criar canal no banco de dados
+      const { data: channel, error } = await supabase
+        .from('chat_channels')
+        .insert({
+          organization_id: organizationId,
+          name: name,
+          type: 'whatsapp_wapi',
+          credentials: credentials,
+          settings: {
+            autoReply: true,
+            notifyNewTickets: true,
+            isInterflow: true,
+            interflowData: {
+              createdAt: new Date().toISOString(),
+              accountId: encrypt(process.env.WAPI_ACCOUNT_ID),
+              isInterflowConnection: true
+            }
+          },
+          status: 'inactive',
+          is_connected: false,
+          is_tested: true
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Configurar webhook após criar o canal
+      await updateWebhook({
+        id: channel.id,
+        organization: { id: organizationId },
+        credentials: {
+          apiHost: wapiData.host,
+          apiToken: wapiData.token,
+          apiConnectionKey: wapiData.connectionKey
+        }
+      });
+
+      // Gerar QR Code
+      await generateQrCode(
+        { params: { channelId: channel.id } },
+        { status: () => ({ json: () => {} }), json: () => {} }
+      );
+
+      res.json({
+        success: true,
+        id: channel.id
+      });
+
+    } catch (wapiError) {
+      throw new Error(`Erro ao criar conexão W-API: ${wapiError.message}`);
+    }
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        name
+      }
+    });
+    console.error('Error creating Interflow channel:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+export async function deleteWapiChannel(req, res) {
+  const { organizationId, channelId } = req.params;
+
+  try {
+    // Buscar o canal
+    const { data: channel, error: fetchError } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .eq('id', channelId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (fetchError || !channel) {
+      return res.status(404).json({
+        success: false,
+        error: 'Canal não encontrado'
+      });
+    }
+
+    // Se o canal foi testado, precisamos excluir na API
+    if (channel.is_tested) {
+      const credentials = decryptCredentials(channel.credentials);
+
+      // Se for uma conexão Interflow
+      if (channel.settings.isInterflow && channel.settings?.interflowData?.accountId) {
+        const accountId = decrypt(channel.settings.interflowData.accountId);
+        
+        try {
+          const wapiResponse = await fetch(
+            `https://api-painel.w-api.app/deleteConnection?connectionKey=${credentials.apiConnectionKey}&id=${accountId}`,
+            {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          if (!wapiResponse.ok) {
+            throw new Error('Falha ao excluir conexão na W-API');
+          }
+
+          const wapiData = await wapiResponse.json();
+          if (wapiData.error) {
+            throw new Error(wapiData.message || 'Erro retornado pela W-API');
+          }
+        } catch (wapiError) {
+          console.error('Erro ao excluir conexão W-API:', wapiError);
+          // Continua com a exclusão local mesmo se falhar na API
+        }
+      } else if (channel.is_connected) {
+        // Para conexões não-Interflow, desconectar antes de excluir
+        try {
+          await disconnectWapiInstance({ 
+            params: { channelId },
+            body: {}
+          }, {
+            json: () => {},
+            status: () => ({ json: () => {} })
+          });
+        } catch (disconnectError) {
+          console.error('Erro ao desconectar instância:', disconnectError);
+          // Continua com a exclusão mesmo se falhar a desconexão
+        }
+      }
+    }
+
+    // Excluir o canal do banco de dados
+    const { error: deleteError } = await supabase
+      .from('chat_channels')
+      .delete()
+      .eq('id', channelId);
+
+    if (deleteError) throw deleteError;
+
+    res.json({
+      success: true
+    });
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        channelId
+      }
+    });
+    console.error('Error deleting WApi channel:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+export async function transferChats(req, res) {
+  const { channelId } = req.params;
+  const { targetChannelId } = req.body;
+
+  try {
+    // Validar se os canais existem
+    const { data: channels, error: channelsError } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .in('id', [channelId, targetChannelId])
+      .eq('type', 'whatsapp_wapi');
+
+    if (channelsError) throw channelsError;
+    if (!channels || channels.length !== 2) {
+      return res.status(404).json({
+        success: false,
+        error: 'Um ou ambos os canais não foram encontrados'
+      });
+    }
+
+    // Atualizar todos os chats do canal origem para o canal destino
+    const { error: updateError } = await supabase
+      .from('chats')
+      .update({ channel_id: targetChannelId })
+      .eq('channel_id', channelId);
+
+    if (updateError) throw updateError;
+
+    res.json({
+      success: true,
+      message: 'Chats transferidos com sucesso'
+    });
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId,
+        targetChannelId
+      }
+    });
+    console.error('Erro ao transferir chats:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 }

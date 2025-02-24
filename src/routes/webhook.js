@@ -1,16 +1,12 @@
 import express from 'express';
-import { handleWapiWebhook, testWapiConnection, generateQrCode, resetWapiConnection, disconnectWapiInstance } from '../controllers/channels/wapi.js';
+import { handleWapiWebhook } from '../controllers/channels/wapi.js';
 import { handleWhatsAppOfficialWebhook } from '../controllers/channels/whatsapp-official.js';
 import { handleInstagramWebhook } from '../controllers/channels/instagram.js';
 import { handleFacebookWebhook } from '../controllers/channels/facebook.js';
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 
 // WhatsApp WApi routes
-router.post('/wapi/test', testWapiConnection);
-router.post('/wapi/:channelId/qr', generateQrCode);
-router.post('/wapi/:channelId/reset', resetWapiConnection);
-router.post('/wapi/:channelId/disconnect', disconnectWapiInstance);
 router.post('/wapi/:channelId', handleWapiWebhook);
 router.get('/wapi/:channelId', handleWapiWebhook);
 
