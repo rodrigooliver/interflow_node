@@ -3,6 +3,7 @@ import Sentry from '../lib/sentry.js';
 import { testWapiConnection, generateQrCode, resetWapiConnection, disconnectWapiInstance, createWapiChannel, updateWapiChannel, createInterflowChannel, deleteWapiChannel, transferChats } from '../controllers/channels/wapi.js';
 import { testEmailConnection } from '../services/email.js';
 import { verifyAuth, verifyPublicAuth } from '../middleware/auth.js';
+import { deleteInstagramChannel } from '../controllers/channels/instagram.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -33,6 +34,8 @@ router.post('/email/test', async (req, res) => {
     });
   }
 });
+
+router.delete('/instagram/:channelId', deleteInstagramChannel);
 
 
 export default router;

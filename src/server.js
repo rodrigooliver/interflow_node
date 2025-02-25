@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import cron from 'node-cron';
 import Sentry from './lib/sentry.js';
 import stripeRoutes from './routes/stripe.js';
 import webhookRoutes from './routes/webhook.js';
@@ -8,6 +9,8 @@ import channelRoutes from './routes/channel.js';
 import { initializeEmailChannels, cleanupEmailConnections } from './services/email.js';
 import { initSystemMessageSubscription } from './controllers/webhooks/message-handlers.js';
 import monitoringRoutes from './routes/monitoring.js';
+import instagramRoutes from './routes/instagram.js';
+import { refreshInstagramTokens } from './cron/instagram-token-refresh.js';
 
 // Load environment variables
 dotenv.config();
@@ -24,6 +27,7 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
+app.use('/api/webhook/instagram', instagramRoutes);
 app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
@@ -41,14 +45,27 @@ app.use(function onError(err, req, res, next) {
 });
 
 let systemMessageSubscription;
+let instagramTokenCron;
 
-// Função para inicializar todas as subscriptions
+// Função para inicializar todas as subscriptions e crons
 async function initializeSubscriptions() {
   try {
     systemMessageSubscription = await initSystemMessageSubscription();
     console.log('System message subscription initialized successfully');
+
+    // Inicializa o cron do Instagram para executar todos os dias à meia-noite
+    instagramTokenCron = cron.schedule('0 0 * * *', async () => {
+      try {
+        await refreshInstagramTokens();
+        console.log('Instagram tokens refresh completed successfully');
+      } catch (error) {
+        console.error('Error refreshing Instagram tokens:', error);
+        Sentry.captureException(error);
+      }
+    });
+    console.log('Instagram token refresh cron initialized successfully');
   } catch (error) {
-    console.error('Error initializing system message subscription:', error);
+    console.error('Error initializing subscriptions:', error);
     Sentry.captureException(error);
   }
 }
@@ -59,6 +76,10 @@ process.on('SIGTERM', async () => {
   
   if (systemMessageSubscription) {
     await systemMessageSubscription.unsubscribe();
+  }
+
+  if (instagramTokenCron) {
+    instagramTokenCron.stop();
   }
   
   await cleanupEmailConnections();

@@ -6,10 +6,10 @@ import { createFlowEngine } from '../../services/flow-engine.js';
 
 import { handleSenderMessageWApi } from '../../controllers/channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
+import { handleSenderMessageInstagram } from '../channels/instagram.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageOfficial } from '../../services/channels/official.js';
-// import { handleSenderMessageInstagram } from '../../services/channels/instagram.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
 
 /**
@@ -34,7 +34,7 @@ const CHANNEL_CONFIG = {
   },
   instagram: {
     identifier: 'instagram_id',
-    // handler: handleSenderMessageInstagram
+    handler: handleSenderMessageInstagram
   },
   facebook: {
     identifier: 'facebook_id',
@@ -139,105 +139,92 @@ export async function handleIncomingMessage(channel, messageData) {
       throw new Error(`Unsupported channel type: ${channel.type}`);
     }
 
-    // Usa o identifier do canal configurado
-    const identifierColumn = channelConfig.identifier;
+    let chat = messageData.chat;
+    let customer = chat?.customers;
+    let isFirstMessage = false;
 
-    // Normaliza o ID apenas para busca do customer
-    const normalizedId = normalizeContactId(messageData.externalId, channel.type);
+    if (!chat) {
+      const identifierColumn = channelConfig.identifier;
+      const normalizedId = normalizeContactId(messageData.externalId, channel.type);
 
-    // Procura o chat pelo external_id original
-    let chat;
-    try {
-      const { data, error } = await supabase
+      const { data: chats, error } = await supabase
         .from('chats')
         .select('*, customers(*)')
         .eq('channel_id', channel.id)
-        .eq('status', 'in_progress')
+        .in('status', ['in_progress', 'pending'])
         .eq('external_id', messageData.externalId)
-        .single();
+        .order('created_at', { ascending: false })
+        .limit(1);
 
-      if (error && error.code !== 'PGRST116') throw error; // PGRST116 é erro de não encontrado
-      chat = data;
-    } catch (error) {
-      Sentry.captureException(error, {
-        extra: { channel, messageData, context: 'finding_chat' }
-      });
-      throw error;
-    }
+      chat = chats?.[0] || null;
 
-    let customer;
-    let isFirstMessage = false;
+      if (chat) {
+        customer = chat.customers;
+      } else {
+        isFirstMessage = true;
 
-    if (chat) {
-      customer = chat.customers;
-    } else {
-      isFirstMessage = true;
+        try {
+          const possibleIds = normalizeContactId(messageData.externalId, channel.type);
+          
+          const { data: existingCustomer, error: findError } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('organization_id', organization.id)
+            .in(identifierColumn, possibleIds)
+            .single();
 
-      try {
-        // Obtém todas as variantes possíveis do ID
-        const possibleIds = normalizeContactId(messageData.externalId, channel.type);
-        
-        // Procura customer por qualquer uma das variantes
-        const { data: existingCustomer, error: findError } = await supabase
-          .from('customers')
-          .select('*')
-          .eq('organization_id', organization.id)
-          .in(identifierColumn, possibleIds)
-          .single();
+          if (findError && findError.code !== 'PGRST116') throw findError;
 
-        if (findError && findError.code !== 'PGRST116') throw findError;
+          if (existingCustomer) {
+            customer = existingCustomer;
+          } else {
+            try {
+              const customerData = {
+                organization_id: organization.id,
+                name: messageData.externalName || messageData.externalId,
+                ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
+                [identifierColumn]: possibleIds[0]
+              };
 
-        if (existingCustomer) {
-          customer = existingCustomer;
-        } else {
-          // Tenta criar novo customer
-          try {
-            const customerData = {
-              organization_id: organization.id,
-              name: messageData.externalName || messageData.externalId,
-              ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
-              [identifierColumn]: possibleIds[0]
-            };
+              const { data: newCustomer, error: createError } = await supabase
+                .from('customers')
+                .insert(customerData)
+                .select()
+                .single();
 
-            const { data: newCustomer, error: createError } = await supabase
-              .from('customers')
-              .insert(customerData)
-              .select()
-              .single();
-
-            if (createError) throw createError;
-            customer = newCustomer;
-          } catch (error) {
-            Sentry.captureException(error, {
-              extra: { channel, messageData, context: 'creating_customer' }
-            });
-            throw error;
+              if (createError) throw createError;
+              customer = newCustomer;
+            } catch (error) {
+              Sentry.captureException(error, {
+                extra: { channel, messageData, context: 'creating_customer' }
+              });
+              throw error;
+            }
           }
+        } catch (error) {
+          Sentry.captureException(error, {
+            extra: { channel, messageData, context: 'finding_customer' }
+          });
+          throw error;
         }
-      } catch (error) {
-        Sentry.captureException(error, {
-          extra: { channel, messageData, context: 'finding_customer' }
-        });
-        throw error;
-      }
 
-      // Tenta criar novo chat
-      try {
-        chat = await createChat({
-          organization_id: organization.id,
-          customer_id: customer.id,
-          channel_id: channel.id,
-          external_id: messageData.externalId,
-          status: 'pending',
-          ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
-        });
+        try {
+          chat = await createChat({
+            organization_id: organization.id,
+            customer_id: customer.id,
+            channel_id: channel.id,
+            external_id: messageData.externalId,
+            status: 'pending',
+            ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
+          });
 
-        if (!chat) throw new Error('Failed to create chat');
-      } catch (error) {
-        Sentry.captureException(error, {
-          extra: { channel, messageData, context: 'creating_chat' }
-        });
-        throw error;
+          if (!chat) throw new Error('Failed to create chat');
+        } catch (error) {
+          Sentry.captureException(error, {
+            extra: { channel, messageData, context: 'creating_chat' }
+          });
+          throw error;
+        }
       }
     }
 
@@ -252,18 +239,17 @@ export async function handleIncomingMessage(channel, messageData) {
       if (findMessageError && findMessageError.code !== 'PGRST116') throw findMessageError;
 
       if (existingMessage) {
-        // Atualiza apenas o status da mensagem existente
         const { error: updateError } = await supabase
           .from('messages')
           .update({ status: 'sent' })
           .eq('id', existingMessage.id);
 
         if (updateError) throw updateError;
-        return; // Encerra a função pois não precisa criar nova mensagem
+        return;
       }
     }
 
-    // Cadastra a mensagem recebida (caso não exista)
+    // Cadastra a mensagem recebida
     const { data: message, error: messageError } = await supabase
       .from('messages')
       .insert({
@@ -312,7 +298,6 @@ export async function handleIncomingMessage(channel, messageData) {
         messageData
       }
     });
-    console.error('Error handling incoming message:', error);
     throw error;
   }
 }
@@ -407,7 +392,7 @@ export async function initSystemMessageSubscription() {
                 organizationId: chat.channel.organization_id
               }
             });
-            console.log(message)
+            // console.log(message)
 
             // Usa o handler específico do canal
             const result = await channelConfig.handler(chat.channel, {

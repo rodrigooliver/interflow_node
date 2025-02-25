@@ -81,9 +81,10 @@ class EmailConnectionManager {
     this.rateLimiter = new RateLimiter(100, 60000); // 100 requisições por minuto
     this.failureCount = new Map(); // host -> count
     this.circuitBreakerTimeout = new Map(); // host -> timestamp
+    this.reconnectingChannels = new Set(); // controle de canais em reconexão
   }
 
-  async getConnection(channel) {
+  async getConnection(channel) { 
     const host = channel.credentials.host;
     
     // Criar pool se não existir
@@ -92,7 +93,15 @@ class EmailConnectionManager {
         maxSize: MAX_CONNECTIONS_PER_HOST,
         create: async () => this.createConnection(channel),
         validate: (conn) => conn.isAlive(),
-        destroy: async (conn) => conn.end()
+        destroy: async (conn) => {
+          if (conn && conn.imap) {
+            try {
+              await conn.imap.end();
+            } catch (err) {
+              console.error('Erro ao destruir conexão:', err);
+            }
+          }
+        }
       }));
     }
 
@@ -103,6 +112,71 @@ class EmailConnectionManager {
     return connection;
   }
 
+  async handleConnectionError(channel) {
+    if (this.reconnectingChannels.has(channel.id)) {
+      console.log(`Canal ${channel.id} já está tentando reconectar`);
+      return;
+    }
+
+    this.reconnectingChannels.add(channel.id);
+    console.log(`Iniciando reconexão para o canal ${channel.id}`);
+    
+    const maxRetries = 5;
+    let retryCount = 0;
+    let retryDelay = RECONNECT_INTERVAL;
+
+    const retryConnection = async () => {
+      try {
+        if (retryCount >= maxRetries) {
+          console.error(`Máximo de tentativas atingido para o canal ${channel.id}`);
+          await this.recordFailure(channel.credentials.host);
+          this.reconnectingChannels.delete(channel.id); 
+          return;
+        }
+
+        retryCount++;
+        console.log(`Tentativa ${retryCount} de reconexão para o canal ${channel.id}`);
+
+        // Remover conexão antiga
+        const oldConnection = this.channelConnections.get(channel.id);
+        if (oldConnection) {
+          try {
+            if (oldConnection.imap) {
+              await oldConnection.imap.end();
+            }
+          } catch (err) {
+            console.error('Erro ao fechar conexão antiga:', err);
+          }
+          this.channelConnections.delete(channel.id);
+        }
+
+        // Criar nova conexão
+        const newConnection = await this.createConnection(channel);
+        await newConnection.openBox('INBOX');
+        await this.setupIdleListener(channel, newConnection);
+        
+        // Atualizar a conexão no mapa
+        this.channelConnections.set(channel.id, newConnection);
+
+        console.log(`Reconectado com sucesso ao canal ${channel.id}`);
+        this.failureCount.set(channel.credentials.host, 0);
+        this.reconnectingChannels.delete(channel.id);
+        
+      } catch (err) {
+        console.error(`Falha na tentativa ${retryCount} de reconexão do canal ${channel.id}:`, err);
+        
+        if (retryCount < maxRetries) {
+          retryDelay = Math.min(retryDelay * 2, 300000);
+          setTimeout(retryConnection, retryDelay);
+        } else {
+          this.reconnectingChannels.delete(channel.id);
+        }
+      }
+    };
+
+    await retryConnection();
+  }
+
   async createConnection(channel) {
     const config = {
       imap: {
@@ -111,42 +185,66 @@ class EmailConnectionManager {
         host: channel.credentials.host,
         port: channel.credentials.port,
         tls: channel.credentials.secure,
-        tlsOptions: { rejectUnauthorized: false },
+        tlsOptions: { 
+          rejectUnauthorized: false
+        },
+        debug: (info) => {
+          if (
+            info.includes('Error') || 
+            info.includes('FATAL') ||
+            info.includes('Connected') ||
+            info.includes('Disconnected') ||
+            info.includes('Connection error')
+          ) {
+            console.log(`[IMAP Debug ${channel.id}]:`, info);
+          }
+        },
         authTimeout: 30000,
         socketTimeout: 60000,
         keepalive: true,
-        keepaliveInterval: 60000 // 1 minuto
+        keepaliveInterval: 60000,
+        connTimeout: 30000
       }
     };
 
-    const connection = await connect(config);
-    
-    // Configurar reconexão automática
-    connection.on('error', async (err) => {
-      console.error(`Erro na conexão do canal ${channel.id}:`, err);
-      await this.handleConnectionError(channel);
-    });
+    try {
+      const connection = await connect(config);
+      
+      connection.imap.on('error', async (err) => {
+        console.error(`Erro na conexão IMAP do canal ${channel.id}:`, err);
+        await this.handleConnectionError(channel);
+      });
 
-    connection.on('end', async () => {
-      await this.handleConnectionError(channel);
-    });
+      connection.imap.on('close', () => {
+        console.log(`Conexão fechada para canal ${channel.id}`);
+      });
 
-    return connection;
-  }
+      connection.imap.on('end', () => {
+        console.log(`Conexão finalizada para canal ${channel.id}`);
+      });
 
-  async handleConnectionError(channel) {
-    const retryConnection = async () => {
-      try {
-        const newConnection = await this.getConnection(channel);
-        await this.setupIdleListener(channel, newConnection);
-        // console.log(`Reconectado com sucesso ao canal ${channel.id}`);
-      } catch (err) {
-        // console.error(`Falha na reconexão do canal ${channel.id}:`, err);
-        setTimeout(retryConnection, RECONNECT_INTERVAL);
-      }
-    };
+      // Ping periódico usando comando STATUS ao invés de NOOP
+      const pingInterval = setInterval(async () => {
+        try {
+          if (connection.imap.state === 'authenticated') {
+            await connection.imap.status('INBOX', []);
+          }
+        } catch (err) {
+          console.error(`Erro no ping do canal ${channel.id}:`, err);
+          clearInterval(pingInterval);
+          await this.handleConnectionError(channel);
+        }
+      }, 270000);
 
-    setTimeout(retryConnection, RECONNECT_INTERVAL);
+      connection.imap.once('end', () => {
+        clearInterval(pingInterval);
+      });
+
+      return connection;
+    } catch (error) {
+      console.error(`Erro ao criar conexão para canal ${channel.id}:`, error);
+      throw error;
+    }
   }
 
   async setupIdleListener(channel, connection) {
