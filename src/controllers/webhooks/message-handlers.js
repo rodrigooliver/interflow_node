@@ -5,12 +5,12 @@ import { findExistingChat } from './utils.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
 
 import { handleSenderMessageWApi } from '../../controllers/channels/wapi.js';
+import { handleSenderMessageEmail } from '../../services/email.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageOfficial } from '../../services/channels/official.js';
 // import { handleSenderMessageInstagram } from '../../services/channels/instagram.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
-// import { handleSenderMessageEmail } from '../../services/channels/email.js';
 
 /**
  * Configurações e handlers para cada tipo de canal
@@ -42,7 +42,7 @@ const CHANNEL_CONFIG = {
   },
   email: {
     identifier: 'email',
-    // handler: handleSenderMessageEmail
+    handler: handleSenderMessageEmail
   }
 };
 
@@ -407,6 +407,7 @@ export async function initSystemMessageSubscription() {
                 organizationId: chat.channel.organization_id
               }
             });
+            console.log(message)
 
             // Usa o handler específico do canal
             const result = await channelConfig.handler(chat.channel, {
@@ -414,8 +415,13 @@ export async function initSystemMessageSubscription() {
               content: message.content,
               type: message.type,
               attachments: message.attachments,
-              to: chat.external_id
+              to: chat.external_id,
+              chat_id: message.chat_id,
+              sender_customer_id: message.sender_customer_id,
+              sender_agent_id: message.sender_agent_id
             });
+
+            
 
             // Atualiza status da mensagem e external_id
             const { error: updateError } = await supabase

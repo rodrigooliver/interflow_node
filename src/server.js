@@ -5,8 +5,9 @@ import Sentry from './lib/sentry.js';
 import stripeRoutes from './routes/stripe.js';
 import webhookRoutes from './routes/webhook.js';
 import channelRoutes from './routes/channel.js';
-import { pollEmailChannels } from './services/email.js';
+import { initializeEmailChannels, cleanupEmailConnections } from './services/email.js';
 import { initSystemMessageSubscription } from './controllers/webhooks/message-handlers.js';
+import monitoringRoutes from './routes/monitoring.js';
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,7 @@ app.use(express.json());
 app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 // The error handler must be before any other error middleware and after all controllers
 app.use(Sentry.Handlers.errorHandler());
@@ -59,6 +61,8 @@ process.on('SIGTERM', async () => {
     await systemMessageSubscription.unsubscribe();
   }
   
+  await cleanupEmailConnections();
+  
   process.exit(0);
 });
 
@@ -69,7 +73,6 @@ app.listen(port, async () => {
   // Inicializa as subscriptions após o servidor estar rodando
   await initializeSubscriptions();
   
-  // Start email polling if needed
-  // const POLLING_INTERVAL = 60000; // 1 minute
-  // setInterval(pollEmailChannels, POLLING_INTERVAL);
+  // Inicializa os canais de email
+  await initializeEmailChannels();
 });
