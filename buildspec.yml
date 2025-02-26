@@ -28,6 +28,8 @@ phases:
     commands:
       - echo Construção concluída em `date`
       - echo Preparando para implantação...
+      - echo Iniciando a aplicação...
+      - npm start || true
 
 artifacts:
   files:
