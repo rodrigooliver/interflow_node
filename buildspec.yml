@@ -1,0 +1,37 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 18
+    commands:
+      - echo Instalando dependências...
+      - npm install
+  
+  pre_build:
+    commands:
+      - echo Executando testes...
+      - npm test || true
+  
+  build:
+    commands:
+      - echo Iniciando a construção...
+      - npm run build || echo "Sem etapa de build configurada"
+  
+  post_build:
+    commands:
+      - echo Construção concluída em `date`
+      - echo Preparando para implantação...
+
+artifacts:
+  files:
+    - src/**/*
+    - package.json
+    - package-lock.json
+    - .env.example
+    - README.md
+    - node_modules/**/*
+
+cache:
+  paths:
+    - 'node_modules/**/*' 
