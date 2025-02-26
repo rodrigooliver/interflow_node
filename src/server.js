@@ -44,6 +44,13 @@ app.use(fileUpload({
   },
 }));
 
+
+app.get('/', (req, res) => {
+  return res.json({
+    'text': 'Welcome to Interflow API',
+  })
+});
+
 // Routes
 app.use('/api/webhook/instagram', instagramRoutes);
 app.use('/api/:organizationId/webhook', webhookRoutes);
