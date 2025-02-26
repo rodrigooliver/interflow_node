@@ -1,9 +1,25 @@
-import { handleIncomingMessage, handleStatusUpdate } from '../webhooks/message-handlers.js';
+import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 
+/**
+ * Processa webhooks recebidos do WAPI
+ * 
+ * Esta função lida com diferentes tipos de eventos do WAPI, incluindo:
+ * - Mensagens recebidas/enviadas (com suporte a texto e mídia)
+ * - Atualizações de status de mensagens
+ * - Eventos de conexão/desconexão
+ * - Geração de QR code
+ * 
+ * Para mensagens com mídia, suporta recebimento via:
+ * - URLs (que podem estar criptografadas)
+ * - Dados base64 incluídos diretamente no webhook
+ * 
+ * @param {Object} req - Requisição Express
+ * @param {Object} res - Resposta Express
+ */
 export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
@@ -17,7 +33,7 @@ export async function handleWapiWebhook(req, res) {
     if (!channel) {
       return res.status(404).json({ error: 'Channel not found' });
     }
-    if(webhookData.isGroup) return;
+    if(webhookData.isGroup) return res.json({ success: true });
 
     // Handle different webhook events
     switch (webhookData.event) {
@@ -117,6 +133,100 @@ export async function handleWapiWebhook(req, res) {
   }
 }
 
+/**
+ * Normaliza dados de mensagem do WAPI para formato padrão
+ * 
+ * Esta função converte os dados brutos do webhook do WAPI para um formato
+ * padronizado que pode ser processado pelo sistema. Inclui suporte para
+ * diferentes tipos de mídia (imagem, vídeo, áudio, documento, sticker)
+ * e padroniza os dados base64 quando disponíveis.
+ * 
+ * @param {Object} webhookData - Dados brutos do webhook
+ * @returns {Object} - Mensagem normalizada
+ */
+function normalizeWapiMessage(webhookData) {
+  // Determina a origem dos dados baseado em fromMe
+  const externalData = webhookData.fromMe 
+    ? {
+        externalId: webhookData.recipient.id,
+        externalName: webhookData.recipient.pushName,
+        externalProfilePicture: webhookData.recipient.profilePicture
+      }
+    : {
+        externalId: webhookData.sender.id,
+        externalName: webhookData.sender.pushName,
+        externalProfilePicture: webhookData.sender.profilePicture
+      };
+
+  // Determinar o tipo de mensagem
+  let messageType = 'text';
+  let messageContent = webhookData.messageText?.text || '';
+  let mediaBase64 = null;
+  let mediaUrl = null;
+  let mimeType = null;
+  let fileName = null;
+  
+  // Processar diferentes tipos de mídia
+  if (webhookData.image) {
+    messageType = 'image';
+    messageContent = webhookData.image.caption || '';
+    mediaBase64 = webhookData.image.imageBase64;
+    mediaUrl = webhookData.image.url;
+    mimeType = webhookData.image.mimetype || 'image/jpeg';
+  } else if (webhookData.video) {
+    messageType = 'video';
+    messageContent = webhookData.video.caption || '';
+    mediaBase64 = webhookData.video.videoBase64;
+    mediaUrl = webhookData.video.url;
+    mimeType = webhookData.video.mimetype || 'video/mp4';
+  } else if (webhookData.audio) {
+    messageType = 'audio';
+    messageContent = '';
+    mediaBase64 = webhookData.audio.audioBase64;
+    mediaUrl = webhookData.audio.url;
+    mimeType = webhookData.audio.mimetype || 'audio/ogg';
+  } else if (webhookData.document) {
+    messageType = 'document';
+    messageContent = webhookData.document.caption || '';
+    mediaBase64 = webhookData.document.documentBase64;
+    mediaUrl = webhookData.document.url;
+    mimeType = webhookData.document.mimetype || 'application/octet-stream';
+    fileName = webhookData.document.fileName;
+  } else if (webhookData.sticker) {
+    messageType = 'sticker';
+    messageContent = '';
+    mediaBase64 = webhookData.sticker.stickerBase64;
+    mediaUrl = webhookData.sticker.url;
+    mimeType = webhookData.sticker.mimetype || 'image/webp';
+  }
+
+  return {
+    messageId: webhookData.messageId,
+    timestamp: webhookData.moment,
+    from: {
+      id: webhookData.sender.id,
+      name: webhookData.sender.pushName,
+      profilePicture: webhookData.sender.profilePicture
+    },
+    to: {
+      id: webhookData.recipient.id,
+      profilePicture: webhookData.recipient.profilePicture
+    },
+    ...externalData, // Adiciona os campos externos
+    message: {
+      type: messageType,
+      content: messageContent,
+      mediaBase64: mediaBase64, // Campo padronizado para base64
+      mediaUrl: mediaUrl,       // URL da mídia (pode ser criptografada)
+      mimeType: mimeType,       // Tipo MIME da mídia
+      fileName: fileName,       // Nome do arquivo (para documentos)
+      raw: webhookData          // Dados brutos completos
+    },
+    isGroup: webhookData.isGroup,
+    fromMe: webhookData.fromMe
+  };
+}
+
 async function handleQrCodeGenerated(channel, webhookData) {
   try {
     // Validate webhook data
@@ -194,35 +304,32 @@ async function handleConnectedInstance(channel, webhookData) {
 }
 
 export async function testWapiConnection(req, res) {
+  // Extrair dados do corpo da requisição
   const { apiHost, apiConnectionKey, apiToken } = req.body;
+  
+  // Validar parâmetros obrigatórios
+  if (!apiHost || !apiConnectionKey || !apiToken) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required parameters'
+    });
+  }
+
+  // Validar formato do host da API
+  const hostRegex = /^[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+\.[a-zA-Z]+$/;
+  if (!hostRegex.test(apiHost)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid API host format'
+    });
+  }
 
   try {
-    // Validate required parameters
-    if (!apiHost || !apiConnectionKey || !apiToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameters'
-      });
-    }
-
-    // Validate API host format
-    const hostRegex = /^[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+\.[a-zA-Z]+$/;
-    if (!hostRegex.test(apiHost)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid API host format'
-      });
-    }
-
-    // Usar credenciais descriptografadas na requisição
-    const decryptedApiToken = apiToken;
-    const decryptedConnectionKey = apiConnectionKey;
-
-    // Test connection by making a request to the WApi server
-    const response = await fetch(`https://${apiHost}/instance/isInstanceOnline?connectionKey=${decryptedConnectionKey}`, {
+    // Testar conexão com a API
+    const response = await fetch(`https://${apiHost}/instance/isInstanceOnline?connectionKey=${apiConnectionKey}`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${decryptedApiToken}`
+        Authorization: `Bearer ${apiToken}`
       }
     });
 
@@ -232,25 +339,71 @@ export async function testWapiConnection(req, res) {
 
     const data = await response.json();
 
-    // Check if the response indicates a valid connection
     if (data.error) {
       throw new Error(data.error || 'Invalid WApi credentials');
     }
 
+    // Se temos channelId nos parâmetros, atualizar o canal no banco
+    if (req.params.channelId) {
+      const { channelId } = req.params;
+      
+      // Buscar o canal para obter as credenciais atuais
+      const { data: channel, error: queryError } = await supabase
+        .from('chat_channels')
+        .select('*')
+        .eq('id', channelId)
+        .eq('type', 'whatsapp_wapi')
+        .single();
+        
+      if (queryError) throw queryError;
+      if (!channel) {
+        return res.status(404).json({
+          success: false,
+          error: 'Canal não encontrado'
+        });
+      }
+      
+      // Criptografar as novas credenciais
+      const encryptedCredentials = {
+        ...channel.credentials,
+        apiHost: apiHost,
+        apiToken: encrypt(apiToken),
+        apiConnectionKey: encrypt(apiConnectionKey)
+      };
+      
+      // Atualizar o canal com as novas credenciais e status
+      const { error: updateError } = await supabase
+        .from('chat_channels')
+        .update({ 
+          credentials: encryptedCredentials,
+          is_connected: data.connected === true,
+          is_tested: true,
+          status: data.connected === true ? 'active' : channel.status
+        })
+        .eq('id', channelId);
+        
+      if (updateError) {
+        console.error('Erro ao atualizar status do canal:', updateError);
+        throw updateError;
+      }
+    }
+    
     res.json({
       success: true,
       data: {
-        connected: true,
+        connected: data.connected,
         status: data.status
       }
     });
+    
   } catch (error) {
     Sentry.captureException(error, {
-      extra: {
-        apiHost
+      extra: { 
+        channelId: req.params.channelId,
+        apiHost 
       }
     });
-    console.error('Error testing WApi connection:', error);
+    console.error('Erro ao testar conexão WApi:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -557,50 +710,28 @@ export async function disconnectWapiInstance(req, res) {
   }
 }
 
-function normalizeWapiMessage(webhookData) {
-  // Determina a origem dos dados baseado em fromMe
-  const externalData = webhookData.fromMe 
-    ? {
-        externalId: webhookData.recipient.id,
-        externalName: webhookData.recipient.pushName,
-        externalProfilePicture: webhookData.recipient.profilePicture
-      }
-    : {
-        externalId: webhookData.sender.id,
-        externalName: webhookData.sender.pushName,
-        externalProfilePicture: webhookData.sender.profilePicture
-      };
-
-  return {
-    messageId: webhookData.messageId,
-    timestamp: webhookData.moment,
-    from: {
-      id: webhookData.sender.id,
-      name: webhookData.sender.pushName,
-      profilePicture: webhookData.sender.profilePicture
-    },
-    to: {
-      id: webhookData.recipient.id,
-      profilePicture: webhookData.recipient.profilePicture
-    },
-    ...externalData, // Adiciona os campos externos
-    message: {
-      type: 'text',
-      content: webhookData.messageText?.text || '',
-      raw: webhookData
-    },
-    isGroup: webhookData.isGroup,
-    fromMe: webhookData.fromMe
-  };
-}
-
 /**
  * Envia mensagem através do canal WApi
+ * 
+ * Suporta envio de diferentes tipos de mídia (imagem, vídeo, áudio, documento, sticker)
+ * e mensagens de texto simples. Utiliza as APIs do WAPI para envio.
+ * 
+ * @param {Object} channel - Canal de comunicação
+ * @param {Object} messageData - Dados da mensagem a ser enviada
  * @returns {Promise<{messageId: string}>} ID da mensagem enviada
  */
 export async function handleSenderMessageWApi(channel, messageData) {
   try {
-    const { apiHost, apiConnectionKey, apiToken } = channel.credentials;
+    // Descriptografar credenciais antes de usar
+    const credentials = channel.credentials;
+    const apiHost = credentials.apiHost;
+    const apiConnectionKey = credentials.apiConnectionKey ? decrypt(credentials.apiConnectionKey) : null;
+    const apiToken = credentials.apiToken ? decrypt(credentials.apiToken) : null;
+    
+    if (!apiHost || !apiConnectionKey || !apiToken) {
+      throw new Error('Credenciais incompletas ou inválidas');
+    }
+    
     const baseUrl = `https://${apiHost}`;
     let response;
     let responseData;
@@ -612,35 +743,61 @@ export async function handleSenderMessageWApi(channel, messageData) {
       let endpoint = '';
       let body = {};
 
-      if (attachment.type.startsWith('image/')) {
-        endpoint = '/message/sendImage';
+      // Determina o endpoint e corpo da requisição com base no tipo de mídia
+      if (attachment.type.startsWith('image/') || (attachment.mime_type && attachment.mime_type.startsWith('image/'))) {
+        endpoint = '/message/send-image';
         body = {
           phoneNumber: messageData.to,
-          caption: messageData.content,
-          image: attachment.url
+          image: attachment.url,
+          caption: messageData.content || ''
         };
-      } else if (attachment.type.startsWith('video/')) {
-        endpoint = '/message/sendVideo';
+      } else if (attachment.type.startsWith('video/') || (attachment.mime_type && attachment.mime_type.startsWith('video/'))) {
+        endpoint = '/message/send-video';
         body = {
           phoneNumber: messageData.to,
-          caption: messageData.content,
-          video: attachment.url
+          video: attachment.url,
+          caption: messageData.content || ''
         };
-      } else if (attachment.type.startsWith('audio/')) {
-        endpoint = '/message/sendAudio';
+      } else if (attachment.type.startsWith('audio/') || (attachment.mime_type && attachment.mime_type.startsWith('audio/'))) {
+        endpoint = '/message/send-audio';
         body = {
           phoneNumber: messageData.to,
           audio: attachment.url
         };
+      } else if (attachment.type === 'sticker' || attachment.mime_type === 'image/webp') {
+        endpoint = '/message/send-sticker';
+        body = {
+          phoneNumber: messageData.to,
+          sticker: attachment.url
+        };
       } else {
-        endpoint = '/message/sendDocument';
+        endpoint = '/message/send-document';
+        
+        // Verificar se o nome do arquivo tem extensão
+        let fileName = attachment.name || 'documento';
+        if (!fileName.includes('.')) {
+          // Tentar extrair extensão do MIME type
+          if (attachment.mime_type) {
+            const mimeExtension = attachment.mime_type.split('/')[1];
+            if (mimeExtension) {
+              fileName = `${fileName}.${mimeExtension}`;
+            } else {
+              // Fallback para extensão genérica
+              fileName = `${fileName}.txt`;
+            }
+          } else {
+            // Fallback para extensão genérica
+            fileName = `${fileName}.txt`;
+          }
+        }
+        
         body = {
           phoneNumber: messageData.to,
           document: attachment.url,
-          fileName: attachment.name
+          fileName: fileName
         };
       }
-
+      
       response = await fetch(`${baseUrl}${endpoint}?connectionKey=${apiConnectionKey}`, {
         method: 'POST',
         headers: {
@@ -662,14 +819,27 @@ export async function handleSenderMessageWApi(channel, messageData) {
           text: messageData.content
         })
       });
+    } else {
+      throw new Error('Nenhum conteúdo ou anexo fornecido para envio');
     }
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Erro ao enviar mensagem');
+      const errorText = await response.text();
+      try {
+        const errorData = JSON.parse(errorText);
+        throw new Error(errorData.message || 'Erro ao enviar mensagem');
+      } catch (parseError) {
+        throw new Error(`Erro ao enviar mensagem: ${errorText}`);
+      }
     }
 
-    responseData = await response.json();
+    const responseText = await response.text();
+    
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      throw new Error(`Erro ao parsear resposta da API: ${responseText}`);
+    }
 
     if (responseData.error) {
       throw new Error(responseData.message || 'Erro retornado pela API');

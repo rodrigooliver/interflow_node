@@ -20,6 +20,7 @@ router.post('/wapi/:channelId/qr', generateQrCode);
 router.post('/wapi/:channelId/reset', resetWapiConnection);
 router.post('/wapi/:channelId/disconnect', disconnectWapiInstance);
 router.post('/wapi/:channelId/transfer', transferChats);
+router.post('/wapi/:channelId/test', testWapiConnection);
 // Test email connection
 router.post('/email/test', async (req, res) => {
   try {

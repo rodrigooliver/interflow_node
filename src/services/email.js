@@ -113,68 +113,87 @@ class EmailConnectionManager {
   }
 
   async handleConnectionError(channel) {
-    if (this.reconnectingChannels.has(channel.id)) {
-      console.log(`Canal ${channel.id} já está tentando reconectar`);
-      return;
-    }
-
-    this.reconnectingChannels.add(channel.id);
-    console.log(`Iniciando reconexão para o canal ${channel.id}`);
-    
-    const maxRetries = 5;
-    let retryCount = 0;
-    let retryDelay = RECONNECT_INTERVAL;
-
-    const retryConnection = async () => {
-      try {
-        if (retryCount >= maxRetries) {
-          console.error(`Máximo de tentativas atingido para o canal ${channel.id}`);
-          await this.recordFailure(channel.credentials.host);
-          this.reconnectingChannels.delete(channel.id); 
-          return;
-        }
-
-        retryCount++;
-        console.log(`Tentativa ${retryCount} de reconexão para o canal ${channel.id}`);
-
-        // Remover conexão antiga
-        const oldConnection = this.channelConnections.get(channel.id);
-        if (oldConnection) {
-          try {
-            if (oldConnection.imap) {
-              await oldConnection.imap.end();
-            }
-          } catch (err) {
-            console.error('Erro ao fechar conexão antiga:', err);
-          }
-          this.channelConnections.delete(channel.id);
-        }
-
-        // Criar nova conexão
-        const newConnection = await this.createConnection(channel);
-        await newConnection.openBox('INBOX');
-        await this.setupIdleListener(channel, newConnection);
-        
-        // Atualizar a conexão no mapa
-        this.channelConnections.set(channel.id, newConnection);
-
-        console.log(`Reconectado com sucesso ao canal ${channel.id}`);
-        this.failureCount.set(channel.credentials.host, 0);
-        this.reconnectingChannels.delete(channel.id);
-        
-      } catch (err) {
-        console.error(`Falha na tentativa ${retryCount} de reconexão do canal ${channel.id}:`, err);
-        
-        if (retryCount < maxRetries) {
-          retryDelay = Math.min(retryDelay * 2, 300000);
-          setTimeout(retryConnection, retryDelay);
-        } else {
-          this.reconnectingChannels.delete(channel.id);
-        }
+    try {
+      if (this.reconnectingChannels.has(channel.id)) {
+        console.log(`Canal ${channel.id} já está tentando reconectar`);
+        return;
       }
-    };
 
-    await retryConnection();
+      this.reconnectingChannels.add(channel.id);
+      console.log(`Iniciando reconexão para o canal ${channel.id}`);
+      
+      const maxRetries = 5;
+      let retryCount = 0;
+      let retryDelay = RECONNECT_INTERVAL;
+
+      const retryConnection = async () => {
+        try {
+          if (retryCount >= maxRetries) {
+            console.error(`Máximo de tentativas atingido para o canal ${channel.id}`);
+            await this.recordFailure(channel.credentials.host);
+            this.reconnectingChannels.delete(channel.id); 
+            return;
+          }
+
+          retryCount++;
+          console.log(`Tentativa ${retryCount} de reconexão para o canal ${channel.id}`);
+
+          // Remover conexão antiga de forma segura
+          const oldConnection = this.channelConnections.get(channel.id);
+          if (oldConnection) {
+            try {
+              if (oldConnection.imap) {
+                // Remover todos os listeners antes de fechar
+                oldConnection.imap.removeAllListeners();
+                await oldConnection.imap.end();
+              }
+            } catch (err) {
+              console.warn('Erro ao fechar conexão antiga:', err);
+              // Não propagar o erro, apenas registrar
+            }
+            this.channelConnections.delete(channel.id);
+          }
+
+          // Criar nova conexão com tratamento de erro melhorado
+          try {
+            const newConnection = await this.createConnection(channel);
+            await newConnection.openBox('INBOX');
+            await this.setupIdleListener(channel, newConnection);
+            
+            this.channelConnections.set(channel.id, newConnection);
+
+            console.log(`Reconectado com sucesso ao canal ${channel.id}`);
+            this.failureCount.set(channel.credentials.host, 0);
+            this.reconnectingChannels.delete(channel.id);
+          } catch (connError) {
+            console.error(`Erro ao criar nova conexão para canal ${channel.id}:`, connError);
+            
+            if (retryCount < maxRetries) {
+              retryDelay = Math.min(retryDelay * 2, 300000);
+              setTimeout(retryConnection, retryDelay);
+            } else {
+              this.reconnectingChannels.delete(channel.id);
+            }
+          }
+          
+        } catch (err) {
+          console.error(`Erro na tentativa ${retryCount} de reconexão do canal ${channel.id}:`, err);
+          
+          if (retryCount < maxRetries) {
+            retryDelay = Math.min(retryDelay * 2, 300000);
+            setTimeout(retryConnection, retryDelay);
+          } else {
+            this.reconnectingChannels.delete(channel.id);
+          }
+        }
+      };
+
+      await retryConnection();
+    } catch (error) {
+      console.error(`Erro crítico no handleConnectionError para canal ${channel.id}:`, error);
+      // Garantir que o canal seja removido do conjunto de reconexão
+      this.reconnectingChannels.delete(channel.id);
+    }
   }
 
   async createConnection(channel) {
@@ -207,43 +226,118 @@ class EmailConnectionManager {
       }
     };
 
+    // Adicionar handler global para erros de socket não tratados
+    const handleSocketError = (err) => {
+      if (err.code === 'ECONNRESET' || err.code === 'EPIPE') {
+        console.warn(`Socket error (${err.code}) capturado para canal ${channel.id}:`, err);
+        return false; // Previne o crash
+      }
+      return true; // Permite que outros erros sejam propagados
+    };
+
+    process.removeListener('uncaughtException', handleSocketError);
+    process.on('uncaughtException', (err) => {
+      if (err.source === 'socket' && (err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+        console.warn('Capturado erro de socket não tratado:', err);
+        return; // Previne o crash
+      }
+      if (err.source === 'socket-timeout') {
+        console.warn('Capturado socket timeout não tratado:', err);
+        return; // Previne o crash
+      }
+      throw err; // Re-throw outros erros
+    });
+
     try {
       const connection = await connect(config);
       
-      connection.imap.on('error', async (err) => {
-        console.error(`Erro na conexão IMAP do canal ${channel.id}:`, err);
-        await this.handleConnectionError(channel);
-      });
-
-      connection.imap.on('close', () => {
-        console.log(`Conexão fechada para canal ${channel.id}`);
-      });
-
-      connection.imap.on('end', () => {
-        console.log(`Conexão finalizada para canal ${channel.id}`);
-      });
-
-      // Ping periódico usando comando STATUS ao invés de NOOP
-      const pingInterval = setInterval(async () => {
+      if (connection.imap._sock) {
         try {
-          if (connection.imap.state === 'authenticated') {
-            await connection.imap.status('INBOX', []);
-          }
-        } catch (err) {
-          console.error(`Erro no ping do canal ${channel.id}:`, err);
-          clearInterval(pingInterval);
-          await this.handleConnectionError(channel);
+          // Remover listeners existentes
+          connection.imap._sock.removeAllListeners('error');
+          connection.imap._sock.removeAllListeners('timeout');
+
+          // Adicionar novo handler de erro
+          connection.imap._sock.on('error', (err) => {
+            console.warn(`Socket error para canal ${channel.id}:`, err);
+            if (err.code === 'ECONNRESET' || err.code === 'EPIPE') {
+              try {
+                connection.imap.end();
+              } catch (endError) {
+                console.warn(`Erro ao finalizar conexão após erro ${channel.id}:`, endError);
+              }
+              setTimeout(() => {
+                this.handleConnectionError(channel).catch(console.error);
+              }, 1000);
+            }
+          });
+
+          connection.imap._sock.on('timeout', () => {
+            console.warn(`Socket timeout para canal ${channel.id}`);
+            try {
+              connection.imap.end();
+            } catch (endError) {
+              console.warn(`Erro ao finalizar conexão após timeout ${channel.id}:`, endError);
+            }
+            setTimeout(() => {
+              this.handleConnectionError(channel).catch(console.error);
+            }, 1000);
+          });
+
+          connection.imap._sock.setKeepAlive(true, 30000);
+          connection.imap._sock.setTimeout(120000);
+        } catch (sockErr) {
+          console.warn(`Erro ao configurar socket para canal ${channel.id}:`, sockErr);
         }
-      }, 270000);
+      }
+
+      // Modificar handler de erro do IMAP
+      connection.imap.removeAllListeners('error');
+      connection.imap.on('error', (err) => {
+        console.error(`Erro IMAP para canal ${channel.id}:`, err);
+        if (err.source === 'socket' || err.source === 'socket-timeout') {
+          // Não propagar erros de socket
+          return;
+        }
+        this.handleConnectionError(channel).catch(console.error);
+      });
+
+      // Prevenir que erros no socket causem crash na conexão
+      if (connection.imap.connection) {
+        connection.imap.connection.removeAllListeners('error');
+        connection.imap.connection.on('error', (err) => {
+          console.warn(`Connection error para canal ${channel.id}:`, err);
+          // Não propagar o erro
+        });
+      }
+
+      let pingInterval;
+      const startPing = () => {
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = setInterval(async () => {
+          try {
+            if (connection.imap.state === 'authenticated') {
+              await connection.imap.status('INBOX', []);
+            }
+          } catch (err) {
+            console.warn(`Erro no ping do canal ${channel.id}:`, err);
+            clearInterval(pingInterval);
+            this.handleConnectionError(channel).catch(console.error);
+          }
+        }, 270000);
+      };
+
+      startPing();
 
       connection.imap.once('end', () => {
-        clearInterval(pingInterval);
+        if (pingInterval) clearInterval(pingInterval);
       });
 
       return connection;
     } catch (error) {
       console.error(`Erro ao criar conexão para canal ${channel.id}:`, error);
-      throw error;
+      await this.handleConnectionError(channel).catch(console.error);
+      return null;
     }
   }
 
@@ -251,20 +345,14 @@ class EmailConnectionManager {
     try {
       const box = await connection.openBox('INBOX');
       
-      // Verificar emails não lidos ao conectar/reconectar
       await this.processNewEmails(channel, connection);
       
-      // Usar o evento 'mail' do objeto imap
       connection.imap.on('mail', async () => {
-        // console.log(`Novo email recebido para canal ${channel.id}`);
         await this.processNewEmails(channel, connection);
       });
 
-      // Manter a conexão viva
       connection.imap._sock.setKeepAlive(true);
       
-      // console.log(`IMAP listener iniciado para o canal ${channel.id}`);
-
     } catch (err) {
       console.error(`Erro ao configurar listener para canal ${channel.id}:`, err);
       throw err;
@@ -301,12 +389,10 @@ class EmailConnectionManager {
       const host = channel.credentials.host;
       
       if (await this.isCircuitBreakerOpen(host)) {
-        // console.log(`Circuit breaker aberto para ${host}`);
         return;
       }
 
       if (!(await this.rateLimiter.canMakeRequest(host))) {
-        // console.log(`Rate limit atingido para ${host}`);
         return;
       }
 
@@ -323,24 +409,10 @@ class EmailConnectionManager {
         const messageId = msg.attributes.uid;
         
         if (this.messageCache.has(messageId)) {
-          // console.log(`Mensagem ${messageId} encontrada no cache`);
           continue;
         }
 
         try {
-          // Debug seguro da mensagem
-          // console.log('Mensagem raw:', {
-          //   attributes: msg.attributes,
-          //   parts: msg.parts.map(p => ({
-          //     which: p.which,
-          //     size: p.size,
-          //     bodyPreview: typeof p.body === 'string' ? 
-          //       p.body.substring(0, 100) + '...' : 
-          //       'Body não é string'
-          //   }))
-          // });
-
-          // Usar a parte completa do email (which: '')
           const fullEmailPart = msg.parts.find(p => p.which === '');
           if (!fullEmailPart?.body) {
             console.error('Email sem corpo completo');
@@ -349,14 +421,6 @@ class EmailConnectionManager {
 
           const email = await simpleParser(fullEmailPart.body);
 
-          // console.log('Email parseado:', {
-          //   from: email.from,
-          //   subject: email.subject,
-          //   hasText: !!email.text,
-          //   hasHtml: !!email.html
-          // });
-
-          // Extrair endereço do Return-Path se o from estiver undefined
           if (!email.from?.value?.[0]?.address) {
             const returnPathMatch = fullEmailPart.body.match(/Return-Path:\s*<([^>]+)>/i);
             if (returnPathMatch) {
@@ -405,7 +469,6 @@ class EmailConnectionManager {
     }
   }
 
-  // Adicionar métricas básicas
   getMetrics() {
     return {
       activeConnections: this.channelConnections.size,
@@ -470,13 +533,11 @@ async function handleIncomingEmail(channel, email) {
   const { organization } = channel;
   
   try {
-    // Tentar extrair ID do chat dos cabeçalhos
     const chatId = email.headers?.get('x-chat-id') || 
                   email.references?.find(ref => ref.includes('chat-'))?.split('chat-')[1]?.split('@')[0];
 
     let chat;
     if (chatId) {
-      // Buscar chat existente
       const { data: existingChat } = await supabase
         .from('chats')
         .select('*, customers(*)')
@@ -488,9 +549,7 @@ async function handleIncomingEmail(channel, email) {
       }
     }
 
-    // Se não encontrou chat, processa normalmente
     if (!chat) {
-      // Extrair email do remetente
       const fromEmail = email.from?.value?.[0]?.address || 
                        email.from?.text || 
                        email.headers?.get('from');
@@ -500,12 +559,10 @@ async function handleIncomingEmail(channel, email) {
         return;
       }
 
-      // Extrair nome do remetente de forma segura
       const fromName = email.from?.value?.[0]?.name || 
                       fromEmail.split('@')[0] || 
                       'Unknown';
 
-      // Check if customer exists
       let { data: customer } = await supabase
         .from('customers')
         .select('*')
@@ -513,7 +570,6 @@ async function handleIncomingEmail(channel, email) {
         .eq('email', fromEmail)
         .single();
 
-      // Create customer if not exists
       if (!customer) {
         const { data: newCustomer, error: customerError } = await supabase
           .from('customers')
@@ -529,11 +585,9 @@ async function handleIncomingEmail(channel, email) {
         customer = newCustomer;
       }
 
-      // Find existing chat or create new one
       chat = await findExistingChat(channel.id, customer.id);
       
       if (!chat) {
-        // Extrair e limpar o título do email
         const emailSubject = email.subject?.trim() || 'Sem assunto';
         
         const { data: newChat, error: chatError } = await supabase
@@ -558,10 +612,8 @@ async function handleIncomingEmail(channel, email) {
       throw new Error('Failed to create or retrieve chat');
     }
 
-    // Limpar o conteúdo do email antes de criar a mensagem
     const cleanedContent = cleanEmailContent(email.text || email.html || email.textAsHtml || 'Empty email content');
 
-    // Criar mensagem com o conteúdo limpo
     const { data: message, error: messageError } = await supabase
       .from('messages')
       .insert({
@@ -569,7 +621,7 @@ async function handleIncomingEmail(channel, email) {
         organization_id: organization.id,
         content: cleanedContent,
         sender_type: 'customer',
-        sender_customer_id: chat.customer_id, // Alterado para usar customer_id do chat
+        sender_customer_id: chat.customer_id,
         status: 'delivered'
       })
       .select()
@@ -577,7 +629,6 @@ async function handleIncomingEmail(channel, email) {
 
     if (messageError) throw messageError;
 
-    // Atualizar last_message_id do chat
     const { error: updateError } = await supabase
       .from('chats')
       .update({ 
@@ -593,39 +644,34 @@ async function handleIncomingEmail(channel, email) {
   }
 }
 
-// Função auxiliar para limpar o conteúdo do email
 function cleanEmailContent(content) {
   if (!content) return '';
 
-  // Lista de marcadores comuns que indicam início do histórico
   const markers = [
-    'Em .*?(?:às|at) .*?, .*? escreveu:',  // Formato Gmail PT
-    'Em .*?, .*? escreveu:',               // Formato Gmail PT simplificado
-    'On .*? at .*?, .*? wrote:',           // Formato Gmail EN
-    'On .*?, .*? wrote:',                  // Formato Gmail EN simplificado
-    '_{10,}',                              // 10 ou mais underscores
-    '-{10,}',                              // 10 ou mais hífens
-    'From: .*?@',                          // Cabeçalho From
-    'De: .*?@',                            // Cabeçalho De
-    'Enviado: .*?\n',                      // Cabeçalho Enviado
-    'Sent: .*?\n',                         // Cabeçalho Sent
-    '--- Original Message ---',            // Mensagem original EN
-    '--- Mensagem original ---',           // Mensagem original PT
-    'Forwarded message',                   // Encaminhamento EN
-    'Mensagem encaminhada',                // Encaminhamento PT
-    'Begin forwarded message:',            // Início encaminhamento EN
-    'Início da mensagem encaminhada:',     // Início encaminhamento PT
-    'Email interflow.*?escreveu:',         // Específico para o sistema
-    '.*?@.*?escreveu:'                     // Qualquer email seguido de "escreveu:"
+    'Em .*?(?:às|at) .*?, .*? escreveu:',
+    'Em .*?, .*? escreveu:',
+    'On .*? at .*?, .*? wrote:',
+    'On .*?, .*? wrote:',
+    '_{10,}',
+    '-{10,}',
+    'From: .*?@',
+    'De: .*?@',
+    'Enviado: .*?\n',
+    'Sent: .*?\n',
+    '--- Original Message ---',
+    '--- Mensagem original ---',
+    'Forwarded message',
+    'Mensagem encaminhada',
+    'Begin forwarded message:',
+    'Início da mensagem encaminhada:',
+    'Email interflow.*?escreveu:',
+    '.*?@.*?escreveu:'
   ];
 
-  // Criar regex com todos os marcadores
-  const regex = new RegExp(`(${markers.join('|')})`, 'ims'); // 'ims' para multiline, case insensitive e dotall
+  const regex = new RegExp(`(${markers.join('|')})`, 'ims');
 
-  // Dividir o conteúdo na primeira ocorrência de qualquer marcador
   let cleanContent = content;
 
-  // Remover blocos HTML de citação
   const htmlPatterns = [
     /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
     /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
@@ -634,39 +680,33 @@ function cleanEmailContent(content) {
     /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi
   ];
 
-  // Remover cada padrão HTML
   htmlPatterns.forEach(pattern => {
     cleanContent = cleanContent.replace(pattern, '');
   });
 
-  // Dividir no primeiro marcador encontrado
   const parts = cleanContent.split(regex);
   cleanContent = parts[0];
 
-  // Remover linhas que são citações
   cleanContent = cleanContent
     .split('\n')
     .filter(line => !line.trim().startsWith('>'))
     .join('\n');
 
-  // Limpeza final
   cleanContent = cleanContent
-    .replace(/\s*\n\s*\n\s*\n+/g, '\n\n') // Substituir 3+ quebras de linha por 2
-    .replace(/^\s+|\s+$/g, '')            // Remover espaços no início e fim
-    .replace(/\[cid:.*?\]/g, '')          // Remover referências a CID
-    .replace(/\[image:.*?\]/g, '')         // Remover referências a imagens
+    .replace(/\s*\n\s*\n\s*\n+/g, '\n\n')
+    .replace(/^\s+|\s+$/g, '')
+    .replace(/\[cid:.*?\]/g, '')
+    .replace(/\[image:.*?\]/g, '')
     .trim();
 
-  // Se o conteúdo estiver vazio após a limpeza, tentar uma limpeza mais simples
   if (!cleanContent.trim()) {
     cleanContent = content
-      .replace(/<[^>]+>/g, '')            // Remover todas as tags HTML
+      .replace(/<[^>]+>/g, '')
       .replace(/\s*\n\s*\n\s*\n+/g, '\n\n')
-      .split(regex)[0]                     // Ainda tentar cortar no marcador
+      .split(regex)[0]
       .trim();
   }
 
-  // Se ainda estiver vazio, usar o conteúdo original limpo
   if (!cleanContent.trim()) {
     cleanContent = content
       .replace(/<[^>]+>/g, '')
@@ -676,7 +716,6 @@ function cleanEmailContent(content) {
   return cleanContent || 'Mensagem vazia';
 }
 
-// Find existing open chat
 async function findExistingChat(channelId, customerId) {
   const { data: chat } = await supabase
     .from('chats')
@@ -691,7 +730,6 @@ async function findExistingChat(channelId, customerId) {
   return chat;
 }
 
-// Send email reply
 export async function sendEmailReply(chat, message) {
   try {
     const { data: channel } = await supabase
@@ -709,7 +747,6 @@ export async function sendEmailReply(chat, message) {
       throw new Error('Invalid SMTP credentials');
     }
 
-    // Send email using nodemailer
     const transporter = nodemailer.createTransport({
       host: credentials.smtpHost,
       port: credentials.smtpPort,
@@ -718,9 +755,9 @@ export async function sendEmailReply(chat, message) {
         user: credentials.smtpUsername,
         pass: credentials.smtpPassword
       },
-      connectionTimeout: 60000, // 60 segundos
-      greetingTimeout: 30000, // 30 segundos
-      socketTimeout: 60000 // 60 segundos
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000
     });
 
     await transporter.sendMail({
@@ -730,7 +767,6 @@ export async function sendEmailReply(chat, message) {
       text: message.content
     });
 
-    // Update message status
     await supabase
       .from('messages')
       .update({ status: 'sent' })
@@ -739,7 +775,6 @@ export async function sendEmailReply(chat, message) {
   } catch (error) {
     console.error('Error sending email reply:', error);
     
-    // Update message status to failed
     await supabase
       .from('messages')
       .update({ 
@@ -754,7 +789,6 @@ export async function sendEmailReply(chat, message) {
 
 export async function handleSenderMessageEmail(channel, messageData) {
   try {
-    // Buscar dados do chat, incluindo o título
     const { data: chat, error: chatError } = await supabase
       .from('chats')
       .select('title')
@@ -763,7 +797,6 @@ export async function handleSenderMessageEmail(channel, messageData) {
 
     if (chatError) throw chatError;
 
-    // Buscar mensagens anteriores com join em profiles e customers
     const { data: messages, error: messagesError } = await supabase
       .from('messages')
       .select(`
@@ -777,7 +810,6 @@ export async function handleSenderMessageEmail(channel, messageData) {
 
     if (messagesError) throw messagesError;
 
-    // Buscar dados do remetente da nova mensagem
     const { data: senderData, error: senderError } = await supabase
       .from(messageData.sender_type === 'customer' ? 'customers' : 'profiles')
       .select(messageData.sender_type === 'customer' ? 'name' : 'full_name')
@@ -786,7 +818,6 @@ export async function handleSenderMessageEmail(channel, messageData) {
 
     if (senderError) throw senderError;
 
-    // Preparar nova mensagem com dados do remetente
     const enrichedMessageData = {
       ...messageData,
       sender_customer: messageData.sender_type === 'customer' ? { name: senderData.name } : null,
@@ -796,27 +827,24 @@ export async function handleSenderMessageEmail(channel, messageData) {
 
     const htmlContent = createEmailTemplate(messageData.chat_id, messages, enrichedMessageData);
 
-    // Configurar transporte de email com configurações mais robustas
     const transporter = nodemailer.createTransport({
-      host: channel.credentials.smtpHost, // Mudado de host para smtpHost
-      port: channel.credentials.smtpPort, // Mudado de port para smtpPort
-      secure: channel.credentials.smtpSecure, // Mudado de secure para smtpSecure
+      host: channel.credentials.smtpHost,
+      port: channel.credentials.smtpPort,
+      secure: channel.credentials.smtpSecure,
       auth: {
-        user: channel.credentials.smtpUsername, // Mudado de username para smtpUsername
-        pass: channel.credentials.smtpPassword // Mudado de password para smtpPassword
+        user: channel.credentials.smtpUsername,
+        pass: channel.credentials.smtpPassword
       },
-      connectionTimeout: 60000, // 60 segundos
-      greetingTimeout: 30000, // 30 segundos
-      socketTimeout: 60000, // 60 segundos
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
       tls: {
         rejectUnauthorized: false
       }
     });
 
-    // Verificar a conexão antes de enviar
     await transporter.verify();
 
-    // Configurar cabeçalhos especiais para threading
     const emailConfig = {
       from: `"${channel.name || 'Atendimento'}" <${channel.credentials.username}>`,
       to: messageData.to,
@@ -829,13 +857,6 @@ export async function handleSenderMessageEmail(channel, messageData) {
       }
     };
 
-    // console.log('Configuração do email:', { 
-    //   to: emailConfig.to,
-    //   from: emailConfig.from,
-    //   subject: emailConfig.subject
-    // }); // Debug
-
-    // Enviar email
     const info = await transporter.sendMail(emailConfig);
 
     return {

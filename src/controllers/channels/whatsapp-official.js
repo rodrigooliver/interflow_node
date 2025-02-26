@@ -1,4 +1,4 @@
-import { handleIncomingMessage, handleStatusUpdate } from '../webhooks/message-handlers.js';
+import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
 
 export async function handleWhatsAppOfficialWebhook(req, res) {
