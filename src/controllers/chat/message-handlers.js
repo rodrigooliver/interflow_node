@@ -469,11 +469,11 @@ async function processMessageMedia(messageData, organizationId) {
         });
         
         if (!response.ok) {
-          throw new Error(`Falha ao baixar mídia: ${response.statusText}`);
+          throw new Error(`Failed to download media: ${response.statusText}`);
         }
         
         fileBuffer = Buffer.from(await response.arrayBuffer());
-        console.log('Mídia baixada com sucesso da URL');
+        console.log('Mídia downloaded successfully from URL');
       } catch (downloadError) {
         console.error('Erro ao baixar mídia diretamente:', downloadError);
         // Se falhar, tentaremos o próximo método
@@ -509,7 +509,7 @@ async function processMessageMedia(messageData, organizationId) {
               });
               
               if (!apiResponse.ok) {
-                throw new Error(`Falha ao baixar mídia via API: ${apiResponse.statusText}`);
+                throw new Error(`Failed to download media via API: ${apiResponse.statusText}`);
               }
               
               fileBuffer = Buffer.from(await apiResponse.arrayBuffer());
@@ -559,7 +559,7 @@ async function processMessageMedia(messageData, organizationId) {
         });
 
       if (uploadError) {
-        throw new Error(`Erro ao fazer upload do arquivo: ${uploadError.message}`);
+        throw new Error(`Error uploading file: ${uploadError.message}`);
       }
 
       // Obter URL pública
@@ -764,7 +764,7 @@ async function disconnectChannel(channelId, errorMessage) {
  */
 export async function sendSystemMessage(messageId, attempt = 1) {
   const MAX_ATTEMPTS = 3;
-  const RETRY_DELAY = 2000; // 2 segundos entre tentativas
+  const RETRY_DELAY = 4000; // 2 segundos entre tentativas
   
   try {
     // Busca a mensagem com dados do chat e do canal
@@ -790,11 +790,11 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
-      throw new Error(`Handler não encontrado para o canal tipo: ${channel.type}`);
+      throw new Error(`Handler not found for channel type: ${channel.type}`);
     }
     
     if (!channelConfig.handler) {
-      throw new Error(`Handler não implementado para o canal tipo: ${channel.type}`);
+      throw new Error(`Handler not implemented for channel type: ${channel.type}`);
     }
 
     const transaction = Sentry.startTransaction({
@@ -877,7 +877,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       .from('messages')
       .update({ 
         status: 'failed',
-        error_message: `Falha após ${MAX_ATTEMPTS} tentativas. Último erro: ${error.message}`
+        error_message: `Failed after ${MAX_ATTEMPTS} attempts. Last error: ${error.message}`
       })
       .eq('id', messageId);
     
@@ -935,7 +935,7 @@ export async function createMessageRoute(req, res) {
     if (chatError || !chatData) {
       return res.status(404).json({ 
         success: false, 
-        error: 'Chat não encontrado ou sem permissão' 
+        error: 'Chat not found or permission denied' 
       });
     }
 
@@ -1002,7 +1002,7 @@ export async function createMessageRoute(req, res) {
             });
 
           if (uploadError) {
-            throw new Error(`Erro ao fazer upload do arquivo: ${uploadError.message}`);
+            throw new Error(`Error uploading file: ${uploadError.message}`);
           }
 
           // Obter URL pública
@@ -1115,7 +1115,7 @@ export async function createMessageRoute(req, res) {
       // Se não há conteúdo nem arquivos
       return res.status(400).json({
         success: false,
-        error: 'Nenhum conteúdo ou anexo fornecido'
+        error: 'No content or attachments provided'
       });
     } else if (!isSocialChannel && !content && hasFiles) {
       // Para email sem texto, mas com anexos
@@ -1137,7 +1137,7 @@ export async function createMessageRoute(req, res) {
     if (messages.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Nenhum conteúdo ou anexo fornecido'
+        error: 'No content or attachments provided'
       });
     }
 
@@ -1151,7 +1151,7 @@ export async function createMessageRoute(req, res) {
       console.error('Erro ao criar mensagens:', messagesError);
       return res.status(500).json({ 
         success: false, 
-        error: 'Erro ao criar mensagens' 
+        error: 'Error creating messages' 
       });
     }
 
@@ -1220,7 +1220,7 @@ export async function createMessageRoute(req, res) {
     console.error('Erro no createMessageRoute:', error);
     return res.status(500).json({ 
       success: false, 
-      error: 'Erro interno do servidor' 
+      error: 'Internal server error' 
     });
   }
 }

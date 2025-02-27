@@ -52,7 +52,8 @@ async function findOrCreateChat(channel, senderId, accessToken) {
             .from('chats')
             .update({
               profile_picture: userInfo.profile_pic || existingChat.profile_picture,
-              profile_updated_at: new Date().toISOString()
+              profile_updated_at: new Date().toISOString(),
+              last_customer_message_at: new Date().toISOString()
             })
             .eq('id', existingChat.id),
           
@@ -64,6 +65,14 @@ async function findOrCreateChat(channel, senderId, accessToken) {
             })
             .eq('id', customer.id)
         ]);
+      } else {
+        // Mesmo sem novas informações do usuário, atualizar a data da última mensagem
+        await supabase
+          .from('chats')
+          .update({
+            last_customer_message_at: new Date().toISOString()
+          })
+          .eq('id', existingChat.id);
       }
 
       return existingChat;
@@ -83,7 +92,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 
     if (customerError) throw customerError;
 
-    // Criar novo chat com a mesma foto de perfil
+    // Criar novo chat com a mesma foto de perfil e data da última mensagem
     const { data: chat, error: chatError } = await supabase
       .from('chats')
       .insert({
@@ -93,7 +102,8 @@ async function findOrCreateChat(channel, senderId, accessToken) {
         external_id: senderId,
         status: 'pending',
         profile_picture: userInfo?.profile_pic || null,
-        profile_updated_at: new Date().toISOString()
+        profile_updated_at: new Date().toISOString(),
+        last_customer_message_at: new Date().toISOString()
       })
       .select('*, customers(*)')
       .single();
@@ -135,6 +145,14 @@ export async function handleInstagramWebhook(req, res) {
           if (messagingData.message) {
             const accessToken = decrypt(channel.credentials.access_token);
             const chat = await findOrCreateChat(channel, messagingData.sender.id, accessToken);
+            
+            // Atualizar a data da última mensagem do cliente
+            await supabase
+              .from('chats')
+              .update({
+                last_customer_message_at: new Date(messagingData.timestamp || Date.now()).toISOString()
+              })
+              .eq('id', chat.id);
 
             await handleIncomingMessage(channel, {
               chat,
@@ -351,9 +369,32 @@ export async function handleSenderMessageInstagram(channel, messageData) {
     const accessToken = decrypt(channel.credentials.access_token);
     const instagramUserId = channel.credentials.instagram_id;
 
+    // Verificar se o cliente enviou mensagem nas últimas 24 horas
+    const { data: chatData, error: chatError } = await supabase
+      .from('chats')
+      .select('last_customer_message_at')
+      .eq('id', messageData.chat_id)
+      .single();
+
+    if (chatError) throw chatError;
+
+    const lastCustomerMessageAt = chatData?.last_customer_message_at;
+    
+    // Verificar se last_customer_message_at está vazio
+    if (!lastCustomerMessageAt) {
+      throw new Error('Não é possível enviar mensagem para este cliente pois ele ainda não enviou nenhuma mensagem');
+    }
+    
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    if (new Date(lastCustomerMessageAt) < twentyFourHoursAgo) {
+      throw new Error('Não é possível enviar mensagem para este cliente pois já se passaram mais de 24 horas desde a última interação dele');
+    }
+
     let messageBody;
 
-    console.log(messageData)
+    // console.log(messageData)
     
     if (messageData.attachments?.length > 0) {
       const attachment = messageData.attachments[0];
