@@ -12,6 +12,7 @@ import monitoringRoutes from './routes/monitoring.js';
 import instagramRoutes from './routes/instagram.js';
 import chatRoutes from './routes/chat.js';
 import { refreshInstagramTokens } from './cron/instagram-token-refresh.js';
+import whatsappRoutes from './routes/whatsapp.js';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +54,7 @@ app.get('/', (req, res) => {
 
 // Routes
 app.use('/api/webhook/instagram', instagramRoutes);
+app.use('/api/webhook/whatsapp', whatsappRoutes);
 app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);

@@ -6,22 +6,37 @@ import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
 import { findExistingChat } from '../webhooks/utils.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
+import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 
 import { handleSenderMessageWApi } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
 import { handleSenderMessageInstagram } from '../channels/instagram.js';
+import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
-// import { handleSenderMessageOfficial } from '../../services/channels/official.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
+
+import { encrypt, decrypt } from '../../utils/crypto.js';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import fs from 'fs/promises';
 
 /**
  * Configurações e handlers para cada tipo de canal
+ * 
+ * Cada canal tem configurações específicas:
+ * - identifier: coluna na tabela customers que armazena o ID do contato
+ * - handler: função que processa o envio de mensagens
+ * 
+ * Tipos de mensagens suportadas por canal:
+ * - whatsapp_official: texto, imagem, vídeo, áudio, documento e templates
+ * - whatsapp_wapi: texto, imagem, vídeo, áudio, documento
+ * - instagram: texto, imagem, vídeo
+ * - email: texto com formatação HTML, anexos
  */
 const CHANNEL_CONFIG = {
   whatsapp_official: {
     identifier: 'whatsapp',
-    // handler: handleSenderMessageOfficial
+    handler: handleSenderMessageOfficial
   },
   whatsapp_wapi: {
     identifier: 'whatsapp',
@@ -275,9 +290,13 @@ export async function handleIncomingMessage(channel, messageData) {
       
       try {
         const mediaResult = await processMessageMedia(messageData, organization.id);
-        if (mediaResult) {
-          attachments = [mediaResult.attachment];
-          fileRecords = [mediaResult.fileRecord];
+        if (mediaResult && mediaResult.success) {
+          if (mediaResult.attachment) {
+            attachments = [mediaResult.attachment];
+          }
+          if (mediaResult.fileRecord) {
+            fileRecords = [mediaResult.fileRecord];
+          }
         }
       } catch (error) {
         console.error('Erro ao processar mídia da mensagem:', error);
@@ -312,21 +331,28 @@ export async function handleIncomingMessage(channel, messageData) {
     if (messageError) throw messageError;
 
     // Registrar arquivos vinculados à mensagem
-    if (fileRecords.length > 0) {
+    if (fileRecords && fileRecords.length > 0) {
       for (const fileRecord of fileRecords) {
-        fileRecord.message_id = message.id;
+        if (fileRecord) {
+          fileRecord.message_id = message.id;
+        }
       }
       
-      const { error: filesError } = await supabase
-        .from('files')
-        .insert(fileRecords);
+      // Filtrar para remover possíveis valores null
+      const validFileRecords = fileRecords.filter(record => record !== null && record !== undefined);
+      
+      if (validFileRecords.length > 0) {
+        const { error: filesError } = await supabase
+          .from('files')
+          .insert(validFileRecords);
 
-      if (filesError) {
-        console.error('Erro ao registrar arquivos:', filesError);
-        Sentry.captureException(filesError, {
-          extra: { fileRecords, context: 'registering_message_files' }
-        });
-        // Não falhar a operação principal se o registro de arquivos falhar
+        if (filesError) {
+          console.error('Erro ao registrar arquivos:', filesError);
+          Sentry.captureException(filesError, {
+            extra: { fileRecords: validFileRecords, context: 'registering_message_files' }
+          });
+          // Não falhar a operação principal se o registro de arquivos falhar
+        }
       }
     }
 
@@ -408,50 +434,64 @@ async function processMessageMedia(messageData, organizationId) {
         mediaBase64 = raw.video.videoBase64;
       } else if (raw.audio) {
         mediaUrl = raw.audio.url;
-        mimeType = raw.audio.mimetype || 'audio/ogg';
+        mimeType = raw.audio.mimetype || 'audio/mp3';
+        caption = raw.audio.caption || caption;
         mediaKey = raw.audio.mediaKey;
         directPath = raw.audio.directPath;
         mediaBase64 = raw.audio.audioBase64;
       } else if (raw.document) {
         mediaUrl = raw.document.url;
-        mimeType = raw.document.mimetype || 'application/octet-stream';
-        fileName = raw.document.fileName || fileName;
+        mimeType = raw.document.mimetype || 'application/pdf';
         caption = raw.document.caption || caption;
+        fileName = raw.document.filename || fileName;
         mediaKey = raw.document.mediaKey;
         directPath = raw.document.directPath;
         mediaBase64 = raw.document.documentBase64;
-      } else if (raw.sticker) {
-        mediaUrl = raw.sticker.url;
-        mimeType = raw.sticker.mimetype || 'image/webp';
-        mediaKey = raw.sticker.mediaKey;
-        directPath = raw.sticker.directPath;
-        mediaBase64 = raw.sticker.stickerBase64;
       }
     }
     
-    // Gerar nome de arquivo se não fornecido
-    if (!fileName) {
-      const fileId = uuidv4();
-      const extension = mimeType.split('/')[1] || '';
-      fileName = `${fileId}.${extension}`;
+    // Converter URL relativa para absoluta se necessário
+    if (mediaUrl) {
+      // Verifica se a URL é absoluta (começa com http:// ou https://)
+      if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
+        const apiUrl = process.env.API_URL || process.env.BACKEND_URL || 'http://localhost:3000';
+        // Remover a barra final se a URL base terminar com barra
+        const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
+        
+        // Adicionar barra inicial se a URL não começar com barra
+        const urlPath = mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`;
+        
+        mediaUrl = `${baseUrl}${urlPath}`;
+        console.log(`URL convertida para absoluta: ${mediaUrl}`);
+      }
     }
     
-    // Verificar se existe integração ativa de S3
-    const s3Integration = await getActiveS3Integration(organizationId);
-    
-    // Obter o buffer do arquivo
-    let fileBuffer;
-    
-    // Verificar se temos base64 disponível (prioridade mais alta)
+    // Tentar usar o base64 primeiro se disponível
     if (mediaBase64) {
       try {
-        // Remover prefixo "data:image/jpeg;base64," se existir
-        const base64Data = mediaBase64.includes('base64,') 
-          ? mediaBase64.split('base64,')[1] 
-          : mediaBase64;
-          
-        fileBuffer = Buffer.from(base64Data, 'base64');
-        console.log('Usando mídia base64 fornecida pelo webhook');
+        // Usar a função uploadFile diretamente com os dados base64
+        const uploadResult = await uploadFile({
+          fileData: mediaBase64,
+          fileName: fileName || `file-${Date.now()}.${mimeType.split('/')[1] || 'bin'}`,
+          contentType: mimeType,
+          organizationId,
+          isBase64: true,
+          customFolder: 'media'
+        });
+        
+        if (uploadResult.success) {
+          return {
+            success: true,
+            url: uploadResult.fileUrl,
+            mimeType,
+            fileName: uploadResult.fileName,
+            size: uploadResult.fileSize,
+            attachment: uploadResult.attachment,
+            fileRecord: uploadResult.fileRecord
+          };
+        } else {
+          throw new Error(`Falha ao fazer upload do arquivo base64: ${uploadResult.error}`);
+        }
       } catch (base64Error) {
         console.error('Erro ao processar mídia base64:', base64Error);
         // Se falhar, tentaremos outros métodos
@@ -459,21 +499,40 @@ async function processMessageMedia(messageData, organizationId) {
     }
     
     // Se não temos buffer do base64, tentar baixar da URL
-    if (!fileBuffer && mediaUrl) {
+    if (mediaUrl) {
       try {
-        // Tentar baixar diretamente da URL
-        const response = await fetch(mediaUrl, {
+        console.log(`Tentando baixar mídia da URL: ${mediaUrl}`);
+        
+        // Usar a função downloadFileFromUrl para obter o buffer
+        const fileBuffer = await downloadFileFromUrl(mediaUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
           }
         });
         
-        if (!response.ok) {
-          throw new Error(`Failed to download media: ${response.statusText}`);
-        }
+        // Usar a função uploadFile com o buffer obtido
+        const uploadResult = await uploadFile({
+          fileData: fileBuffer,
+          fileName: fileName || `file-${Date.now()}.${mimeType.split('/')[1] || 'bin'}`,
+          contentType: mimeType,
+          fileSize: fileBuffer.length,
+          organizationId,
+          customFolder: 'media'
+        });
         
-        fileBuffer = Buffer.from(await response.arrayBuffer());
-        console.log('Mídia downloaded successfully from URL');
+        if (uploadResult.success) {
+          return {
+            success: true,
+            url: uploadResult.fileUrl,
+            mimeType,
+            fileName: uploadResult.fileName,
+            size: uploadResult.fileSize,
+            attachment: uploadResult.attachment,
+            fileRecord: uploadResult.fileRecord
+          };
+        } else {
+          throw new Error(`Falha ao fazer upload do arquivo baixado: ${uploadResult.error}`);
+        }
       } catch (downloadError) {
         console.error('Erro ao baixar mídia diretamente:', downloadError);
         // Se falhar, tentaremos o próximo método
@@ -481,7 +540,7 @@ async function processMessageMedia(messageData, organizationId) {
     }
     
     // Se ainda não temos o buffer, tentar via API do canal
-    if (!fileBuffer && messageData.channel) {
+    if (messageData.channel) {
       try {
         // Buscar credenciais do canal
         const { data: channelData } = await supabase
@@ -490,120 +549,45 @@ async function processMessageMedia(messageData, organizationId) {
           .eq('id', messageData.channel.id)
           .single();
           
-        if (channelData) {
-          // Processar de acordo com o tipo de canal
-          if (channelData.type === 'whatsapp_wapi') {
-            const credentials = channelData.credentials || {};
-            const apiHost = credentials.apiHost;
-            const apiToken = credentials.apiToken ? decrypt(credentials.apiToken) : null;
-            const apiConnectionKey = credentials.apiConnectionKey ? decrypt(credentials.apiConnectionKey) : null;
-            
-            if (apiHost && apiToken && apiConnectionKey && messageData.messageId) {
-              // Construir URL para download via API do WAPI
-              const downloadUrl = `https://${apiHost}/instance/downloadMedia?connectionKey=${apiConnectionKey}&messageId=${messageData.messageId}`;
-              
-              const apiResponse = await fetch(downloadUrl, {
-                headers: {
-                  'Authorization': `Bearer ${apiToken}`
-                }
-              });
-              
-              if (!apiResponse.ok) {
-                throw new Error(`Failed to download media via API: ${apiResponse.statusText}`);
-              }
-              
-              fileBuffer = Buffer.from(await apiResponse.arrayBuffer());
-              console.log('Mídia baixada com sucesso via API do WAPI');
-            }
-          }
-          // Adicionar outros tipos de canal conforme necessário
+        if (!channelData) {
+          throw new Error('Canal não encontrado');
         }
-      } catch (apiError) {
-        console.error('Erro ao baixar mídia via API do canal:', apiError);
-        // Se falhar, não temos mais opções
-      }
-    }
-    
-    // Se não conseguimos obter o buffer por nenhum método, falhar
-    if (!fileBuffer) {
-      throw new Error('Não foi possível obter o conteúdo da mídia por nenhum método');
-    }
-    
-    const fileId = uuidv4();
-    let fileUrl;
-    let fileKey;
-    let storageType;
-    
-    if (s3Integration) {
-      // Upload para S3 com integração personalizada
-      const uploadResult = await uploadToS3({
-        file: fileBuffer,
-        fileName: fileName,
-        contentType: mimeType,
-        folder: `organizations/${organizationId}/chat-files`,
-        organizationId
-      });
-      
-      fileUrl = uploadResult.url;
-      fileKey = uploadResult.key;
-      storageType = 's3';
-    } else {
-      // Upload para o bucket padrão do Supabase
-      const filePath = `${organizationId}/chat-attachments/${fileName}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('attachments')
-        .upload(filePath, fileBuffer, {
-          contentType: mimeType,
-          cacheControl: '3600'
-        });
-
-      if (uploadError) {
-        throw new Error(`Error uploading file: ${uploadError.message}`);
-      }
-
-      // Obter URL pública
-      const { data: urlData } = supabase.storage
-        .from('attachments')
-        .getPublicUrl(filePath);
         
-      fileUrl = urlData.publicUrl;
-      fileKey = filePath;
-      storageType = 'supabase';
+        // Implementar lógica específica para cada tipo de canal
+        if (channelData.type === 'whatsapp' && mediaKey && directPath) {
+          // Lógica específica para WhatsApp
+          // ...
+        }
+      } catch (channelError) {
+        console.error('Erro ao tentar baixar mídia via API do canal:', channelError);
+      }
     }
     
-    // Preparar registro para o banco de dados
-    const fileRecord = {
-      id: fileId,
-      organization_id: organizationId,
-      name: fileName,
-      size: fileBuffer.byteLength,
-      public_url: fileUrl,
-      path: fileKey,
-      integration_id: s3Integration ? s3Integration.id : null,
-      mime_type: mimeType,
-      created_at: new Date().toISOString()
-    };
+    // Gerar nome de arquivo se não fornecido
+    if (!fileName) {
+      const fileId = uuidv4();
+      const extension = mimeType ? mimeType.split('/')[1] || '' : '';
+      fileName = `${fileId}.${extension}`;
+    }
     
-    // Preparar dados de anexo para a mensagem
-    const attachment = {
-      id: fileId,
-      name: fileName,
-      url: fileUrl,
-      key: fileKey,
-      type: mimeType.split('/')[0],
-      mime_type: mimeType,
-      size: fileBuffer.byteLength,
-      storage: storageType
-    };
-    
+    // Se não conseguimos obter o buffer da mídia
+    console.warn('Não foi possível obter o conteúdo da mídia por nenhum método');
     return {
-      attachment,
-      fileRecord
+      success: false,
+      error: 'Não foi possível obter o conteúdo da mídia por nenhum método',
+      mimeType,
+      fileName,
+      attachment: null,
+      fileRecord: null
     };
   } catch (error) {
     console.error('Erro ao processar mídia:', error);
-    throw error;
+    return {
+      success: false,
+      error: error.message,
+      attachment: null,
+      fileRecord: null
+    };
   }
 }
 
@@ -618,6 +602,9 @@ async function processMessageMedia(messageData, organizationId) {
  * @param {string} messageData.messageId - ID da mensagem a ser atualizada
  * @param {string} messageData.status - Novo status da mensagem
  * @param {string} [messageData.error] - Mensagem de erro, se houver
+ * @param {number} [messageData.timestamp] - Timestamp da atualização de status
+ * @param {string} [messageData.chat_id] - ID do chat associado à mensagem
+ * @param {Object} [messageData.metadata] - Metadados adicionais sobre o status
  */
 export async function handleStatusUpdate(channel, messageData) {
   try {
@@ -631,21 +618,134 @@ export async function handleStatusUpdate(channel, messageData) {
       }
     });
 
-    // Update message status based on webhook data
-    const { data: message } = await supabase
+    // Tenta encontrar a mensagem pelo ID exato primeiro
+    let { data: message } = await supabase
       .from('messages')
       .select('*')
-      .eq('metadata->messageId', messageData.messageId)
+      .eq('external_id', messageData.messageId)
       .single();
 
-    if (message) {
-      await supabase
+    // Se não encontrar e temos um chat_id, tenta buscar pelo ID no metadata
+    if (!message && messageData.chat_id) {
+      const { data: messages } = await supabase
         .from('messages')
-        .update({
-          status: messageData.status,
-          error_message: messageData.error
-        })
-        .eq('id', message.id);
+        .select('*')
+        .eq('chat_id', messageData.chat_id)
+        .eq('sender_type', 'agent') // Apenas mensagens enviadas pelo agente
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (messages && messages.length > 0) {
+        // Procura por mensagens que possam corresponder ao ID do WhatsApp
+        for (const msg of messages) {
+          // Verifica se o ID está no metadata ou no external_id
+          if ((msg.metadata && 
+               (msg.metadata.messageId === messageData.messageId || 
+                msg.metadata.id === messageData.messageId)) ||
+              msg.external_id === messageData.messageId) {
+            message = msg;
+            break;
+          }
+        }
+      }
+    }
+
+    if (message) {
+      // Verifica se o novo status representa uma progressão válida
+      const statusHierarchy = {
+        'pending': 0,
+        'retry': 1,
+        'sent': 2,
+        'delivered': 3,
+        'read': 4,
+        'failed': 5 // O status 'failed' é tratado como caso especial
+      };
+      
+      const currentStatusLevel = statusHierarchy[message.status] || 0;
+      const newStatusLevel = statusHierarchy[messageData.status] || 0;
+      
+      // Verifica se já temos um timestamp para o status atual nos metadados
+      let currentStatusTimestamp = null;
+      if (message.metadata?.status_timestamps) {
+        const timestampStr = message.metadata.status_timestamps[message.status];
+        if (timestampStr) {
+          try {
+            currentStatusTimestamp = new Date(timestampStr).getTime();
+          } catch (e) {
+            console.warn(`Erro ao converter timestamp: ${timestampStr}`, e);
+          }
+        }
+      }
+      
+      // Verifica se o novo evento é mais recente que o atual
+      const newEventTimestamp = messageData.timestamp || Date.now();
+      const isNewerEvent = !currentStatusTimestamp || newEventTimestamp >= currentStatusTimestamp;
+      
+      // Só atualiza o status se for uma progressão válida ou se for 'failed' ou se for um evento mais recente
+      const shouldUpdateStatus = 
+        messageData.status === 'failed' || // Sempre atualiza para 'failed'
+        (newStatusLevel > currentStatusLevel) || // Atualiza se for um status "superior"
+        (newStatusLevel === currentStatusLevel && isNewerEvent); // Atualiza se for o mesmo status mas mais recente
+      
+      // Prepara os dados para atualização
+      const updateData = {
+        error_message: messageData.error
+      };
+      
+      // Só inclui o status se for uma progressão válida
+      if (shouldUpdateStatus) {
+        updateData.status = messageData.status;
+      }
+      
+      // Prepara os metadados atualizados
+      const statusDate = messageData.timestamp ? new Date(messageData.timestamp).toISOString() : new Date().toISOString();
+      
+      // Inicializa ou atualiza os metadados
+      const currentMetadata = message.metadata || {};
+      const statusTimestamps = currentMetadata.status_timestamps || {};
+      
+      // Atualiza o timestamp do status atual
+      if (shouldUpdateStatus || !statusTimestamps[messageData.status]) {
+        statusTimestamps[messageData.status] = statusDate;
+      }
+      
+      // Certifica-se de que status_updates seja um array
+      const currentStatusUpdates = Array.isArray(currentMetadata.status_updates) 
+        ? currentMetadata.status_updates 
+        : [];
+        
+      // Adiciona a nova atualização de status com timestamp
+      const newStatusUpdate = {
+        status: messageData.status,
+        timestamp: messageData.timestamp,
+        processed_at: new Date().toISOString(),
+        ...messageData.metadata
+      };
+      
+      // Atualiza os metadados
+      updateData.metadata = {
+        ...currentMetadata,
+        status_timestamps: statusTimestamps,
+        status_updates: [
+          ...currentStatusUpdates,
+          newStatusUpdate
+        ]
+      };
+      
+      // Verifica se há algo para atualizar
+      if (Object.keys(updateData).length > 1 || shouldUpdateStatus) { // Sempre tem pelo menos error_message
+        // Atualiza a mensagem no banco de dados
+        const { error: updateError } = await supabase
+          .from('messages')
+          .update(updateData)
+          .eq('id', message.id);
+          
+        if (updateError) {
+          console.error(`Erro ao atualizar status da mensagem: ${updateError.message}`);
+        }
+      }
+    } else {
+      console.log(`Mensagem não encontrada para o ID: ${messageData.messageId}`);
     }
 
     // Finish the transaction
@@ -673,27 +773,30 @@ export async function handleStatusUpdate(channel, messageData) {
  */
 async function shouldDisconnectChannel(channelId) {
   try {
-    // Busca as últimas 5 mensagens enviadas neste canal usando JOIN
+    // Busca as últimas 8 mensagens enviadas neste canal usando JOIN
     const { data: recentMessages, error } = await supabase
       .from('messages')
-      .select('messages.status, messages.error_message')
-      .join('chats', 'messages.chat_id = chats.id')
-      .eq('chats.channel_id', channelId)
-      .eq('messages.sender_type', 'agent')
-      .eq('messages.sent_from_system', true)
-      .order('messages.created_at', { ascending: false })
-      .limit(5);
+      .select(`
+        status, 
+        error_message,
+        chat:chats!messages_chat_id_fkey(channel_id)
+      `)
+      .eq('chat.channel_id', channelId)
+      .eq('sender_type', 'agent')
+      .eq('sent_from_system', true)
+      .order('created_at', { ascending: false })
+      .limit(8);
     
     if (error) throw error;
     
     // Se não houver mensagens suficientes para análise
-    if (!recentMessages || recentMessages.length < 3) return false;
+    if (!recentMessages || recentMessages.length < 6) return false;
     
     // Conta quantas das últimas mensagens falharam
     const failedCount = recentMessages.filter(msg => msg.status === 'failed').length;
     
-    // Se 3 ou mais das últimas 5 mensagens falharam, desconecta o canal
-    return failedCount >= 3;
+    // Se 6 ou mais das últimas 8 mensagens falharam, desconecta o canal
+    return failedCount >= 6;
   } catch (error) {
     console.error('Erro ao verificar histórico de falhas do canal:', error);
     Sentry.captureException(error, {
@@ -968,84 +1071,27 @@ export async function createMessageRoute(req, res) {
         : [files.attachments]; 
 
       for (const file of uploadPromises) {
-        const fileId = uuidv4();
-        const fileExtension = path.extname(file.name);
-        const fileName = `${fileId}${fileExtension}`;
-        const fileType = file.mimetype.split('/')[0]; // image, video, application, etc.
-
-        let fileUrl;
-        let fileKey;
-        let storageType;
-
-        if (s3Integration) {
-          // Upload para S3 com integração personalizada
-          const uploadResult = await uploadToS3({
-            file: file.data,
-            fileName: fileName,
-            contentType: file.mimetype,
-            folder: `organizations/${organizationId}/chat-files`,
-            organizationId
-          });
-          
-          fileUrl = uploadResult.url;
-          fileKey = uploadResult.key;
-          storageType = 's3';
-        } else {
-          // Upload para o bucket padrão do Supabase
-          const filePath = `${organizationId}/chat-attachments/${fileName}`;
-          
-          const { error: uploadError, data: uploadData } = await supabase.storage
-            .from('attachments')
-            .upload(filePath, file.data, {
-              contentType: file.mimetype,
-              cacheControl: '3600'
-            });
-
-          if (uploadError) {
-            throw new Error(`Error uploading file: ${uploadError.message}`);
-          }
-
-          // Obter URL pública
-          const { data: urlData } = supabase.storage
-            .from('attachments')
-            .getPublicUrl(filePath);
-            
-          fileUrl = urlData.publicUrl;
-          fileKey = filePath;
-          storageType = 'supabase';
-        }
-
-        const fileAttachment = {
-          id: fileId,
-          name: file.name,
-          url: fileUrl,
-          key: fileKey,
-          type: fileType,
-          mime_type: file.mimetype,
-          size: file.size,
-          storage: storageType
-        };
-
-        // Preparar registro para a tabela files
-        fileRecords.push({
-          id: fileId,
-          organization_id: organizationId,
-          name: file.name,
-          size: file.size,
-          public_url: fileUrl,
-          path: fileKey,
-          integration_id: s3Integration ? s3Integration.id : null,
-          mime_type: file.mimetype,
-          created_at: new Date().toISOString()
+        // Usar a função uploadFile para processar o arquivo
+        const uploadResult = await uploadFile({
+          fileData: file.data,
+          fileName: file.name,
+          contentType: file.mimetype,
+          fileSize: file.size,
+          organizationId,
+          customFolder: 'chat-attachments'
         });
-
+        
+        if (!uploadResult.success) {
+          throw new Error(`Error uploading file: ${uploadResult.error}`);
+        }
+        
         // Para canais sociais, cada arquivo é uma mensagem separada
         if (isSocialChannel) {
           // Determinar o tipo de mensagem com base no tipo de arquivo
           let messageType = 'document';
-          if (fileType === 'image') messageType = 'image';
-          if (fileType === 'video') messageType = 'video';
-          if (fileType === 'audio') messageType = 'audio';
+          if (uploadResult.attachment.type === 'image') messageType = 'image';
+          if (uploadResult.attachment.type === 'video') messageType = 'video';
+          if (uploadResult.attachment.type === 'audio') messageType = 'audio';
 
           messages.push({
             chat_id: chatId,
@@ -1055,14 +1101,17 @@ export async function createMessageRoute(req, res) {
             content: null, // Sem conteúdo de texto
             type: messageType,
             response_message_id: replyToMessageId,
-            attachments: [fileAttachment],
+            attachments: [uploadResult.attachment],
             status: 'pending',
             created_at: new Date().toISOString()
           });
         } else {
           // Para email, adicionar à lista de anexos
-          attachments.push(fileAttachment);
+          attachments.push(uploadResult.attachment);
         }
+        
+        // Adicionar o registro do arquivo para inserção posterior
+        fileRecords.push(uploadResult.fileRecord);
       }
     }
 
