@@ -51,11 +51,11 @@ const CHANNEL_CONFIG = {
     // handler: handleSenderMessageEvolution
   },
   instagram: {
-    identifier: 'instagram_id',
+    identifier: 'instagramId',
     handler: handleSenderMessageInstagram
   },
   facebook: {
-    identifier: 'facebook_id',
+    identifier: 'facebookId',
     // handler: handleSenderMessageFacebook
   },
   email: {
@@ -192,25 +192,27 @@ export async function handleIncomingMessage(channel, messageData) {
 
         try {
           const possibleIds = normalizeContactId(messageData.externalId, channel.type);
-          
-          const { data: existingCustomer, error: findError } = await supabase
-            .from('customers')
-            .select('*')
-            .eq('organization_id', organization.id)
-            .in(identifierColumn, possibleIds)
+
+          //Pesquisar se o customer existe com o id
+          const { data: customerContact, error: customerContactError } = await supabase
+            .from('customer_contacts')
+            .select('*, customers(*)')
+            .eq('type', identifierColumn)
+            .in('value', possibleIds)
+            .eq('organization_id', channel.organization_id)
             .single();
 
-          if (findError && findError.code !== 'PGRST116') throw findError;
+          if (customerContactError) throw customerContactError;
 
-          if (existingCustomer) {
-            customer = existingCustomer;
+          if (customerContact) {
+            customer = customerContact.customers;
           } else {
+            //Criar novo customer
             try {
               const customerData = {
                 organization_id: organization.id,
                 name: messageData.externalName || messageData.externalId,
-                ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
-                [identifierColumn]: possibleIds[0]
+                ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture })
               };
 
               const { data: newCustomer, error: createError } = await supabase
@@ -220,6 +222,18 @@ export async function handleIncomingMessage(channel, messageData) {
                 .single();
 
               if (createError) throw createError;
+
+              //Criar novo customer_contact
+              await supabase
+                .from('customer_contacts')
+                .insert({
+                  customer_id: newCustomer.id,
+                  type: identifierColumn,
+                  value: possibleIds[0]
+                });
+
+              if (insertError) throw insertError;
+
               customer = newCustomer;
             } catch (error) {
               Sentry.captureException(error, {

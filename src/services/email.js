@@ -53,7 +53,7 @@ export async function testEmailConnection(config) {
 
     return { success: true };
   } catch (error) {
-    console.error('Error testing email connection:', error);
+    // console.error('Error testing email connection:', error);
     return { 
       success: false, 
       error: error.message 
@@ -98,7 +98,7 @@ class EmailConnectionManager {
             try {
               await conn.imap.end();
             } catch (err) {
-              console.error('Erro ao destruir conexão:', err);
+              // console.error('Erro ao destruir conexão:', err);
             }
           }
         }
@@ -129,7 +129,7 @@ class EmailConnectionManager {
       const retryConnection = async () => {
         try {
           if (retryCount >= maxRetries) {
-            console.error(`Máximo de tentativas atingido para o canal ${channel.id}`);
+            // console.error(`Máximo de tentativas atingido para o canal ${channel.id}`);
             await this.recordFailure(channel.credentials.host);
             this.reconnectingChannels.delete(channel.id); 
             return;
@@ -166,7 +166,7 @@ class EmailConnectionManager {
             this.failureCount.set(channel.credentials.host, 0);
             this.reconnectingChannels.delete(channel.id);
           } catch (connError) {
-            console.error(`Erro ao criar nova conexão para canal ${channel.id}:`, connError);
+            // console.error(`Erro ao criar nova conexão para canal ${channel.id}:`, connError);
             
             if (retryCount < maxRetries) {
               retryDelay = Math.min(retryDelay * 2, 300000);
@@ -177,7 +177,7 @@ class EmailConnectionManager {
           }
           
         } catch (err) {
-          console.error(`Erro na tentativa ${retryCount} de reconexão do canal ${channel.id}:`, err);
+          // console.error(`Erro na tentativa ${retryCount} de reconexão do canal ${channel.id}:`, err);
           
           if (retryCount < maxRetries) {
             retryDelay = Math.min(retryDelay * 2, 300000);
@@ -190,7 +190,7 @@ class EmailConnectionManager {
 
       await retryConnection();
     } catch (error) {
-      console.error(`Erro crítico no handleConnectionError para canal ${channel.id}:`, error);
+      // console.error(`Erro crítico no handleConnectionError para canal ${channel.id}:`, error);
       // Garantir que o canal seja removido do conjunto de reconexão
       this.reconnectingChannels.delete(channel.id);
     }
@@ -259,12 +259,12 @@ class EmailConnectionManager {
 
           // Adicionar novo handler de erro
           connection.imap._sock.on('error', (err) => {
-            console.warn(`Socket error para canal ${channel.id}:`, err);
+            // console.warn(`Socket error para canal ${channel.id}:`, err);
             if (err.code === 'ECONNRESET' || err.code === 'EPIPE') {
               try {
                 connection.imap.end();
               } catch (endError) {
-                console.warn(`Erro ao finalizar conexão após erro ${channel.id}:`, endError);
+                // console.warn(`Erro ao finalizar conexão após erro ${channel.id}:`, endError);
               }
               setTimeout(() => {
                 this.handleConnectionError(channel).catch(console.error);
@@ -273,11 +273,11 @@ class EmailConnectionManager {
           });
 
           connection.imap._sock.on('timeout', () => {
-            console.warn(`Socket timeout para canal ${channel.id}`);
+            // console.warn(`Socket timeout para canal ${channel.id}`);
             try {
               connection.imap.end();
             } catch (endError) {
-              console.warn(`Erro ao finalizar conexão após timeout ${channel.id}:`, endError);
+              // console.warn(`Erro ao finalizar conexão após timeout ${channel.id}:`, endError);
             }
             setTimeout(() => {
               this.handleConnectionError(channel).catch(console.error);
@@ -287,7 +287,7 @@ class EmailConnectionManager {
           connection.imap._sock.setKeepAlive(true, 30000);
           connection.imap._sock.setTimeout(120000);
         } catch (sockErr) {
-          console.warn(`Erro ao configurar socket para canal ${channel.id}:`, sockErr);
+          // console.warn(`Erro ao configurar socket para canal ${channel.id}:`, sockErr);
         }
       }
 
@@ -306,7 +306,7 @@ class EmailConnectionManager {
       if (connection.imap.connection) {
         connection.imap.connection.removeAllListeners('error');
         connection.imap.connection.on('error', (err) => {
-          console.warn(`Connection error para canal ${channel.id}:`, err);
+          // console.warn(`Connection error para canal ${channel.id}:`, err);
           // Não propagar o erro
         });
       }
@@ -320,7 +320,7 @@ class EmailConnectionManager {
               await connection.imap.status('INBOX', []);
             }
           } catch (err) {
-            console.warn(`Erro no ping do canal ${channel.id}:`, err);
+            //  console.warn(`Erro no ping do canal ${channel.id}:`, err);
             clearInterval(pingInterval);
             this.handleConnectionError(channel).catch(console.error);
           }
@@ -335,7 +335,7 @@ class EmailConnectionManager {
 
       return connection;
     } catch (error) {
-      console.error(`Erro ao criar conexão para canal ${channel.id}:`, error);
+      // console.error(`Erro ao criar conexão para canal ${channel.id}:`, error);
       await this.handleConnectionError(channel).catch(console.error);
       return null;
     }
@@ -354,7 +354,7 @@ class EmailConnectionManager {
       connection.imap._sock.setKeepAlive(true);
       
     } catch (err) {
-      console.error(`Erro ao configurar listener para canal ${channel.id}:`, err);
+      // console.error(`Erro ao configurar listener para canal ${channel.id}:`, err);
       throw err;
     }
   }
@@ -415,7 +415,7 @@ class EmailConnectionManager {
         try {
           const fullEmailPart = msg.parts.find(p => p.which === '');
           if (!fullEmailPart?.body) {
-            console.error('Email sem corpo completo');
+            // console.error('Email sem corpo completo');
             continue;
           }
 
@@ -434,10 +434,10 @@ class EmailConnectionManager {
           }
 
           if (!email.from?.value?.[0]?.address) {
-            console.error('Email ainda sem remetente após todas as tentativas:', {
-              emailContent: fullEmailPart.body.substring(0, 500),
-              emailFrom: email.from
-            });
+            // console.error('Email ainda sem remetente após todas as tentativas:', {
+            //   emailContent: fullEmailPart.body.substring(0, 500),
+            //   emailFrom: email.from
+            // });
             continue;
           }
 
@@ -449,13 +449,13 @@ class EmailConnectionManager {
           });
           
         } catch (err) {
-          console.error(`Erro ao processar email ${messageId}:`, err);
+          // console.error(`Erro ao processar email ${messageId}:`, err);
           await this.recordFailure(host);
         }
       }
 
     } catch (error) {
-      console.error('Erro ao processar novos emails:', error);
+      // console.error('Erro ao processar novos emails:', error);
       await this.recordFailure(channel.credentials.host);
     }
   }
@@ -516,11 +516,11 @@ export async function initializeEmailChannels() {
         const connection = await emailManager.getConnection(channel);
         await emailManager.setupIdleListener(channel, connection);
       } catch (err) {
-        console.error(`Erro ao inicializar canal ${channel.id}:`, err);
+        // console.error(`Erro ao inicializar canal ${channel.id}:`, err);
       }
     }
   } catch (error) {
-    console.error('Erro ao inicializar canais de email:', error);
+    // console.error('Erro ao inicializar canais de email:', error);
   }
 }
 
@@ -555,7 +555,7 @@ async function handleIncomingEmail(channel, email) {
                        email.headers?.get('from');
 
       if (!fromEmail) {
-        console.error('Email sem remetente válido:', email);
+        // console.error('Email sem remetente válido:', email);
         return;
       }
 
@@ -639,7 +639,7 @@ async function handleIncomingEmail(channel, email) {
     if (updateError) throw updateError;
 
   } catch (error) {
-    console.error('Error handling incoming email:', error);
+    // console.error('Error handling incoming email:', error);
     throw error;
   }
 }
@@ -773,7 +773,7 @@ export async function sendEmailReply(chat, message) {
       .eq('id', message.id);
 
   } catch (error) {
-    console.error('Error sending email reply:', error);
+    // console.error('Error sending email reply:', error);
     
     await supabase
       .from('messages')
@@ -864,7 +864,7 @@ export async function handleSenderMessageEmail(channel, messageData) {
       status: 'sent'
     };
   } catch (error) {
-    console.error('Erro ao enviar email:', error);
+    // console.error('Erro ao enviar email:', error);
     throw error;
   }
 }

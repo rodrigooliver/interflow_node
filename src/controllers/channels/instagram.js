@@ -78,19 +78,53 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       return existingChat;
     }
 
+    //Pesquisar se o customer existe com o instagramId
+    const { data: instagramContact } = await supabase
+      .from('customer_contacts')
+      .select('*')
+      .eq('type', 'instagramId')
+      .eq('value', senderId)
+      .eq('organization_id', channel.organization_id)
+      .single();
+
+    if (instagramContact) {
+      //Cadastra chat com o customer existente
+      const { data: newChat, error: newChatError } = await supabase
+        .from('chats')
+        .insert({
+          organization_id: channel.organization_id,
+          customer_id: instagramContact.customer_id,
+          channel_id: channel.id,
+          status: 'pending',
+          profile_picture: userInfo?.profile_pic || null,
+          profile_updated_at: new Date().toISOString(),
+          last_customer_message_at: new Date().toISOString()
+        })
+        .select('*, customers(*)')
+        .single();
+      return newChat;
+    }
+
     // Criar novo customer com foto de perfil
     const { data: customer, error: customerError } = await supabase
       .from('customers')
       .insert({
         organization_id: channel.organization_id,
         name: userInfo?.name || senderId,
-        instagram_id: senderId,
         profile_picture: userInfo?.profile_pic || null
       })
       .select()
       .single();
 
-    if (customerError) throw customerError;
+    // Adicionar contato do Instagram para o novo cliente
+    await supabase
+      .from('customer_contacts')
+      .insert({
+        customer_id: customer.id,
+        type: 'instagramId',
+        value: senderId,
+        created_at: new Date().toISOString()
+      });
 
     // Criar novo chat com a mesma foto de perfil e data da última mensagem
     const { data: chat, error: chatError } = await supabase
