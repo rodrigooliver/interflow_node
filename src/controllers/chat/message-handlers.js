@@ -267,6 +267,10 @@ export async function handleIncomingMessage(channel, messageData) {
           throw error;
         }
       }
+    } else {
+      if(chat.is_first_message) {
+        isFirstMessage = true;
+      }
     }
 
     // Verifica se a mensagem já existe quando for messageSent
@@ -1020,7 +1024,6 @@ export async function sendSystemMessage(messageId, attempt = 1) {
   }
 }
 
-
 export async function createMessageRoute(req, res) {
   // Obter chatId e organizationId dos parâmetros da rota
   const { chatId, organizationId } = req.params;
@@ -1031,7 +1034,12 @@ export async function createMessageRoute(req, res) {
 
   const files = req.files;
   const userId = req.profileId;
+  const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId);
+  return res.status(result.status).json(result);
+}
 
+
+export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId) {
   try {
     // Validar se o chat pertence à organização e obter informações do canal
     const { data: chatData, error: chatError } = await supabase
@@ -1050,10 +1058,11 @@ export async function createMessageRoute(req, res) {
       .single();
 
     if (chatError || !chatData) {
-      return res.status(404).json({ 
+      return {
+        status: 404,
         success: false, 
         error: 'Chat not found or permission denied' 
-      });
+      };
     }
 
     // Verificar o tipo de canal
@@ -1110,11 +1119,11 @@ export async function createMessageRoute(req, res) {
           messages.push({
             chat_id: chatId,
             organization_id: organizationId,
-            sender_agent_id: userId,
+            sender_agent_id: userId ?? null,
             sender_type: 'agent',
             content: null, // Sem conteúdo de texto
             type: messageType,
-            response_message_id: replyToMessageId,
+            response_message_id: replyToMessageId ?? null,
             attachments: [uploadResult.attachment],
             status: 'pending',
             created_at: new Date().toISOString()
@@ -1140,7 +1149,7 @@ export async function createMessageRoute(req, res) {
           sender_type: 'agent',
           content: content,
           type: 'text',
-          response_message_id: replyToMessageId,
+          response_message_id: replyToMessageId ?? null,
           attachments: [],
           status: 'pending',
           created_at: new Date().toISOString()
@@ -1154,7 +1163,7 @@ export async function createMessageRoute(req, res) {
           sender_type: 'agent',
           content: content,
           type: 'email',
-          response_message_id: replyToMessageId,
+          response_message_id: replyToMessageId ?? null,
           attachments: attachments,
           status: 'pending',
           created_at: new Date().toISOString()
@@ -1168,7 +1177,7 @@ export async function createMessageRoute(req, res) {
           sender_type: 'agent',
           content: content,
           type: isSocialChannel ? 'text' : 'email',
-          response_message_id: replyToMessageId,
+          response_message_id: replyToMessageId ?? null,
           attachments: [],
           status: 'pending',
           created_at: new Date().toISOString()
@@ -1176,10 +1185,12 @@ export async function createMessageRoute(req, res) {
       }
     } else if (!hasFiles) {
       // Se não há conteúdo nem arquivos
-      return res.status(400).json({
+      return {
+        status: 400,
         success: false,
         error: 'No content or attachments provided'
-      });
+      }
+
     } else if (!isSocialChannel && !content && hasFiles) {
       // Para email sem texto, mas com anexos
       messages.push({
@@ -1189,7 +1200,7 @@ export async function createMessageRoute(req, res) {
         sender_type: 'agent',
         content: null,
         type: 'email',
-        response_message_id: replyToMessageId,
+        response_message_id: replyToMessageId ?? null,
         attachments: attachments,
         status: 'pending',
         created_at: new Date().toISOString()
@@ -1198,10 +1209,11 @@ export async function createMessageRoute(req, res) {
 
     // Se não houver mensagens para inserir (caso raro)
     if (messages.length === 0) {
-      return res.status(400).json({
+      return {
+        status: 400,
         success: false,
         error: 'No content or attachments provided'
-      });
+      }
     }
 
     // Inserir mensagens no banco
@@ -1212,10 +1224,11 @@ export async function createMessageRoute(req, res) {
 
     if (messagesError) {
       console.error('Erro ao criar mensagens:', messagesError);
-      return res.status(500).json({ 
+      return {
+        status: 500,
         success: false, 
         error: 'Error creating messages' 
-      });
+      };
     }
 
     // Atualizar a referência da última mensagem
@@ -1274,16 +1287,17 @@ export async function createMessageRoute(req, res) {
       });
     }
 
-    return res.status(201).json({
+    return {
+      status: 201,
       success: true,
       messages: messagesData
-    });
-
+    }
   } catch (error) {
     console.error('Erro no createMessageRoute:', error);
-    return res.status(500).json({ 
+    return { 
+      status: 500,
       success: false, 
       error: 'Internal server error' 
-    });
+    }
   }
 }

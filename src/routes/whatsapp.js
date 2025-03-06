@@ -5,6 +5,8 @@ const router = express.Router();
 
 // Rota de autenticação OAuth
 router.get('/oauth', async (req, res) => {
+  res.send('success');
+
   try {
     const { access_token, state } = req.query;
     
@@ -24,8 +26,9 @@ router.get('/oauth', async (req, res) => {
     res.redirect(`${process.env.FRONTEND_URL}/app/channels/${channelId}/edit/whatsapp-official?success=true`);
   } catch (error) {
     console.error('Erro na autenticação do WhatsApp:', error);
-    res.redirect(`${process.env.FRONTEND_URL}/app/channels/${channelId}/edit/whatsapp-official?error=auth_failed`);
+    res.redirect(`${process.env.FRONTEND_URL}/app/channels/`);
   }
+  
 });
 
 // Rota para eventos do webhook

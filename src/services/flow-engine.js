@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
 import { OpenAI } from 'openai';
+import { createMessageToSend } from '../controllers/chat/message-handlers.js';
 
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
@@ -27,6 +28,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           activeFlow = await startFlow(flow);
         }
       }
+
+      // console.log('Active Flow:', activeFlow);
 
       if (activeFlow) {
         // Verificar se está dentro do período de debounce
@@ -85,7 +88,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       .from('flow_sessions')
       .select(`
         *,
-        flow:bot_id (
+        flow:flows!flow_sessions_bot_id_fkey (
           id,
           nodes,
           edges,
@@ -124,10 +127,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const startFlow = async (flow) => {
     // Encontrar o nó inicial (geralmente do tipo 'start')
-    const startNode = flow.nodes.find(node => node.type === 'start');
-    if (!startNode) throw new Error('Flow must have a start node');
+    const startNode = flow.nodes.find(node => node.id === 'start-node');
+    if (!startNode) return null;
 
-    const { data: session, error } = await supabase
+    try {
+      const { data: session, error } = await supabase
       .from('flow_sessions')
       .insert({
         bot_id: flow.id,
@@ -139,11 +143,23 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         variables: {},
         message_history: []
       })
-      .select()
+      .select(`
+        *,
+        flow:flows!flow_sessions_bot_id_fkey (
+          id,
+          nodes,
+          edges,
+          variables
+        )
+      `)
       .single();
 
-    if (error) throw error;
-    return session;
+      if (error) throw error;
+      return session;
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
   };
 
   /**
@@ -194,7 +210,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const executeNode = async (session, node) => {
     switch (node.type) {
       case 'text':
-        await sendMessage(node.data.content);
+        await sendMessage(node.data.text);
         break;
         
       case 'input':
@@ -563,21 +579,19 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * Envia uma mensagem para o cliente
    * @param {string} content - Conteúdo da mensagem
    */
-  const sendMessage = async (content) => {
-    const { error } = await supabase
-      .from('messages')
-      .insert({
-        chat_id: chatId,
-        organization_id: organization.id,
-        customer_id: customer.id,
-        channel_id: channel.id,
-        direction: 'outbound',
-        content,
-        type: 'text',
-        status: 'pending'
-      });
+  const sendMessage = async (content, sessionId) => {
+    try {
+      if(content) {
+        const result = await createMessageToSend(chatId, organization.id, content, null, null, null);
+          if (result.status !== 201) throw new Error(result.error);
+      } else {
+        console.log('Não há conteúdo para enviar');
+      }
 
-    if (error) throw error;
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
   };
 
   /**
@@ -637,7 +651,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       // Se houver uma resposta de texto, enviar como mensagem
       if (typeof response === 'string') {
-        await sendMessage(response);
+        await sendMessage(response, session.id);
       }
 
       return response;
@@ -818,47 +832,57 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @param {Object} customer - Cliente
    */
   const checkTriggers = async (organization, channel, customer) => {
-    const { data: flows } = await supabase
+    try {
+      const { data: flows, error: flowsError } = await supabase
       .from('flow_triggers')
       .select(`
         id,
         type,
         is_active,
         conditions,
-        flow:flows!inner(
+        flow:flows!flow_triggers_flow_id_fkey(
           *
         )
       `)
-      .eq('type', 'first_message')
+      .eq('type', 'first_contact')
       .eq('is_active', true)
       .eq('flows.organization_id', organization.id)
       .eq('flows.is_active', true)
       .eq('flows.is_published', true);
 
-    for (const flow of flows) {
-      // Encontrar a regra de canal
-      const channelRule = flow.conditions.rules.find(rule => rule.type === 'channel');
-      if (!channelRule) continue;
+      if(flowsError) throw flowsError;
+      if(flows.length === 0) return null;
 
-      // Verificar se o canal está na lista de canais permitidos
-      const channelList = channelRule.params.channels || [];
-      const isChannelAllowed = channelList.length === 0 || channelList.includes(channel.id);
-      if (!isChannelAllowed) continue;
+      for (const flow of flows) {
+        // Encontrar a regra de canal
+        const channelRule = flow.conditions.rules.find(rule => rule.type === 'channel');
+        if (!channelRule) continue;
 
-      // Encontrar e verificar regra de schedule, se existir
-      const scheduleRule = flow.conditions.rules.find(rule => rule.type === 'schedule');
-      if (scheduleRule) {
-        const isWithinSchedule = isWithinScheduleTime(scheduleRule.params);
-        if (!isWithinSchedule) continue;
+        // Verificar se o canal está na lista de canais permitidos
+        const channelList = channelRule.params.channels || [];
+        const isChannelAllowed = channelList.length === 0 || channelList.includes(channel.id);
+        if (!isChannelAllowed) continue;
+
+        // Encontrar e verificar regra de schedule, se existir
+        const scheduleRule = flow.conditions.rules.find(rule => rule.type === 'schedule');
+        if (scheduleRule) {
+          const isWithinSchedule = isWithinScheduleTime(scheduleRule.params);
+          if (!isWithinSchedule) continue;
+        }
+
+        // Usar a informação de primeira mensagem que veio como propriedade
+        if (!isFirstMessage) continue;
+
+        return flow.flow;
       }
 
-      // Usar a informação de primeira mensagem que veio como propriedade
-      if (!isFirstMessage) continue;
-
-      return flow.flow;
+      return null;
+    } catch (error) {
+      console.log('Error:', error);
+      Sentry.captureException(error);
+      throw error;
     }
-
-    return null;
+    
   };
 
   /**

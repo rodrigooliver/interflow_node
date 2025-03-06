@@ -89,7 +89,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 
     if (instagramContact) {
       //Cadastra chat com o customer existente
-      const { data: newChat, error: newChatError } = await supabase
+      let { data: newChat, error: newChatError } = await supabase
         .from('chats')
         .insert({
           organization_id: channel.organization_id,
@@ -102,6 +102,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
         })
         .select('*, customers(*)')
         .single();
+      newChat.is_first_message = true;
       return newChat;
     }
 
@@ -127,7 +128,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       });
 
     // Criar novo chat com a mesma foto de perfil e data da última mensagem
-    const { data: chat, error: chatError } = await supabase
+    let { data: chat, error: chatError } = await supabase
       .from('chats')
       .insert({
         organization_id: channel.organization_id,
@@ -144,6 +145,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 
     if (chatError) throw chatError;
 
+    chat.is_first_message = true;
     return chat;
   } catch (error) {
     console.error('Erro ao criar/buscar chat:', error);
@@ -171,7 +173,7 @@ export async function handleInstagramWebhook(req, res) {
             .select('*, organization:organizations(*)')
             .eq('type', 'instagram')
             .eq('status', 'active')
-            .or(`credentials->user_id.eq.${messagingData.recipient.id},credentials->instagram_id.eq.${messagingData.recipient.id}`)
+            .eq('external_id', messagingData.recipient.id)
             .single();
 
           if (!channel) continue;
@@ -309,6 +311,7 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
           profile_picture_url: userInfo.profile_picture_url,
           token_expires_at: new Date(Date.now() + (longLivedTokenData.expires_in * 1000)).toISOString()
         },
+        external_id: userInfo.id,
         status: 'active',
         is_connected: true,
         is_tested: true,
