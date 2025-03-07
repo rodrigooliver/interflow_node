@@ -115,12 +115,12 @@ class EmailConnectionManager {
   async handleConnectionError(channel) {
     try {
       if (this.reconnectingChannels.has(channel.id)) {
-        console.log(`Canal ${channel.id} já está tentando reconectar`);
+        // console.log(`Canal ${channel.id} já está tentando reconectar`);
         return;
       }
 
       this.reconnectingChannels.add(channel.id);
-      console.log(`Iniciando reconexão para o canal ${channel.id}`);
+      // console.log(`Iniciando reconexão para o canal ${channel.id}`);
       
       const maxRetries = 5;
       let retryCount = 0;
@@ -136,7 +136,7 @@ class EmailConnectionManager {
           }
 
           retryCount++;
-          console.log(`Tentativa ${retryCount} de reconexão para o canal ${channel.id}`);
+          // console.log(`Tentativa ${retryCount} de reconexão para o canal ${channel.id}`);
 
           // Remover conexão antiga de forma segura
           const oldConnection = this.channelConnections.get(channel.id);
@@ -162,7 +162,7 @@ class EmailConnectionManager {
             
             this.channelConnections.set(channel.id, newConnection);
 
-            console.log(`Reconectado com sucesso ao canal ${channel.id}`);
+            // console.log(`Reconectado com sucesso ao canal ${channel.id}`);
             this.failureCount.set(channel.credentials.host, 0);
             this.reconnectingChannels.delete(channel.id);
           } catch (connError) {
@@ -215,7 +215,7 @@ class EmailConnectionManager {
             info.includes('Disconnected') ||
             info.includes('Connection error')
           ) {
-            console.log(`[IMAP Debug ${channel.id}]:`, info);
+            // console.log(`[IMAP Debug ${channel.id}]:`, info);
           }
         },
         authTimeout: 30000,

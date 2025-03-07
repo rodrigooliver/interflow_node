@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabase } from '../lib/supabase.js';
 import { getActiveS3Integration } from '../lib/s3.js';
 
@@ -28,6 +28,7 @@ export async function uploadFile({
   fileSize,
   organizationId,
   messageId = null,
+  flowId = null,
   customFolder = null,
   isBase64 = false
 }) {
@@ -154,19 +155,18 @@ export async function uploadFile({
       integration_id: s3Integration ? s3Integration.id : null,
       mime_type: contentType,
       message_id: messageId,
+      flow_id: flowId,
       created_at: new Date().toISOString()
     };
     
     // Inserir registro na tabela files se messageId for fornecido
-    if (messageId) {
-      const { error: fileError } = await supabase
-        .from('files')
-        .insert(fileRecord);
-      
-      if (fileError) {
-        console.error('Erro ao registrar arquivo no banco de dados:', fileError);
-        // Não falhar a operação principal se o registro falhar
-      }
+    const { error: fileError } = await supabase
+      .from('files')
+      .insert(fileRecord);
+    
+    if (fileError) {
+      console.error('Erro ao registrar arquivo no banco de dados:', fileError);
+      // Não falhar a operação principal se o registro falhar
     }
     
     return {
@@ -186,6 +186,116 @@ export async function uploadFile({
     return {
       success: false,
       error: error.message
+    };
+  }
+}
+
+/**
+ * Função unificada para exclusão de arquivos
+ * 
+ * Esta função gerencia a exclusão de arquivos do S3 ou do Supabase Storage,
+ * bem como a remoção do registro correspondente na tabela files.
+ * 
+ * @param {Object} options - Opções de exclusão
+ * @param {string} options.fileId - ID do arquivo a ser excluído
+ * @param {string} options.organizationId - ID da organização
+ * @param {string} [options.flowId] - ID do fluxo associado (opcional)
+ * @param {string} [options.messageId] - ID da mensagem associada (opcional)
+ * @returns {Promise<Object>} - Resultado da exclusão
+ */
+export async function deleteFile({
+  fileId,
+  organizationId,
+  flowId = null,
+  messageId = null
+}) {
+  try {
+    if (!fileId) {
+      throw new Error('É necessário fornecer o ID do arquivo para excluí-lo');
+    }
+
+    // Buscar o registro do arquivo no banco de dados
+    let query = supabase
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .eq('organization_id', organizationId);
+    
+    // Adicionar filtros opcionais se fornecidos
+    if (flowId) {
+      query = query.eq('flow_id', flowId);
+    }
+    
+    if (messageId) {
+      query = query.eq('message_id', messageId);
+    }
+    
+    const { data: fileData, error: fileError } = await query.single();
+
+    if (fileError) {
+      throw new Error(`Erro ao buscar arquivo: ${fileError.message}`);
+    }
+
+    if (!fileData) {
+      return {
+        success: false,
+        error: `Arquivo com ID ${fileId} não encontrado`
+      };
+    }
+
+    // Verificar se o arquivo está no S3 ou no Supabase Storage
+    if (fileData.integration_id) {
+      // Arquivo está no S3
+      const s3Integration = await getActiveS3Integration(organizationId);
+      
+      if (!s3Integration) {
+        throw new Error('Integração S3 não encontrada');
+      }
+      
+      const s3Client = new S3Client({
+        region: s3Integration.settings.region,
+        credentials: {
+          accessKeyId: s3Integration.settings.access_key,
+          secretAccessKey: s3Integration.settings.secret_key
+        }
+      });
+      
+      // Excluir o arquivo do S3
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: s3Integration.settings.bucket,
+        Key: fileData.path
+      }));
+    } else {
+      // Arquivo está no Supabase Storage
+      const { error: deleteError } = await supabase.storage
+        .from('attachments')
+        .remove([fileData.path]);
+        
+      if (deleteError) {
+        throw new Error(`Erro ao excluir arquivo do storage: ${deleteError.message}`);
+      }
+    }
+    
+    // Excluir o registro do arquivo do banco de dados
+    const { error: deleteRecordError } = await supabase
+      .from('files')
+      .delete()
+      .eq('id', fileData.id);
+      
+    if (deleteRecordError) {
+      throw new Error(`Erro ao excluir registro do arquivo: ${deleteRecordError.message}`);
+    }
+    
+    return {
+      success: true,
+      message: 'Arquivo excluído com sucesso',
+      fileId: fileData.id
+    };
+  } catch (error) {
+    console.error('Erro ao excluir arquivo:', error);
+    return {
+      success: false,
+      error: error.message || 'Erro ao excluir arquivo'
     };
   }
 }

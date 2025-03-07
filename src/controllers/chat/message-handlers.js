@@ -383,7 +383,7 @@ export async function handleIncomingMessage(channel, messageData) {
     if (updateError) throw updateError;
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      isFirstMessage,
+      isFirstMessage: true,
       lastMessage: message
     });
 
@@ -1094,18 +1094,31 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         : [files.attachments]; 
 
       for (const file of uploadPromises) {
+        let uploadResult;
         // Usar a função uploadFile para processar o arquivo
-        const uploadResult = await uploadFile({
-          fileData: file.data,
-          fileName: file.name,
-          contentType: file.mimetype,
-          fileSize: file.size,
-          organizationId,
-          customFolder: 'chat-attachments'
-        });
-        
-        if (!uploadResult.success) {
-          throw new Error(`Error uploading file: ${uploadResult.error}`);
+        if(file.url) {
+          uploadResult = {
+            attachment: {
+              url: file.url,
+              type: file.type ?? file.mimetype ?? 'document',
+              file_name: file.name ?? file.filename ?? 'attachment',
+              mime_type: file.mimetype ?? null,
+              file_size: file.size ?? null
+            }
+          }
+        } else {  
+          uploadResult = await uploadFile({
+            fileData: file.data,
+            fileName: file.name,
+            contentType: file.mimetype,
+            fileSize: file.size,
+            organizationId,
+            customFolder: 'chat-attachments'
+          });
+          
+          if (!uploadResult.success) {
+            throw new Error(`Error uploading file: ${uploadResult.error}`);
+          }
         }
         
         // Para canais sociais, cada arquivo é uma mensagem separada
@@ -1132,9 +1145,10 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           // Para email, adicionar à lista de anexos
           attachments.push(uploadResult.attachment);
         }
-        
-        // Adicionar o registro do arquivo para inserção posterior
-        fileRecords.push(uploadResult.fileRecord);
+        if(!file.url) {  
+          // Adicionar o registro do arquivo para inserção posterior
+          fileRecords.push(uploadResult.fileRecord);
+        }
       }
     }
 

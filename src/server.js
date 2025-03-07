@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import cron from 'node-cron';
 import fileUpload from 'express-fileupload';
 import Sentry from './lib/sentry.js';
 import stripeRoutes from './routes/stripe.js';
@@ -11,8 +10,9 @@ import { initializeEmailChannels, cleanupEmailConnections } from './services/ema
 import monitoringRoutes from './routes/monitoring.js';
 import instagramRoutes from './routes/instagram.js';
 import chatRoutes from './routes/chat.js';
-import { refreshInstagramTokens } from './cron/instagram-token-refresh.js';
+import flowRoutes from './routes/flow.js';
 import whatsappRoutes from './routes/whatsapp.js';
+import { setupCronJobs } from './cron/index.js';
 
 // Load environment variables
 dotenv.config();
@@ -59,6 +59,7 @@ app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
 app.use('/api/:organizationId/chat', chatRoutes);
+app.use('/api/:organizationId/flow', flowRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 
 // The error handler must be before any other error middleware and after all controllers
@@ -72,23 +73,14 @@ app.use(function onError(err, req, res, next) {
   res.end(`${res.sentry}\n`);
 });
 
-let instagramTokenCron;
+let cronJobs;
 
 // Função para inicializar todas as subscriptions e crons
 async function initializeSubscriptions() {
   try {
-
-    // Inicializa o cron do Instagram para executar todos os dias à meia-noite
-    instagramTokenCron = cron.schedule('0 0 * * *', async () => {
-      try {
-        await refreshInstagramTokens();
-        console.log('Instagram tokens refresh completed successfully');
-      } catch (error) {
-        console.error('Error refreshing Instagram tokens:', error);
-        Sentry.captureException(error);
-      }
-    });
-    console.log('Instagram token refresh cron initialized successfully');
+    // Inicializa todos os cron jobs
+    cronJobs = setupCronJobs();
+    console.log('Cron jobs initialized successfully');
   } catch (error) {
     console.error('Error initializing subscriptions:', error);
     Sentry.captureException(error);
@@ -99,8 +91,13 @@ async function initializeSubscriptions() {
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Cleaning up...');
 
-  if (instagramTokenCron) {
-    instagramTokenCron.stop();
+  // Para todos os cron jobs
+  if (cronJobs) {
+    Object.values(cronJobs).forEach(job => {
+      if (job && typeof job.stop === 'function') {
+        job.stop();
+      }
+    });
   }
   
   await cleanupEmailConnections();

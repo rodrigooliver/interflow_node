@@ -705,7 +705,7 @@ export async function handleWhatsAppWebhook(req, res) {
         }
 
         // Busca o canal com base no phone_number_id
-        const { data: channel } = await supabase
+        const { data: channel, error: channelError } = await supabase
           .from('chat_channels')
           .select('*, organization:organizations(*)')
           .eq('type', 'whatsapp_official')
@@ -715,6 +715,9 @@ export async function handleWhatsAppWebhook(req, res) {
 
         // console.log('Canal encontrado:', channel);
         // console.log('Change:', change);
+        if (channelError) {
+          console.error('Erro ao buscar canal:', channelError);
+        }
 
         if (!channel) {
           console.log('Canal não encontrado para:', value.metadata.phone_number_id);
@@ -1155,26 +1158,30 @@ export async function handleSenderMessageOfficial(channel, messageData) {
     // Verifica se é uma mensagem com anexo
     else if (messageData.attachments?.length > 0) {
       const attachment = messageData.attachments[0];
-      const fileExtension = attachment.name.split('.').pop().toLowerCase();
       
-      // Validação de tipos de arquivo aceitos pelo WhatsApp
-      const validTypes = {
-        audio: ['mp3', 'ogg'],
-        image: ['jpg', 'jpeg', 'png'],
-        video: ['mp4'],
-        document: ['pdf', 'doc', 'docx']
-      };
+      
+  
 
-      let attachmentType = null;
-      
-      if (validTypes.image.includes(fileExtension)) {
-        attachmentType = 'image';
-      } else if (validTypes.video.includes(fileExtension)) {
-        attachmentType = 'video';
-      } else if (validTypes.audio.includes(fileExtension)) {
-        attachmentType = 'audio';
-      } else if (validTypes.document.includes(fileExtension)) {
-        attachmentType = 'document';
+      let attachmentType = attachment.type;
+      if(!attachment.type) {
+        const fileExtension = (attachment.name ? attachment.name.split('.').pop().toLowerCase() : null);
+        // Validação de tipos de arquivo aceitos pelo WhatsApp
+        const validTypes = {
+          audio: ['mp3', 'ogg'],
+          image: ['jpg', 'jpeg', 'png'],
+          video: ['mp4'],
+          document: ['pdf', 'doc', 'docx']
+        };
+
+        if (validTypes.image.includes(fileExtension)) {
+          attachmentType = 'image';
+        } else if (validTypes.video.includes(fileExtension)) {
+          attachmentType = 'video';
+        } else if (validTypes.audio.includes(fileExtension)) {
+          attachmentType = 'audio';
+        } else if (validTypes.document.includes(fileExtension)) {
+          attachmentType = 'document';
+        }
       }
 
       if (!attachmentType) {

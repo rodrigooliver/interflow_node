@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
 import { OpenAI } from 'openai';
 import { createMessageToSend } from '../controllers/chat/message-handlers.js';
+import crypto from 'crypto';
 
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
@@ -131,6 +132,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     if (!startNode) return null;
 
     try {
+      // Garantir que flow.variables seja um array
+      const defaultVariables = Array.isArray(flow.variables) 
+        ? [...flow.variables] 
+        : Object.entries(flow.variables || {}).map(([name, value]) => ({
+            id: crypto.randomUUID(),
+            name,
+            value
+          }));
+
       const { data: session, error } = await supabase
       .from('flow_sessions')
       .insert({
@@ -140,7 +150,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         organization_id: organization.id,
         status: 'active',
         current_node_id: startNode.id,
-        variables: {},
+        variables: defaultVariables,
         message_history: []
       })
       .select(`
@@ -172,27 +182,39 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       const currentNode = session.flow.nodes.find(n => n.id === session.current_node_id);
       if (!currentNode) throw new Error('Current node not found');
       
+      let updatedSession = { ...session };
+      
       if (currentNode.type === 'input') {
-        await processInputNode(session, currentNode, message);
+        // Se o cliente respondeu a um nó de input, zeramos o timeout_at
+        const initialUpdates = { timeout_at: null };
+        await updateSession(session.id, initialUpdates);
+        
+        // Processa o nó de input e obtém a sessão atualizada com as novas variáveis
+        updatedSession = await processInputNode(session, currentNode, message);
       }
 
-      let nextNode = await getNextNode(session.flow, currentNode, message);
+      let nextNode = await getNextNode(updatedSession.flow, currentNode, message, updatedSession);
       while (nextNode && nextNode.type !== 'input') {
-        await executeNode(session, nextNode);
-        nextNode = await getNextNode(session.flow, nextNode, message);
+        // Executa o nó e obtém a sessão atualizada
+        updatedSession = await executeNode(updatedSession, nextNode);
+        nextNode = await getNextNode(updatedSession.flow, nextNode, message, updatedSession);
       }
 
       if (nextNode) {
-        const timeout = nextNode.data?.inputConfig?.timeout || 5;
-        await updateSession(session.id, {
+        const timeout = nextNode.data?.inputConfig?.timeout || null;
+        // Atualiza a sessão no banco de dados
+        const sessionWithUpdatedNode = await updateSession(updatedSession.id, {
           current_node_id: nextNode.id,
           input_type: nextNode.data?.inputType || 'text',
-          timeout_at: new Date(Date.now() + timeout * 60 * 1000),
-          last_interaction: new Date()
+          timeout_at: timeout ? new Date(Date.now() + timeout * 60 * 1000).toISOString() : null,
+          last_interaction: new Date().toISOString()
         });
-        await executeNode(session, nextNode);
+        
+        // Usa a sessão atualizada para executar o próximo nó
+        updatedSession = await executeNode(sessionWithUpdatedNode, nextNode);
       } else {
-        await updateSession(session.id, {
+        // Finaliza o fluxo
+        await updateSession(updatedSession.id, {
           status: 'inactive'
         });
       }
@@ -208,17 +230,41 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @param {Object} node - Nó a ser executado
    */
   const executeNode = async (session, node) => {
+    let updatedSession = { ...session };
+    
     switch (node.type) {
       case 'text':
-        await sendMessage(node.data.text);
+        const processedText = replaceVariables(node.data.text, updatedSession.variables);
+        await sendMessage(processedText, null, updatedSession.id);
         break;
-        
-      case 'input':
-        await sendMessage(node.data.question || 'Por favor, responda:');
+
+      case 'audio':
+        // Processa a URL do áudio para substituir variáveis, se houver
+        const processedAudioUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        await sendMessage(null, {attachments: [{url: processedAudioUrl, type: 'audio'}]}, updatedSession.id);
         break;
-        
-      case 'condition':
-        await processCondition(node.data, session);
+
+      case 'image':
+        // Processa a URL da imagem para substituir variáveis, se houver
+        const processedImageUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        await sendMessage(null, {attachments: [{url: processedImageUrl, type: 'image'}]}, updatedSession.id);
+        break;
+
+      case 'video':
+        // Processa a URL do vídeo para substituir variáveis, se houver
+        const processedVideoUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        await sendMessage(null, {attachments: [{url: processedVideoUrl, type: 'video'}]}, updatedSession.id);
+        break;
+
+      case 'document':
+        // Processa a URL do documento para substituir variáveis, se houver
+        const processedDocUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        await sendMessage(null, {attachments: [{url: processedDocUrl, type: 'document'}]}, updatedSession.id);
+        break;
+
+      case 'variable':
+        // Processa a variável e retorna a sessão atualizada
+        updatedSession = await processVariable(node.data, updatedSession);
         break;
         
       case 'delay':
@@ -226,16 +272,19 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         break;
         
       case 'openai':
-        await processOpenAI(node, session);
+        updatedSession = await processOpenAI(node, updatedSession);
         break;
         
       case 'update_customer':
-        await updateCustomer(node.data);
+        updatedSession = await updateCustomer(node.data, updatedSession);
         break;
     }
 
     // Atualizar histórico de mensagens
-    await updateMessageHistory(session.id, node);
+    await updateMessageHistory(updatedSession.id, node);
+    
+    // Retorna a sessão potencialmente atualizada
+    return updatedSession;
   };
 
   /**
@@ -243,10 +292,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @param {Object} session - Sessão atual
    * @param {Object} node - Nó de input
    * @param {Object} message - Mensagem recebida
+   * @returns {Object} - Sessão atualizada com as novas variáveis
    */
   const processInputNode = async (session, node, message) => {
     const updates = {
-      last_interaction: new Date()
+      last_interaction: new Date().toISOString()
     };
 
     if (node.data.inputType === 'options') {
@@ -258,58 +308,43 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
     }
 
-    if (node.data.variableName) {
-      updates.variables = {
-        ...session.variables,
-        [node.data.variableName]: message.content
-      };
-    }
-
-    await updateSession(session.id, updates);
-  };
-
-  /**
-   * Processa condições, avaliando-as e atualizando o fluxo
-   * @param {Object} condition - Condição a ser processada
-   * @param {Object} session - Sessão atual
-   */
-  const processCondition = async (condition, session) => {
-    try {
-      const { logicOperator, subConditions } = condition;
+    if (message && node.data.inputConfig && node.data.inputConfig.variableName) {
+      // Verifica se session.variables é um array ou um objeto e converte para array se necessário
+      let variables = [];
       
-      // Avaliar cada subcondição
-      const results = await Promise.all(
-        subConditions.map(sub => evaluateSubCondition(sub, session))
-      );
-      
-      // Aplicar operador lógico aos resultados
-      const isConditionMet = logicOperator === 'AND' 
-        ? results.every(r => r)
-        : results.some(r => r);
-
-      if (isConditionMet) {
-        // Encontrar a edge correspondente à condição
-        const conditionIndex = condition.conditions.indexOf(condition);
-        const edge = session.flow.edges.find(e => e.sourceHandle === `condition-${conditionIndex}`);
-        
-        if (edge) {
-          await updateSession(session.id, {
-            current_node_id: edge.target
-          });
-        }
-      } else {
-        // Se nenhuma condição for atendida, usar o else
-        const elseEdge = session.flow.edges.find(e => e.sourceHandle === 'else');
-        if (elseEdge) {
-          await updateSession(session.id, {
-            current_node_id: elseEdge.target
-          });
-        }
+      if (Array.isArray(session.variables)) {
+        variables = [...session.variables];
+      } else if (session.variables && typeof session.variables === 'object') {
+        // Converte de objeto para array
+        variables = Object.entries(session.variables).map(([name, value]) => ({
+          id: crypto.randomUUID(),
+          name,
+          value
+        }));
       }
-    } catch (error) {
-      Sentry.captureException(error);
-      throw error;
+      
+      const variableIndex = variables.findIndex(v => v.name === node.data.inputConfig.variableName);
+      
+      if (variableIndex >= 0) {
+        // Atualiza a variável existente
+        variables[variableIndex] = {
+          ...variables[variableIndex],
+          value: message.content
+        };
+      } else {
+        // Cria uma nova variável
+        variables.push({
+          id: crypto.randomUUID(),
+          name: node.data.inputConfig.variableName,
+          value: message.content
+        });
+      }
+      
+      updates.variables = variables;
     }
+
+    // Atualiza a sessão e retorna a sessão atualizada
+    return await updateSession(session.id, updates);
   };
 
   /**
@@ -324,7 +359,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
     // Buscar valor do campo apropriado
     if (type === 'variable') {
-      fieldValue = session.variables[field];
+      // Verifica se session.variables é um array ou um objeto
+      if (Array.isArray(session.variables)) {
+        // Encontra a variável no array
+        const variable = session.variables.find(v => v.name === field);
+        fieldValue = variable ? variable.value : undefined;
+      } else if (session.variables && typeof session.variables === 'object') {
+        // Acessa diretamente a propriedade do objeto
+        fieldValue = session.variables[field];
+      }
     } else if (type === 'clientData') {
       fieldValue = await getClientDataValue(field, session);
     }
@@ -332,25 +375,39 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     // Se o campo não existir, retornar false
     if (fieldValue === undefined) return false;
 
+    // Processar variáveis no valor de comparação, se for string
+    let compareValue = value;
+    if (typeof value === 'string') {
+      compareValue = replaceVariables(value, session.variables);
+    }
+
     // Avaliar baseado no operador
     switch (operator) {
       case 'equalTo':
-        return fieldValue === value;
+        return fieldValue === compareValue;
         
       case 'notEqual':
-        return fieldValue !== value;
+      case 'notEqualTo':
+        return fieldValue !== compareValue;
         
       case 'contains':
-        return String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+        return String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
         
       case 'doesNotContain':
-        return !String(fieldValue).toLowerCase().includes(String(value).toLowerCase());
+      case 'notContains':
+        return !String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
         
       case 'greaterThan':
-        return Number(fieldValue) > Number(value);
+        return Number(fieldValue) > Number(compareValue);
         
       case 'lessThan':
-        return Number(fieldValue) < Number(value);
+        return Number(fieldValue) < Number(compareValue);
+        
+      case 'greaterThanOrEqual':
+        return Number(fieldValue) >= Number(compareValue);
+        
+      case 'lessThanOrEqual':
+        return Number(fieldValue) <= Number(compareValue);
         
       case 'isSet':
         return fieldValue !== null && fieldValue !== undefined && fieldValue !== '';
@@ -359,14 +416,14 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         return fieldValue === null || fieldValue === undefined || fieldValue === '';
         
       case 'startsWith':
-        return String(fieldValue).toLowerCase().startsWith(String(value).toLowerCase());
+        return String(fieldValue).toLowerCase().startsWith(String(compareValue).toLowerCase());
         
       case 'endsWith':
-        return String(fieldValue).toLowerCase().endsWith(String(value).toLowerCase());
+        return String(fieldValue).toLowerCase().endsWith(String(compareValue).toLowerCase());
         
       case 'matchesRegex':
         try {
-          const regex = new RegExp(value);
+          const regex = new RegExp(compareValue);
           return regex.test(String(fieldValue));
         } catch {
           return false;
@@ -374,21 +431,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         
       case 'doesNotMatchRegex':
         try {
-          const regex = new RegExp(value);
+          const regex = new RegExp(compareValue);
           return !regex.test(String(fieldValue));
         } catch {
           return false;
         }
         
       case 'inList':
-        const valueList = String(value).split(',').map(v => v.trim().toLowerCase());
+        const valueList = String(compareValue).split(',').map(v => v.trim().toLowerCase());
         if (Array.isArray(fieldValue)) {
           return fieldValue.some(v => valueList.includes(String(v).toLowerCase()));
         }
         return valueList.includes(String(fieldValue).toLowerCase());
         
       case 'notInList':
-        const excludeList = String(value).split(',').map(v => v.trim().toLowerCase());
+        const excludeList = String(compareValue).split(',').map(v => v.trim().toLowerCase());
         if (Array.isArray(fieldValue)) {
           return !fieldValue.some(v => excludeList.includes(String(v).toLowerCase()));
         }
@@ -465,19 +522,32 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @param {Object} currentNode - Nó atual
    * @param {Object} message - Mensagem recebida
    */
-  const getNextNode = async (flow, currentNode, message) => {
+  const getNextNode = async (flow, currentNode, message, session) => {
     const edges = flow.edges.filter(edge => edge.source === currentNode.id);
     
     if (!edges.length) return null;
 
     // Se for nó de condição
     if (currentNode.type === 'condition') {
+
       for (const condition of currentNode.data.conditions || []) {
-        const isConditionMet = await evaluateCondition(condition, session);
+        const { logicOperator, subConditions } = condition;
+        console.log('logicOperator', logicOperator);
+        console.log('subConditions', subConditions);
+
+        // Avaliar cada subcondição
+        const results = await Promise.all(
+          subConditions.map(sub => evaluateSubCondition(sub, session))
+        );
+          
+        // Aplicar operador lógico aos resultados
+        const isConditionMet = logicOperator === 'AND' 
+          ? results.every(r => r)
+          : results.some(r => r);
         
         // Encontrar a edge correspondente à condição
         const conditionIndex = currentNode.data.conditions.indexOf(condition);
-        const edge = edges.find(e => e.sourceHandle === `condition-${conditionIndex}`);
+        const edge = edges.find(e => e.source === currentNode.id && e.sourceHandle === `condition-${conditionIndex}`);
         
         if (isConditionMet && edge) {
           return flow.nodes.find(n => n.id === edge.target);
@@ -485,7 +555,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
       
       // Se nenhuma condição for atendida, usar o else
-      const elseEdge = edges.find(e => e.sourceHandle === 'else');
+      const elseEdge = edges.find(e => e.source === currentNode.id && e.sourceHandle === 'else');
       if (elseEdge) {
         return flow.nodes.find(n => n.id === elseEdge.target);
       }
@@ -501,6 +571,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       if (matchingOptionIndex !== -1) {
         // Procurar edge correspondente à opção encontrada
         const selectedEdge = edges.find(edge => 
+          edge.source === currentNode.id && 
           edge.sourceHandle === `option${matchingOptionIndex}`
         );
         if (selectedEdge) {
@@ -509,7 +580,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
 
       // Se não encontrou correspondência exata, usar o handle 'no-match'
-      const noMatchEdge = edges.find(edge => edge.sourceHandle === 'no-match');
+      const noMatchEdge = edges.find(edge => edge.source === currentNode.id && edge.sourceHandle === 'no-match');
       if (noMatchEdge) {
         return flow.nodes.find(n => n.id === noMatchEdge.target);
       }
@@ -520,20 +591,32 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   };
 
   /**
-   * Atualiza o estado da sessão do fluxo
+   * Atualiza uma sessão de fluxo
    * @param {string} sessionId - ID da sessão
    * @param {Object} updates - Atualizações a serem aplicadas
    */
   const updateSession = async (sessionId, updates) => {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('flow_sessions')
       .update({
         ...updates,
-        updated_at: new Date()
+        updated_at: new Date().toISOString()
       })
-      .eq('id', sessionId);
+      .eq('id', sessionId)
+      .select(`
+        *,
+        flow:flows!flow_sessions_bot_id_fkey (
+          id,
+          nodes,
+          edges,
+          variables
+        )
+      `)
+      .single();
 
     if (error) throw error;
+    
+    return data;
   };
 
   /**
@@ -576,18 +659,17 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   };
 
   /**
-   * Envia uma mensagem para o cliente
+   * Envia uma mensagem para o chat
    * @param {string} content - Conteúdo da mensagem
+   * @param {Object} files - Arquivos anexados
+   * @param {string} sessionId - ID da sessão
    */
-  const sendMessage = async (content, sessionId) => {
+  const sendMessage = async (content, files, sessionId) => {
     try {
-      if(content) {
-        const result = await createMessageToSend(chatId, organization.id, content, null, null, null);
-          if (result.status !== 201) throw new Error(result.error);
-      } else {
-        console.log('Não há conteúdo para enviar');
+      if(content || files) {
+        const result = await createMessageToSend(chatId, organization.id, content, null, files, null);
+        if (result.status !== 201) throw new Error(result.error);
       }
-
     } catch (error) {
       Sentry.captureException(error);
       throw error;
@@ -603,58 +685,66 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   };
 
   /**
-   * Integração com OpenAI (a ser implementado)
+   * Processa um nó do tipo OpenAI
+   * @param {Object} node - Nó a ser processado
+   * @param {Object} session - Sessão atual
+   * @returns {Object} - Sessão atualizada
    */
   const processOpenAI = async (node, session) => {
     try {
-      const config = node.data.openai;
-      if (!config) throw new Error('OpenAI configuration not found');
-
-      // Buscar integração do OpenAI
-      const { data: integration } = await supabase
-        .from('integrations')
-        .select('*')
-        .eq('id', config.integrationId)
-        .single();
-
-      if (!integration) throw new Error('OpenAI integration not found');
-
-      // Configurar cliente OpenAI
+      const { openAIConfig } = node.data;
       const openai = new OpenAI({
-        apiKey: integration.credentials.apiKey
+        apiKey: process.env.OPENAI_API_KEY,
       });
 
-      let response;
-      switch (config.apiType) {
-        case 'textGeneration':
-          response = await handleTextGeneration(openai, config, session);
-          break;
-        case 'audioGeneration':
-          response = await handleAudioGeneration(openai, config, session);
-          break;
-        case 'textToSpeech':
-          response = await handleTextToSpeech(openai, config, session);
-          break;
-        default:
-          throw new Error(`Unsupported API type: ${config.apiType}`);
+      if (!openAIConfig) {
+        throw new Error('Configuração do OpenAI não encontrada');
       }
 
-      // Salvar resposta na variável especificada
-      if (config.variableName) {
-        await updateSession(session.id, {
-          variables: {
-            ...session.variables,
-            [config.variableName]: response
+      let updatedSession = { ...session };
+      
+      switch (openAIConfig.type) {
+        case 'text':
+          const textResult = await handleTextGeneration(openai, openAIConfig, updatedSession);
+          if (openAIConfig.saveToVariable && openAIConfig.variableName) {
+            // Atualiza a sessão com a nova variável
+            const variables = Array.isArray(updatedSession.variables) 
+              ? [...updatedSession.variables] 
+              : [];
+            
+            const variableIndex = variables.findIndex(v => v.name === openAIConfig.variableName);
+            
+            if (variableIndex >= 0) {
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: textResult
+              };
+            } else {
+              variables.push({
+                id: crypto.randomUUID(),
+                name: openAIConfig.variableName,
+                value: textResult
+              });
+            }
+            
+            await updateSession(updatedSession.id, { variables });
+            updatedSession.variables = variables;
           }
-        });
+          break;
+          
+        case 'audio':
+          await handleAudioGeneration(openai, openAIConfig, updatedSession);
+          break;
+          
+        case 'tts':
+          await handleTextToSpeech(openai, openAIConfig, updatedSession);
+          break;
+          
+        default:
+          throw new Error(`Tipo de OpenAI não suportado: ${openAIConfig.type}`);
       }
-
-      // Se houver uma resposta de texto, enviar como mensagem
-      if (typeof response === 'string') {
-        await sendMessage(response, session.id);
-      }
-
-      return response;
+      
+      return updatedSession;
     } catch (error) {
       Sentry.captureException(error);
       throw error;
@@ -691,12 +781,38 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           
           // Atualizar variáveis com os argumentos
           for (const [key, value] of Object.entries(args)) {
-            await updateSession(session.id, {
-              variables: {
-                ...session.variables,
-                [key]: value
-              }
-            });
+            // Verifica se session.variables é um array ou um objeto e converte para array se necessário
+            let variables = [];
+            
+            if (Array.isArray(session.variables)) {
+              variables = [...session.variables];
+            } else if (session.variables && typeof session.variables === 'object') {
+              // Converte de objeto para array
+              variables = Object.entries(session.variables).map(([name, value]) => ({
+                id: crypto.randomUUID(),
+                name,
+                value
+              }));
+            }
+            
+            const variableIndex = variables.findIndex(v => v.name === key);
+            
+            if (variableIndex >= 0) {
+              // Atualiza a variável existente
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: value
+              };
+            } else {
+              // Cria uma nova variável
+              variables.push({
+                id: crypto.randomUUID(),
+                name: key,
+                value: value
+              });
+            }
+            
+            await updateSession(session.id, { variables });
           }
 
           // Redirecionar para o nó alvo da ferramenta
@@ -723,15 +839,19 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         .single();
       
       if (prompt) {
+        // Substituir variáveis no prompt
+        const processedContent = replaceVariables(prompt.content, session.variables);
         messages.push({
           role: 'system',
-          content: prompt.content
+          content: processedContent
         });
       }
     } else if (config.promptType === 'custom' && config.customPrompt) {
+      // Substituir variáveis no prompt personalizado
+      const processedContent = replaceVariables(config.customPrompt, session.variables);
       messages.push({
         role: 'system',
-        content: config.customPrompt
+        content: processedContent
       });
     }
 
@@ -792,10 +912,105 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   };
 
   /**
-   * Atualização de dados do cliente (a ser implementado)
+   * Processa um nó do tipo variável, atualizando o valor da variável na sessão
+   * @param {Object} data - Dados do nó contendo a variável a ser atualizada
+   * @param {Object} session - Sessão atual com as variáveis
+   * @returns {Object} - Sessão atualizada com as novas variáveis
    */
-  const updateCustomer = async (data) => {
-    // Implementar atualização do cliente
+  const processVariable = async (data, session) => {
+    try {
+      if (!data.variable || !data.variable.name) {
+        throw new Error('Nome da variável não especificado');
+      }
+
+      // Processa o valor da variável, substituindo quaisquer variáveis existentes
+      const processedValue = replaceVariables(data.variable.value, session.variables);
+
+      // Verifica se session.variables é um array ou um objeto e converte para array se necessário
+      let variables = [];
+      
+      if (Array.isArray(session.variables)) {
+        variables = [...session.variables];
+      } else if (session.variables && typeof session.variables === 'object') {
+        // Converte de objeto para array
+        variables = Object.entries(session.variables).map(([name, value]) => ({
+          id: crypto.randomUUID(),
+          name,
+          value
+        }));
+      }
+      
+      const variableIndex = variables.findIndex(v => v.name === data.variable.name);
+      
+      if (variableIndex >= 0) {
+        // Atualiza a variável existente
+        variables[variableIndex] = {
+          ...variables[variableIndex],
+          value: processedValue
+        };
+      } else {
+        // Cria uma nova variável
+        variables.push({
+          id: crypto.randomUUID(),
+          name: data.variable.name,
+          value: processedValue
+        });
+      }
+      
+      // Cria uma cópia atualizada da sessão com as novas variáveis
+      const updatedSession = {
+        ...session,
+        variables
+      };
+      
+      // Atualiza a sessão no banco de dados
+      await updateSession(session.id, { variables }).catch(error => {
+        Sentry.captureException(error);
+        console.error('Erro ao atualizar variáveis na sessão:', error);
+      });
+      
+      // Retorna a sessão atualizada imediatamente
+      return updatedSession;
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
+  };
+
+  /**
+   * Atualização de dados do cliente
+   * @param {Object} data - Dados a serem atualizados
+   * @param {Object} session - Sessão atual
+   * @returns {Object} - Sessão atualizada
+   */
+  const updateCustomer = async (data, session) => {
+    try {
+      const { fields } = data;
+      if (!fields || !Array.isArray(fields) || fields.length === 0) {
+        throw new Error('Campos para atualização não especificados');
+      }
+
+      const updates = {};
+      
+      // Processa cada campo, substituindo variáveis se necessário
+      for (const field of fields) {
+        if (field.name && field.value) {
+          updates[field.name] = replaceVariables(field.value, session.variables);
+        }
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        await supabase
+          .from('customers')
+          .update(updates)
+          .eq('id', session.customer);
+      }
+      
+      return session;
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
   };
 
   /**
@@ -902,6 +1117,111 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     return data;
   };
 
+  /**
+   * Substitui as variáveis no formato {{nome_variavel}} pelo valor correspondente
+   * @param {string} text - Texto com possíveis variáveis para substituir
+   * @param {Object|Array} variables - Variáveis disponíveis (pode ser um objeto ou um array)
+   * @returns {string} - Texto com as variáveis substituídas
+   */
+  const replaceVariables = (text, variables) => {
+    if (!text || !variables) return text;
+    
+    return text.replace(/\{\{([^}]+)\}\}/g, (match, variableName) => {
+      const trimmedName = variableName.trim();
+      let value;
+      
+      // Verifica se variables é um array ou um objeto
+      if (Array.isArray(variables)) {
+        // Procura a variável no array de variáveis
+        const variable = variables.find(v => v.name === trimmedName);
+        value = variable ? variable.value : undefined;
+      } else if (typeof variables === 'object') {
+        // Acessa diretamente a propriedade do objeto
+        value = variables[trimmedName];
+      }
+      
+      // Retorna o valor da variável ou mantém o placeholder se não encontrar
+      return value !== undefined ? value : match;
+    });
+  };
+
+  /**
+   * Processa uma sessão específica que ultrapassou o tempo limite
+   * @param {Object} session - Sessão que ultrapassou o timeout
+   */
+  const handleSessionTimeout = async (session) => {
+    try {
+      const currentNode = session.flow.nodes.find(n => n.id === session.current_node_id);
+      if (!currentNode) {
+        // Se não encontrar o nó atual, marca a sessão como inativa
+        await updateSession(session.id, {
+          status: 'inactive',
+          timeout_at: null
+        });
+        return;
+      }
+      
+      // Busca uma edge do tipo timeout que sai do nó atual
+      const timeoutEdge = session.flow.edges.find(
+        edge => edge.source === currentNode.id && edge.sourceHandle === 'timeout'
+      );
+      
+      if (!timeoutEdge) {
+        // Se não houver edge de timeout, apenas zera o timeout_at
+        await updateSession(session.id, {
+          timeout_at: null
+        });
+        return;
+      }
+      
+      // Encontra o nó de destino do timeout
+      const timeoutNode = session.flow.nodes.find(n => n.id === timeoutEdge.target);
+
+      if (!timeoutNode) {
+        // Se não encontrar o nó de timeout, apenas zera o timeout_at
+        await updateSession(session.id, {
+          timeout_at: null
+        });
+        return;
+      }
+      
+      // Atualiza a sessão para o nó de timeout e zera o timeout_at
+      const updatedSession = await updateSession(session.id, {
+        current_node_id: timeoutNode.id,
+        timeout_at: null,
+        last_interaction: new Date().toISOString()
+      });
+      
+      // Executa o nó de timeout
+      await executeNode(updatedSession, timeoutNode);
+      
+      // Continua o fluxo a partir do nó de timeout
+      let nextNode = await getNextNode(updatedSession.flow, timeoutNode, null, updatedSession);
+      while (nextNode && nextNode.type !== 'input') {
+        await executeNode(updatedSession, nextNode);
+        nextNode = await getNextNode(updatedSession.flow, nextNode, null, updatedSession);
+      }
+      
+      if (nextNode) {
+        const timeout = nextNode.data?.inputConfig?.timeout || null;
+        await updateSession(updatedSession.id, {
+          current_node_id: nextNode.id,
+          input_type: nextNode.data?.inputType || 'text',
+          timeout_at: timeout ? new Date(Date.now() + timeout * 60 * 1000).toISOString() : null,
+          last_interaction: new Date().toISOString()
+        });
+        await executeNode(updatedSession, nextNode);
+      } else {
+        await updateSession(updatedSession.id, {
+          status: 'inactive'
+        });
+      }
+    } catch (error) {
+      Sentry.captureException(error);
+      console.error(`Erro ao processar timeout da sessão ${session.id}:`, error);
+    }
+  };
+
   return {
     processMessage,
     getActiveFlow,
@@ -917,6 +1237,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     processOpenAI,
     updateCustomer,
     checkTriggers,
-    findActiveChat
+    findActiveChat,
+    handleSessionTimeout
   };
 }; 
