@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
 import { OpenAI } from 'openai';
-import { createMessageToSend } from '../controllers/chat/message-handlers.js';
+import { createMessageToSend, sendSystemMessage } from '../controllers/chat/message-handlers.js';
 import crypto from 'crypto';
 
 /**
@@ -39,16 +39,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         
         if (activeFlow.debounce_timestamp && 
             now.getTime() - new Date(activeFlow.debounce_timestamp).getTime() < debounceTime) {
-          // Adicionar mensagem ao histórico temporário
-          await updateMessageHistory(activeFlow.id, {
-            content: message.content,
-            type: message.type,
-            timestamp: now
-          });
-          return; // Aguardar próxima mensagem
-        }
+              // Adicionar mensagem ao histórico temporário
+              await updateMessageHistory(activeFlow.id, {
+                content: message.content,
+                type: message.type,
+                timestamp: now
+              });
+              return; // Aguardar próxima mensagem
+            }
+
+            
 
         // Se chegou aqui, o período de debounce acabou
+        // Buscar novamente o fluxo ativo para obter o histórico de mensagens atualizado
+        activeFlow = await getActiveFlow();
+
         // Processar todas as mensagens acumuladas
         const messages = activeFlow.message_history || [];
         messages.push({
@@ -194,12 +199,14 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
 
       let nextNode = await getNextNode(updatedSession.flow, currentNode, message, updatedSession);
+
       while (nextNode && nextNode.type !== 'input') {
         // Executa o nó e obtém a sessão atualizada
         updatedSession = await executeNode(updatedSession, nextNode);
         nextNode = await getNextNode(updatedSession.flow, nextNode, message, updatedSession);
       }
 
+      
       if (nextNode) {
         const timeout = nextNode.data?.inputConfig?.timeout || null;
         // Atualiza a sessão no banco de dados
@@ -219,6 +226,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         });
       }
     } catch (error) {
+      console.log('Error: ', error);
       Sentry.captureException(error);
       throw error;
     }
@@ -235,7 +243,27 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     switch (node.type) {
       case 'text':
         const processedText = replaceVariables(node.data.text, updatedSession.variables);
-        await sendMessage(processedText, null, updatedSession.id);
+        
+        // Verificar se a opção splitParagraphs está ativada
+        if (node.data.splitParagraphs) {
+          // Dividir o texto em parágrafos (separados por linhas em branco)
+          const paragraphs = processedText
+            .split('\n\n')
+            .filter(paragraph => paragraph.trim().length > 0);
+          
+          // Enviar cada parágrafo como uma mensagem separada
+          for (const paragraph of paragraphs) {
+            await sendMessage(paragraph, null, updatedSession.id);
+            
+            // Adicionar um pequeno delay entre as mensagens para evitar throttling
+            if (paragraphs.length > 1) {
+              await processDelay(0.5); // 500ms de delay entre mensagens
+            }
+          }
+        } else {
+          // Comportamento padrão: enviar todo o texto como uma única mensagem
+          await sendMessage(processedText, null, updatedSession.id);
+        }
         break;
 
       case 'audio':
@@ -669,7 +697,27 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       if(content || files) {
         const result = await createMessageToSend(chatId, organization.id, content, null, files, null);
         if (result.status !== 201) throw new Error(result.error);
+        
+        // Aguardar que todas as mensagens sejam realmente enviadas para o canal
+        if (result.messages && result.messages.length > 0) {
+          // Criar uma cadeia de promises para enviar as mensagens em ordem
+          let sendChain = Promise.resolve();
+          
+          for (const message of result.messages) {
+            sendChain = sendChain.then(() => {
+              return sendSystemMessage(message.id).catch(error => {
+                console.error('Erro ao enviar mensagem para o canal:', error);
+              });
+            });
+          }
+          
+          // Aguardar a conclusão da cadeia antes de retornar
+          await sendChain;
+        }
+        
+        return result;
       }
+      return { status: 400, success: false, error: 'No content or files provided' };
     } catch (error) {
       Sentry.captureException(error);
       throw error;
@@ -692,9 +740,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const processOpenAI = async (node, session) => {
     try {
-      const { openAIConfig } = node.data;
+      const { openai: openAIConfig } = node.data;
+
+      const { data: integration, error: integrationError } = await supabase
+        .from('integrations')
+        .select('*')
+        .eq('id', openAIConfig.integrationId)
+        .eq('organization_id', organization.id)
+        .eq('type', 'openai')
+        .eq('status', 'active')
+        .single();
+
+      if (integrationError) throw integrationError;
+
       const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: integration.credentials.api_key,
       });
 
       if (!openAIConfig) {
@@ -703,10 +763,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       let updatedSession = { ...session };
       
-      switch (openAIConfig.type) {
-        case 'text':
+      switch (openAIConfig.apiType) {
+        case 'textGeneration':
           const textResult = await handleTextGeneration(openai, openAIConfig, updatedSession);
-          if (openAIConfig.saveToVariable && openAIConfig.variableName) {
+          if (openAIConfig.variableName) {
             // Atualiza a sessão com a nova variável
             const variables = Array.isArray(updatedSession.variables) 
               ? [...updatedSession.variables] 
@@ -741,7 +801,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           break;
           
         default:
-          throw new Error(`Tipo de OpenAI não suportado: ${openAIConfig.type}`);
+          throw new Error(`Tipo de OpenAI não suportado: ${openAIConfig.apiType}`);
       }
       
       return updatedSession;
@@ -775,9 +835,29 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     if (choice.message.tool_calls) {
       for (const toolCall of choice.message.tool_calls) {
         const tool = config.tools.find(t => t.name === toolCall.function.name);
-        if (tool && tool.targetNodeId) {
+        if (tool) {
           // Extrair argumentos da chamada
           const args = JSON.parse(toolCall.function.arguments);
+          
+          // Validar argumentos contra valores enum
+          if (tool.parameters && tool.parameters.properties) {
+            for (const [key, value] of Object.entries(args)) {
+              const paramConfig = tool.parameters.properties[key];
+              
+              // Se o parâmetro tiver valores enum definidos, valida o valor recebido
+              if (paramConfig && paramConfig.enum && Array.isArray(paramConfig.enum) && paramConfig.enum.length > 0) {
+                console.log(`[validateEnum] Validando valor "${value}" para o parâmetro "${key}" da ferramenta "${tool.name}" contra valores enum: ${paramConfig.enum.join(', ')}`);
+                
+                // Se o valor não estiver na lista de enum, usa o primeiro valor da lista
+                if (!paramConfig.enum.includes(value)) {
+                  console.warn(`[validateEnum] Valor "${value}" para o parâmetro "${key}" não está na lista de valores permitidos. Usando o primeiro valor da lista: "${paramConfig.enum[0]}"`);
+                  args[key] = paramConfig.enum[0];
+                } else {
+                  console.log(`[validateEnum] Valor "${value}" para o parâmetro "${key}" é válido.`);
+                }
+              }
+            }
+          }
           
           // Atualizar variáveis com os argumentos
           for (const [key, value] of Object.entries(args)) {
@@ -815,10 +895,40 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             await updateSession(session.id, { variables });
           }
 
+          // Verificar condições para determinar o próximo nó
+          let nextNodeId = null;
+          
+          // Se houver condições definidas, verifica cada uma delas
+          if (tool.conditions && Array.isArray(tool.conditions) && tool.conditions.length > 0) {
+            console.log(`[processConditions] Verificando ${tool.conditions.length} condições para a ferramenta "${tool.name}"`);
+            
+            // Verifica cada condição
+            for (const condition of tool.conditions) {
+              if (condition.paramName && condition.value && condition.targetNodeId) {
+                const paramValue = args[condition.paramName];
+                
+                // Se o valor do parâmetro corresponder ao valor da condição, usa o nó de destino da condição
+                if (paramValue === condition.value) {
+                  console.log(`[processConditions] Condição satisfeita: ${condition.paramName} = ${condition.value}. Redirecionando para o nó ${condition.targetNodeId}`);
+                  nextNodeId = condition.targetNodeId;
+                  break; // Sai do loop após encontrar a primeira condição satisfeita
+                }
+              }
+            }
+          }
+          
+          // Se nenhuma condição for satisfeita, usa o nó de destino padrão
+          if (!nextNodeId) {
+            nextNodeId = tool.defaultTargetNodeId || tool.targetNodeId;
+            console.log(`[processConditions] Nenhuma condição satisfeita. Usando nó de destino padrão: ${nextNodeId}`);
+          }
+          
           // Redirecionar para o nó alvo da ferramenta
-          await updateSession(session.id, {
-            current_node_id: tool.targetNodeId
-          });
+          if (nextNodeId) {
+            await updateSession(session.id, {
+              current_node_id: nextNodeId
+            });
+          }
         }
       }
       return null; // Retorna null pois o fluxo será redirecionado
@@ -862,11 +972,12 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         .from('messages')
         .select('*')
         .eq('chat_id', session.chat_id)
+        .not('content', 'is', null)
         .order('created_at', { ascending: true });
 
       chatMessages?.forEach(msg => {
         messages.push({
-          role: msg.direction === 'inbound' ? 'user' : 'assistant',
+          role: msg.sender_type === 'customer' ? 'user' : 'assistant',
           content: msg.content
         });
       });
@@ -891,14 +1002,46 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   };
 
   const prepareTools = (tools = []) => {
-    return tools.map(tool => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters
+    return tools.map(tool => {
+      // Cria uma cópia profunda dos parâmetros para evitar modificar o objeto original
+      const parameters = tool.parameters ? JSON.parse(JSON.stringify(tool.parameters)) : { type: 'object', properties: {} };
+      
+      // Verifica se há propriedades com valores enum
+      if (parameters.properties) {
+        Object.keys(parameters.properties).forEach(propName => {
+          const prop = parameters.properties[propName];
+          
+          // Se a propriedade tiver valores enum, garante que eles sejam incluídos corretamente
+          if (prop.enum && Array.isArray(prop.enum)) {
+            // Filtra valores vazios ou nulos
+            const originalLength = prop.enum.length;
+            prop.enum = prop.enum.filter(value => value !== null && value !== '');
+            
+            // Log para depuração
+            if (originalLength !== prop.enum.length) {
+              console.log(`[prepareTools] Filtrados ${originalLength - prop.enum.length} valores vazios do enum para o parâmetro "${propName}" da ferramenta "${tool.name}"`);
+            }
+            
+            // Se não houver valores enum válidos após a filtragem, remove a propriedade enum
+            if (prop.enum.length === 0) {
+              delete prop.enum;
+              console.log(`[prepareTools] Removida propriedade enum vazia para o parâmetro "${propName}" da ferramenta "${tool.name}"`);
+            } else {
+              console.log(`[prepareTools] Parâmetro "${propName}" da ferramenta "${tool.name}" tem ${prop.enum.length} valores enum: ${prop.enum.join(', ')}`);
+            }
+          }
+        });
       }
-    }));
+      
+      return {
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: parameters
+        }
+      };
+    });
   };
 
   const handleAudioGeneration = async (openai, config, session) => {

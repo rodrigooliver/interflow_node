@@ -1,10 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
-import path from 'path';
-import { uploadToS3, getActiveS3Integration } from '../../lib/s3.js';
+
+import { getActiveS3Integration } from '../../lib/s3.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
-import { findExistingChat } from '../webhooks/utils.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
 import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 
@@ -16,9 +15,29 @@ import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
 
-import { encrypt, decrypt } from '../../utils/crypto.js';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import fs from 'fs/promises';
+/**
+ * Formata texto markdown para o formato de formatação do WhatsApp
+ * 
+ * Converte a sintaxe markdown padrão para a formatação específica do WhatsApp:
+ * - **texto** ou __texto__ para *texto* (negrito)
+ * - _texto_ para _texto_ (itálico)
+ * - ~~texto~~ para ~texto~ (riscado)
+ * - [texto](link) para link direto
+ * 
+ * @param {string} text - Texto em formato markdown
+ * @returns {string} - Texto formatado para WhatsApp
+ */
+const formatMarkdownForWhatsApp = (text) => {
+  if (!text) return text;
+  
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '*$1*') // **negrito** -> *negrito*
+    .replace(/__(.*?)__/g, '*$1*')     // __negrito__ -> *negrito*
+    .replace(/_(.*?)_/g, '_$1_')       // _itálico_ -> _itálico_
+    .replace(/~~(.*?)~~/g, '~$1~')     // ~~riscado~~ -> ~riscado~
+    .replace(/\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '$1'); // [texto](link) -> link direto
+};
+
 
 /**
  * Configurações e handlers para cada tipo de canal
@@ -26,6 +45,7 @@ import fs from 'fs/promises';
  * Cada canal tem configurações específicas:
  * - identifier: coluna na tabela customers que armazena o ID do contato
  * - handler: função que processa o envio de mensagens
+ * - formatMessage: função que formata o conteúdo da mensagem para o canal
  * 
  * Tipos de mensagens suportadas por canal:
  * - whatsapp_official: texto, imagem, vídeo, áudio, documento e templates
@@ -36,19 +56,23 @@ import fs from 'fs/promises';
 const CHANNEL_CONFIG = {
   whatsapp_official: {
     identifier: 'whatsapp',
-    handler: handleSenderMessageOfficial
+    handler: handleSenderMessageOfficial,
+    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_wapi: {
     identifier: 'whatsapp',
-    handler: handleSenderMessageWApi
+    handler: handleSenderMessageWApi,
+    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_zapi: {
     identifier: 'whatsapp',
     // handler: handleSenderMessageZApi
+    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_evo: {
     identifier: 'whatsapp',
     // handler: handleSenderMessageEvolution
+    formatMessage: formatMarkdownForWhatsApp
   },
   instagram: {
     identifier: 'instagramId',
@@ -383,7 +407,7 @@ export async function handleIncomingMessage(channel, messageData) {
     if (updateError) throw updateError;
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      isFirstMessage: true,
+      isFirstMessage,
       lastMessage: message
     });
 
@@ -931,7 +955,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     // Usa o handler específico do canal
     const result = await channelConfig.handler(channel, {
       messageId: message.id,
-      content: message.content,
+      content: channelConfig.formatMessage ? channelConfig.formatMessage(message.content) : message.content,
       type: message.type,
       attachments: message.attachments,
       to: chat.external_id,
@@ -1067,6 +1091,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
 
     // Verificar o tipo de canal
     const channelType = chatData.channel_details?.type || 'email';
+    const channelConfig = CHANNEL_CONFIG[channelType] || {};
     const isSocialChannel = [
       'whatsapp_official', 
       'whatsapp_wapi', 
@@ -1154,6 +1179,9 @@ export async function createMessageToSend(chatId, organizationId, content, reply
 
     // Adicionar mensagem de texto
     if (content) {
+      // Aplicar formatação específica do canal se disponível
+      const formattedContent = channelConfig.formatMessage ? channelConfig.formatMessage(content) : content;
+      
       if (isSocialChannel && hasFiles) {
         // Para canais sociais com arquivos, adicionar mensagem de texto separada
         messages.push({
@@ -1161,7 +1189,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
-          content: content,
+          content: formattedContent,
           type: 'text',
           response_message_id: replyToMessageId ?? null,
           attachments: [],
@@ -1175,7 +1203,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
-          content: content,
+          content: formattedContent,
           type: 'email',
           response_message_id: replyToMessageId ?? null,
           attachments: attachments,
@@ -1189,7 +1217,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
-          content: content,
+          content: formattedContent,
           type: isSocialChannel ? 'text' : 'email',
           response_message_id: replyToMessageId ?? null,
           attachments: [],
@@ -1281,26 +1309,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       }
     }
 
-    // Enviar mensagens para o canal sem aguardar a resposta
-    // Mas garantindo que sejam enviadas em ordem
-    if (messagesData.length > 0) {
-      // Criar uma cadeia de promises para enviar as mensagens em ordem
-      let sendChain = Promise.resolve();
-      
-      for (const message of messagesData) {
-        sendChain = sendChain.then(() => {
-          return sendSystemMessage(message.id).catch(error => {
-            console.error('Erro ao enviar mensagem para o canal:', error);
-          });
-        });
-      }
-      
-      // Iniciar a cadeia sem bloquear a resposta
-      sendChain.catch(error => {
-        console.error('Erro na cadeia de envio de mensagens:', error);
-      });
-    }
-
+    // Não iniciamos mais a cadeia de envio aqui, isso será feito na função sendMessage
+    
     return {
       status: 201,
       success: true,
