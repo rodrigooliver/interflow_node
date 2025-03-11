@@ -17,7 +17,6 @@ router.post('/create-checkout-session', createCheckoutSession);
 // Create Stripe customer portal session  
 router.post('/create-portal-session', createPortalSession);
 
-// Stripe webhook handler
-router.post('/webhook', express.raw({ type: 'application/json' }), handleWebhook);
+
 
 export default router;

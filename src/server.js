@@ -13,6 +13,7 @@ import chatRoutes from './routes/chat.js';
 import flowRoutes from './routes/flow.js';
 import whatsappRoutes from './routes/whatsapp.js';
 import { setupCronJobs } from './cron/index.js';
+import { handleWebhook } from './controllers/stripe.js';
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,12 @@ app.use(Sentry.Handlers.requestHandler());
 
 // Middleware
 app.use(cors());
+
+// Middleware personalizado para capturar o corpo bruto da requisição do Stripe
+const stripeWebhookMiddleware = express.raw({type: 'application/json'});
+
+// Função para processar o webhook do Stripe com o middleware correto
+app.post('/api/webhook/stripe', stripeWebhookMiddleware, handleWebhook);
 
 // Aumentar limites para permitir payloads JSON maiores com base64
 app.use(express.json({
@@ -55,8 +62,8 @@ app.get('/', (req, res) => {
 // Routes
 app.use('/api/webhook/instagram', instagramRoutes);
 app.use('/api/webhook/whatsapp', whatsappRoutes);
-app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
+app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
 app.use('/api/:organizationId/chat', chatRoutes);
 app.use('/api/:organizationId/flow', flowRoutes);
