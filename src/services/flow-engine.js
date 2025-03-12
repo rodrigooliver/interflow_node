@@ -3,6 +3,7 @@ import Sentry from '../lib/sentry.js';
 import { OpenAI } from 'openai';
 import { createMessageToSend, sendSystemMessage } from '../controllers/chat/message-handlers.js';
 import crypto from 'crypto';
+import { decrypt } from '../utils/crypto.js';
 
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
@@ -753,8 +754,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       if (integrationError) throw integrationError;
 
+      // Descriptografar a chave da API OpenAI antes de usar
+      const decryptedApiKey = decrypt(integration.credentials.api_key);
+      
+      if (!decryptedApiKey) {
+        throw new Error('Erro ao descriptografar a chave da API OpenAI');
+      }
+
       const openai = new OpenAI({
-        apiKey: integration.credentials.api_key,
+        apiKey: decryptedApiKey,
       });
 
       if (!openAIConfig) {

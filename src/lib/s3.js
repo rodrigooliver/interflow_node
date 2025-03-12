@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabase } from './supabase.js';
+import { decrypt } from '../utils/crypto.js';
 
 export async function getActiveS3Integration(organizationId) {
   // Buscar integração ativa de AWS S3 para a organização
@@ -33,13 +34,20 @@ export async function uploadToS3({
   }
 
   // Configurar cliente S3 com credenciais da integração
-  const { accessKeyId, secretAccessKey, region, bucket } = s3Integration.credentials;
+  const { access_key_id, secret_access_key, region, bucket } = s3Integration.credentials;
+  
+  // Descriptografar a chave secreta antes de usar
+  const decryptedSecretKey = decrypt(secret_access_key);
+  
+  if (!decryptedSecretKey) {
+    throw new Error('Erro ao descriptografar a chave secreta do S3');
+  }
   
   const s3Client = new S3Client({
     region: region || 'us-east-1',
     credentials: {
-      accessKeyId,
-      secretAccessKey
+      accessKeyId: access_key_id,
+      secretAccessKey: decryptedSecretKey
     }
   });
 
@@ -76,13 +84,20 @@ export async function deleteFromS3(key, organizationId) {
     throw new Error('Integração S3 não encontrada');
   }
 
-  const { accessKeyId, secretAccessKey, region, bucket } = s3Integration.credentials;
+  const { access_key_id, secret_access_key, region, bucket } = s3Integration.credentials;
+  
+  // Descriptografar a chave secreta antes de usar
+  const decryptedSecretKey = decrypt(secret_access_key);
+  
+  if (!decryptedSecretKey) {
+    throw new Error('Erro ao descriptografar a chave secreta do S3');
+  }
   
   const s3Client = new S3Client({
     region: region || 'us-east-1',
     credentials: {
-      accessKeyId,
-      secretAccessKey
+      accessKeyId: access_key_id,
+      secretAccessKey: decryptedSecretKey
     }
   });
 

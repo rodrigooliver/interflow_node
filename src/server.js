@@ -12,6 +12,7 @@ import instagramRoutes from './routes/instagram.js';
 import chatRoutes from './routes/chat.js';
 import flowRoutes from './routes/flow.js';
 import whatsappRoutes from './routes/whatsapp.js';
+import integrationRoutes from './routes/integrations.js';
 import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
 
@@ -67,6 +68,7 @@ app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
 app.use('/api/:organizationId/chat', chatRoutes);
 app.use('/api/:organizationId/flow', flowRoutes);
+app.use('/api/:organizationId/integrations', integrationRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 
 // The error handler must be before any other error middleware and after all controllers
