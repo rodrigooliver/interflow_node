@@ -16,6 +16,7 @@ import integrationRoutes from './routes/integrations.js';
 import memberRoutes from './routes/member.js';
 import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
+import { testEmailConnection } from './controllers/member.js';
 
 // Load environment variables
 dotenv.config();
@@ -72,6 +73,7 @@ app.use('/api/:organizationId/flow', flowRoutes);
 app.use('/api/:organizationId/integrations', integrationRoutes);
 app.use('/api/:organizationId/member', memberRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.post('/api/test-email-connection', testEmailConnection);
 
 // The error handler must be before any other error middleware and after all controllers
 app.use(Sentry.Handlers.errorHandler());

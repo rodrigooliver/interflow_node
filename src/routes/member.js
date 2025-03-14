@@ -2,7 +2,9 @@ import express from 'express';
 import { verifyAuth } from '../middleware/auth.js';
 import { 
   updateMember,
-  inviteMember
+  inviteMember,
+  joinOrganization,
+  testEmailConnection
 } from '../controllers/member.js';
 
 const router = express.Router({ mergeParams: true });
@@ -13,5 +15,7 @@ router.use(verifyAuth);
 // Rotas de member
 router.put('/:id', updateMember);
 router.post('/invite', inviteMember);
+router.post('/join', joinOrganization);
+router.post('/test-email', testEmailConnection);
 
 export default router;

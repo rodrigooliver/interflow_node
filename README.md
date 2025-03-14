@@ -48,6 +48,13 @@ STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
 # Storage
 STORAGE_BUCKET=attachments
 MAX_FILE_SIZE=10485760 # 10MB in bytes
+
+# Email Configuration
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_USER=your_email_username
+EMAIL_PASSWORD=your_email_password
+EMAIL_FROM=noreply@example.com
 ```
 
 ## Installation
@@ -84,6 +91,11 @@ npm run dev
 ### Email Integration
 - `POST /api/test-email-connection` - Test IMAP/SMTP connection
 
+### Custom Email Service
+- The application can use either Supabase's email service or a custom SMTP server
+- When environment variables for email are configured, the system will use the custom SMTP server
+- If email environment variables are missing, it falls back to Supabase's email service
+
 ### Payments (Stripe)
 - `POST /api/stripe/create-checkout-session` - Create payment checkout session
 - `POST /api/stripe/create-portal-session` - Create customer portal session
@@ -117,6 +129,13 @@ npm run dev
 - SMTP sending
 - Email threading
 - Attachment handling
+
+### Custom Email Service
+- Support for custom SMTP servers
+- Personalized email templates
+- HTML email formatting
+- Fallback to Supabase email service
+- Multi-language email templates
 
 ### Payment Processing
 - Subscription management
