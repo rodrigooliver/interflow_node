@@ -461,4 +461,4 @@ export const getOpenAIModels = async (req, res) => {
       error: 'Erro ao buscar modelos'
     });
   }
-}; 
+};
