@@ -401,7 +401,10 @@ export async function handleIncomingMessage(channel, messageData) {
     // Atualiza o last_message_id do chat
     const { error: updateError } = await supabase
       .from('chats')
-      .update({ last_message_id: message.id })
+      .update({ 
+        last_message_id: message.id,
+        last_message_at: message.created_at
+      })
       .eq('id', chat.id);
 
     if (updateError) throw updateError;
@@ -1281,7 +1284,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       await supabase
         .from('chats')
         .update({ 
-          last_message_id: lastMessage.id
+          last_message_id: lastMessage.id,
+          last_message_at: lastMessage.created_at
         })
         .eq('id', chatId);
     }
@@ -1310,6 +1314,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     }
 
     // Não iniciamos mais a cadeia de envio aqui, isso será feito na função sendMessage
+    sendSystemMessage(lastMessage.id);
     
     return {
       status: 201,
