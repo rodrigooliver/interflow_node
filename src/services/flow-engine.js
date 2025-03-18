@@ -4,6 +4,7 @@ import { OpenAI } from 'openai';
 import { createMessageToSend, sendSystemMessage } from '../controllers/chat/message-handlers.js';
 import crypto from 'crypto';
 import { decrypt } from '../utils/crypto.js';
+import { processAgentIA } from './agent-ia.js';
 
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
@@ -302,6 +303,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         
       case 'openai':
         updatedSession = await processOpenAI(node, updatedSession);
+        break;
+
+      case 'agenteia':
+        updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
         break;
         
       case 'update_customer':
