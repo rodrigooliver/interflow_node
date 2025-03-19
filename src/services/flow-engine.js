@@ -24,13 +24,14 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const processMessage = async (message) => {
     try {
       let activeFlow = await getActiveFlow();
-
+      
       if (!activeFlow) {
         const flow = await findMatchingFlow(message);
         if (flow) {
           activeFlow = await startFlow(flow);
         }
       }
+      // console.log('activeFlow',activeFlow);
 
       // console.log('Active Flow:', activeFlow);
 
@@ -50,11 +51,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
               return; // Aguardar próxima mensagem
             }
 
-            
-
         // Se chegou aqui, o período de debounce acabou
         // Buscar novamente o fluxo ativo para obter o histórico de mensagens atualizado
         activeFlow = await getActiveFlow();
+
+        // console.log('activeFlow', activeFlow);
 
         // Processar todas as mensagens acumuladas
         const messages = activeFlow.message_history || [];
@@ -75,6 +76,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           type: message.type,
           metadata: { ...message.metadata, original_messages: messages }
         };
+
 
         await continueFlow(activeFlow, combinedMessage);
 
@@ -136,6 +138,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const startFlow = async (flow) => {
     // Encontrar o nó inicial (geralmente do tipo 'start')
     const startNode = flow.nodes.find(node => node.id === 'start-node');
+    // console.log('startNode', startNode);
     if (!startNode) return null;
 
     try {
@@ -704,22 +707,22 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         const result = await createMessageToSend(chatId, organization.id, content, null, files, null);
         if (result.status !== 201) throw new Error(result.error);
         
-        // Aguardar que todas as mensagens sejam realmente enviadas para o canal
-        if (result.messages && result.messages.length > 0) {
-          // Criar uma cadeia de promises para enviar as mensagens em ordem
-          let sendChain = Promise.resolve();
+        // // Aguardar que todas as mensagens sejam realmente enviadas para o canal
+        // if (result.messages && result.messages.length > 0) {
+        //   // Criar uma cadeia de promises para enviar as mensagens em ordem
+        //   let sendChain = Promise.resolve();
           
-          for (const message of result.messages) {
-            sendChain = sendChain.then(() => {
-              return sendSystemMessage(message.id).catch(error => {
-                console.error('Erro ao enviar mensagem para o canal:', error);
-              });
-            });
-          }
+        //   for (const message of result.messages) {
+        //     sendChain = sendChain.then(() => {
+        //       return sendSystemMessage(message.id).catch(error => {
+        //         console.error('Erro ao enviar mensagem para o canal:', error);
+        //       });
+        //     });
+        //   }
           
-          // Aguardar a conclusão da cadeia antes de retornar
-          await sendChain;
-        }
+        //   // Aguardar a conclusão da cadeia antes de retornar
+        //   await sendChain;
+        // }
         
         return result;
       }
@@ -1218,22 +1221,24 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       .eq('type', 'first_contact')
       .eq('is_active', true)
       .eq('flows.organization_id', organization.id)
-      .eq('flows.is_active', true)
+      // .eq('flows.is_active', true)
       .eq('flows.is_published', true);
 
+      
       if(flowsError) throw flowsError;
       if(flows.length === 0) return null;
-
+      
       for (const flow of flows) {
         // Encontrar a regra de canal
         const channelRule = flow.conditions.rules.find(rule => rule.type === 'channel');
         if (!channelRule) continue;
-
+        
         // Verificar se o canal está na lista de canais permitidos
         const channelList = channelRule.params.channels || [];
         const isChannelAllowed = channelList.length === 0 || channelList.includes(channel.id);
         if (!isChannelAllowed) continue;
 
+        
         // Encontrar e verificar regra de schedule, se existir
         const scheduleRule = flow.conditions.rules.find(rule => rule.type === 'schedule');
         if (scheduleRule) {

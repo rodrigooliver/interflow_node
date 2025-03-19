@@ -105,6 +105,8 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 
     console.log(`[AgentIA] Iniciando chamada para modelo ${prompt.model} com temperatura ${prompt.temperature}`);
 
+    // console.log('messages', messages);
+
     // Fazer chamada para o OpenAI
     const completion = await openai.chat.completions.create({
       model: prompt.model || 'gpt-4o',
@@ -152,7 +154,7 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
           let result = null;
           if (prompt.destinations && prompt.destinations[tool.name]) {
             const actions = prompt.destinations[tool.name];
-            result = await handleToolActions(actions, args, session, tool, sendMessage);
+            result = await handleToolActions(actions, args, session, tool);
           }
 
           // Atualizar variáveis com os argumentos
@@ -240,10 +242,10 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
         // Obter a resposta contextualizada
         const contextualizedResponse = followUpCompletion.choices[0].message.content;
         
-        // Enviar resposta contextualizada para o usuário
-        if (contextualizedResponse) {
-          await sendMessage(contextualizedResponse, null, session.id);
-        }
+        // // Enviar resposta contextualizada para o usuário
+        // if (contextualizedResponse) {
+        //   await sendMessage(contextualizedResponse, null, session.id);
+        // }
         
         // Se tiver especificado um nome de variável para salvar a resposta
         if (node.data.agenteia.variableName) {
@@ -317,10 +319,10 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
       };
     }
     
-    // Se não for para salvar em variável, envia como mensagem
-    if (responseText) {
-      await sendMessage(responseText, null, session.id);
-    }
+    // // Se não for para salvar em variável, envia como mensagem
+    // if (responseText) {
+    //   await sendMessage(responseText, null, session.id);
+    // }
     
     return session;
   } catch (error) {
@@ -354,7 +356,7 @@ const prepareContextMessages = async (prompt, session) => {
     .from('messages')
     .select('*')
     .eq('chat_id', session.chat_id)
-    .in('sender_type', ['customer', 'assistant'])
+    .in('sender_type', ['customer', 'agent'])
     .not('content', 'is', null)
     .order('created_at', { ascending: true });
 
@@ -560,15 +562,15 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
         allResults.push(resultWithContext);
         
         // Se a ação tem o sinalizador sendMessage ativado, enviar uma mensagem ao usuário
-        if (action.sendMessage && sendMessage && result.message) {
-          if (result.status === "success") {
-            await sendMessage(`✅ ${result.message}`);
-          } else if (result.status === "error") {
-            await sendMessage(`❌ ${result.message}`);
-          } else if (result.status === "info") {
-            await sendMessage(`ℹ️ ${result.message}`);
-          }
-        }
+        // if (action.sendMessage && sendMessage && result.message) {
+        //   if (result.status === "success") {
+        //     await sendMessage(`✅ ${result.message}`);
+        //   } else if (result.status === "error") {
+        //     await sendMessage(`❌ ${result.message}`);
+        //   } else if (result.status === "info") {
+        //     await sendMessage(`ℹ️ ${result.message}`);
+        //   }
+        // }
       }
     } catch (error) {
       console.error(`[handleToolActions] Erro ao executar ação ${action.type}:`, error);
@@ -584,9 +586,9 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
       });
       
       // Enviar mensagem de erro se a ação tiver o sinalizador sendMessage ativado
-      if (action.sendMessage && sendMessage) {
-        await sendMessage(`❌ Error executing action: ${error.message}`);
-      }
+      // if (action.sendMessage && sendMessage) {
+      //   await sendMessage(`❌ Error executing action: ${error.message}`);
+      // }
     }
   }
   
@@ -677,11 +679,13 @@ const processCheckScheduleAction = async (action, args, session) => {
     // Executar a operação apropriada
     switch (operation) {
       case 'checkAvailability':
+        console.log('checkAvailability', scheduleId, dayValue, timeValue, serviceId);
         operationResult = await checkScheduleAvailability(scheduleId, dayValue, timeValue, serviceId);
         operationResult = formatArrivalTimeMessage(operationResult);
         break;
         
       case 'createAppointment':
+        console.log('createAppointment', dayValue, timeValue, serviceId);
         if (!dayValue || !timeValue || !serviceId) {
           throw new Error('Date, time and service are required to create an appointment');
         }

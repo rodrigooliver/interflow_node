@@ -207,12 +207,15 @@ export async function handleIncomingMessage(channel, messageData) {
         .order('created_at', { ascending: false })
         .limit(1);
 
+        
       chat = chats?.[0] || null;
-
+      
       if (chat) {
         customer = chat.customers;
       } else {
         isFirstMessage = true;
+
+        // console.log('channel', channel);
 
         try {
           const possibleIds = normalizeContactId(messageData.externalId, channel.type);
@@ -220,16 +223,19 @@ export async function handleIncomingMessage(channel, messageData) {
           //Pesquisar se o customer existe com o id
           const { data: customerContact, error: customerContactError } = await supabase
             .from('customer_contacts')
-            .select('*, customers(*)')
+            .select('*, customers:customers!customer_contacts_customer_id_fkey(*)')
             .eq('type', identifierColumn)
             .in('value', possibleIds)
-            .eq('organization_id', channel.organization_id)
-            .single();
+            .eq('customers.organization_id', channel.organization.id)
+            .not('customers', 'is', null)
+            .limit(1);
+
+          // console.log('customerContact', customerContact, channel.organization.id);
 
           if (customerContactError) throw customerContactError;
 
-          if (customerContact) {
-            customer = customerContact.customers;
+          if (customerContact.length > 0) {
+            customer = customerContact[0].customer;
           } else {
             //Criar novo customer
             try {
@@ -410,7 +416,7 @@ export async function handleIncomingMessage(channel, messageData) {
     if (updateError) throw updateError;
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      isFirstMessage,
+      isFirstMessage: true,
       lastMessage: message
     });
 
