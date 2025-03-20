@@ -38,7 +38,13 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       if (activeFlow) {
         // Verificar se está dentro do período de debounce
         const now = new Date();
-        const debounceTime = activeFlow.flow?.debounce_time || 1000; // em milissegundos
+        const debounceTime = activeFlow.flow?.debounce_time || 10000; // em milissegundos
+        
+        // console.log('debounceTime', debounceTime);
+        // console.log('activeFlow.debounce_timestamp', activeFlow.debounce_timestamp);
+        // console.log('now.getTime()', now.getTime());
+        // console.log('new Date(activeFlow.debounce_timestamp).getTime()', new Date(activeFlow.debounce_timestamp).getTime());
+        // console.log('now.getTime() - new Date(activeFlow.debounce_timestamp).getTime()', now.getTime() - new Date(activeFlow.debounce_timestamp).getTime());
         
         if (activeFlow.debounce_timestamp && 
             now.getTime() - new Date(activeFlow.debounce_timestamp).getTime() < debounceTime) {
@@ -51,11 +57,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
               return; // Aguardar próxima mensagem
             }
 
-        // Se chegou aqui, o período de debounce acabou
+        // Se chegou aqui, o período de debounce acabou ou é a primeira mensagem
         // Buscar novamente o fluxo ativo para obter o histórico de mensagens atualizado
         activeFlow = await getActiveFlow();
 
-        // console.log('activeFlow', activeFlow);
+        // Atualizar timestamp do debounce para a mensagem atual
+        // Isso é crucial para iniciar o período de debounce
+        await updateSession(activeFlow.id, {
+          debounce_timestamp: now
+        });
 
         // Processar todas as mensagens acumuladas
         const messages = activeFlow.message_history || [];
@@ -65,11 +75,6 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           timestamp: now
         });
 
-        // Atualizar timestamp do debounce
-        await updateSession(activeFlow.id, {
-          debounce_timestamp: now
-        });
-
         // Processar mensagens acumuladas
         const combinedMessage = {
           content: messages.map(m => m.content).join('\n'),
@@ -77,11 +82,37 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           metadata: { ...message.metadata, original_messages: messages }
         };
 
-
-        await continueFlow(activeFlow, combinedMessage);
-
-        // Limpar histórico após processamento
-        await clearMessageHistory(activeFlow.id);
+        // Definimos um timeout para processar a mensagem após o período de debounce
+        setTimeout(async () => {
+          try {
+            // Buscar a sessão mais recente para verificar se ainda é a mesma mensagem de debounce
+            const currentSession = await getActiveFlow();
+            
+            // Verificar se o timestamp do debounce ainda é o mesmo
+            // Se for diferente, significa que uma nova mensagem chegou e alterou o timestamp
+            if (currentSession && 
+                currentSession.debounce_timestamp && 
+                new Date(currentSession.debounce_timestamp).getTime() === now.getTime()) {
+                
+              // Executar o fluxo apenas se o timestamp não tiver sido atualizado por uma nova mensagem
+              // console.log('Executando fluxo após o período de debounce  ------------------ ');
+              await continueFlow(currentSession, combinedMessage);
+              
+              // Limpar histórico após processamento
+              await clearMessageHistory(currentSession.id);
+              
+              // Limpar o timestamp de debounce
+              await updateSession(currentSession.id, {
+                debounce_timestamp: null
+              });
+            }
+          } catch (error) {
+            Sentry.captureException(error);
+            console.error('Erro durante o processamento do timeout de debounce:', error);
+          }
+        }, debounceTime);
+        
+        return; // Não prossegue para continueFlow imediatamente
       }
     } catch (error) {
       Sentry.captureException(error);
@@ -102,7 +133,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           id,
           nodes,
           edges,
-          variables
+          variables,
+          debounce_time
         )
       `)
       .eq('customer_id', customer.id)
@@ -169,7 +201,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           id,
           nodes,
           edges,
-          variables
+          variables,
+          debounce_time
         )
       `)
       .single();
