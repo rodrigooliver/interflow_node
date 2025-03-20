@@ -6,6 +6,7 @@ import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
 import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
+import { sendChatNotifications } from './notification-helpers.js';
 
 import { handleSenderMessageWApi } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
@@ -223,14 +224,15 @@ export async function handleIncomingMessage(channel, messageData) {
           //Pesquisar se o customer existe com o id
           const { data: customerContact, error: customerContactError } = await supabase
             .from('customer_contacts')
-            .select('*, customers:customers!customer_contacts_customer_id_fkey(*)')
+            .select('*, customer:customers!customer_contacts_customer_id_fkey(*)')
             .eq('type', identifierColumn)
             .in('value', possibleIds)
-            .eq('customers.organization_id', channel.organization.id)
-            .not('customers', 'is', null)
+            .eq('customer.organization_id', channel.organization.id)
+            .not('customer', 'is', null)
+            .order('created_at', { ascending: true })
             .limit(1);
 
-          // console.log('customerContact', customerContact, channel.organization.id);
+          console.log('customerContact', customerContact, channel.organization.id);
 
           if (customerContactError) throw customerContactError;
 
@@ -415,8 +417,25 @@ export async function handleIncomingMessage(channel, messageData) {
 
     if (updateError) throw updateError;
 
+    // Buscar o chat atualizado com todas as informações necessárias
+    const { data: updatedChat, error: chatError } = await supabase
+      .from('chats')
+      .select('*')
+      .eq('id', chat.id)
+      .single();
+    
+    if (chatError) {
+      console.error('Erro ao buscar chat atualizado:', chatError);
+    } else {
+      // Enviar notificações push se for uma mensagem do cliente
+      if (!messageData.fromMe) {
+        await sendChatNotifications(updatedChat || chat, customer, message);
+      }
+    }
+
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      isFirstMessage: true,
+      // isFirstMessage: true,
+      isFirstMessage,
       lastMessage: message
     });
 

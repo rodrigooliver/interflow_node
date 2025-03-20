@@ -59,7 +59,10 @@ import crypto from 'crypto';
 export const processAgentIA = async (node, session, sendMessage, updateSession) => {
   try {
     if (!node.data?.agenteia?.promptId) {
-      throw new Error('ID do prompt não especificado no nó AgentIA');
+      return {
+        success: false,
+        instructions: "Please provide a valid prompt ID for the AgentIA node."
+      };
     }
 
     // Buscar informações completas do prompt, incluindo configurações da integração
@@ -69,8 +72,17 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
       .eq('id', node.data.agenteia.promptId)
       .single();
 
-    if (promptError) throw promptError;
-    if (!prompt) throw new Error(`Prompt com ID ${node.data.agenteia.promptId} não encontrado`);
+    if (promptError) {
+      console.error('[processAgentIA] Erro ao buscar prompt:', promptError);
+      throw promptError;
+    }
+    if (!prompt) {
+      console.error(`[processAgentIA] Prompt não encontrado com ID ${node.data.agenteia.promptId}`);
+      return {
+        success: false,
+        instructions: `Please provide a valid prompt ID. The prompt with ID ${node.data.agenteia.promptId} was not found.`
+      };
+    }
 
     // Buscar a integração associada ao prompt
     const { data: integration, error: integrationError } = await supabase
@@ -81,15 +93,26 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
       .eq('status', 'active')
       .single();
 
-    if (integrationError) throw integrationError;
+    if (integrationError) {
+      console.error('[processAgentIA] Erro ao buscar integração:', integrationError);
+      throw integrationError;
+    }
     if (!integration) {
-      throw new Error(`Integração com ID ${prompt.integration_id} não encontrada ou não está ativa`);
+      console.error(`[processAgentIA] Integração não encontrada com ID ${prompt.integration_id}`);
+      return {
+        success: false,
+        instructions: `Please check the integration configuration. The integration with ID ${prompt.integration_id} was not found or is not active.`
+      };
     }
 
     // Descriptografar a chave da API OpenAI
     const decryptedApiKey = decrypt(integration.credentials.api_key);
     if (!decryptedApiKey) {
-      throw new Error('Erro ao descriptografar a chave da API OpenAI');
+      console.error('[processAgentIA] Erro ao descriptografar chave da API OpenAI');
+      return {
+        success: false,
+        instructions: "There was an error decrypting the OpenAI API key. Please check the integration configuration."
+      };
     }
 
     // Inicializar o cliente OpenAI com a chave da API
@@ -341,14 +364,91 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 const prepareContextMessages = async (prompt, session) => {
   const messages = [];
 
-  // Adicionar prompt do sistema
-  if (prompt.content) {
-    // Substituir variáveis no prompt
-    const processedContent = replaceVariables(prompt.content, session.variables);
-    messages.push({
-      role: 'system',
-      content: processedContent
+  // Adicionar informações contextuais sobre data e cliente
+  try {
+    // Buscar informações do cliente
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('name')
+      .eq('id', session.customer_id)
+      .single();
+    
+    // Obter timezone da configuração do prompt ou usar padrão
+    const timezone = prompt.config?.timezone || 'America/Sao_Paulo';
+    
+    // Obter data e hora formatadas
+    const currentDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      timeZone: timezone
     });
+    
+    const currentTime = new Date().toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      hour12: false,
+      timeZone: timezone
+    });
+    
+    // Obter o dia da semana
+    const weekday = new Date().toLocaleDateString('pt-BR', {
+      weekday: 'long',
+      timeZone: timezone
+    });
+    
+    // Obter informações do chat
+    const { data: chat } = await supabase
+      .from('chats')
+      .select('title, channel_details')
+      .eq('id', session.chat_id)
+      .single();
+    
+    let contextInfo = `[SYSTEM CONTEXT INFO: Today is ${currentDate} (${weekday}), current time is ${currentTime} (${timezone} timezone).`;
+    
+    if (customer && customer.name) {
+      contextInfo += `\nCustomer name: "${customer.name}" (automatically retrieved from our system)`;
+    }
+    
+    if (chat) {
+      if (chat.title) {
+        contextInfo += `\nConversation title: "${chat.title}"`;
+      }
+      
+      if (chat.channel_details && chat.channel_details.type) {
+        contextInfo += `\nChannel type: ${chat.channel_details.type}`;
+      }
+    }
+    
+    contextInfo += `\nPlease use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.]`;
+    
+    // Adicionar prompt do sistema com informações do contexto
+    if (prompt.content) {
+      // Substituir variáveis no prompt
+      const processedContent = replaceVariables(prompt.content, session.variables);
+      messages.push({
+        role: 'system',
+        content: processedContent + '\n\n' + contextInfo
+      });
+    } else {
+      // Se não houver prompt, apenas adicionar o contexto
+      messages.push({
+        role: 'system',
+        content: contextInfo
+      });
+    }
+  } catch (error) {
+    console.error('[prepareContextMessages] Error adding context info:', error);
+    
+    // Adicionar prompt do sistema sem informações contextuais
+    if (prompt.content) {
+      // Substituir variáveis no prompt
+      const processedContent = replaceVariables(prompt.content, session.variables);
+      messages.push({
+        role: 'system',
+        content: processedContent
+      });
+    }
   }
 
   // Buscar apenas mensagens do chat atual
@@ -361,9 +461,32 @@ const prepareContextMessages = async (prompt, session) => {
     .order('created_at', { ascending: true });
 
   chatMessages?.forEach(msg => {
+    // Adicionar timestamp da mensagem
+    const messageDate = new Date(msg.created_at);
+    
+    // Obter timezone da configuração do prompt ou usar padrão
+    const timezone = prompt.config?.timezone || 'America/Sao_Paulo';
+    
+    const formattedDate = messageDate.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long', 
+      day: 'numeric',
+      timeZone: timezone
+    });
+    
+    const formattedTime = messageDate.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: timezone
+    });
+    
+    const timestampInfo = ``;
+    // const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
+    
     messages.push({
       role: msg.sender_type === 'customer' ? 'user' : 'assistant',
-      content: msg.content
+      content: timestampInfo + msg.content
     });
   });
 
@@ -477,6 +600,9 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
     return null;
   }
 
+  console.log('[handleToolActions] Actions:', actions);
+  console.log('[handleToolActions] Args:', args);
+
   const allResults = [];
 
   for (const action of actions) {
@@ -531,6 +657,7 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
       switch (action.type) {
         case 'check_schedule':
           result = await processCheckScheduleAction(action, args, session);
+          console.log('[handleToolActions] Result:', result);
           break;
         
         case 'update_customer':
@@ -597,6 +724,134 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
 };
 
 /**
+ * Converte um horário local para UTC
+ * @param {string} date - Data no formato YYYY-MM-DD
+ * @param {string} time - Hora local no formato HH:MM
+ * @param {string} timezone - Timezone do cliente (ex: 'America/Sao_Paulo')
+ * @returns {string} - Hora em UTC no formato HH:MM
+ */
+const convertLocalTimeToUTC = (date, time, timezone) => {
+  try {
+    if (!date || !time) return time;
+    
+    // Criar um objeto Date com a data e hora local
+    const [hours, minutes] = time.split(':').map(Number);
+    const localDate = new Date(`${date}T${time}:00`);
+    
+    // Ajustar para o timezone especificado
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    
+    // Converter para string
+    const parts = formatter.formatToParts(localDate);
+    const formattedDate = {};
+    
+    parts.forEach(part => {
+      if (part.type !== 'literal') {
+        formattedDate[part.type] = part.value;
+      }
+    });
+    
+    // Criar um novo objeto Date com a data e hora ajustados ao timezone
+    const dateInTimezone = new Date(
+      `${formattedDate.year}-${formattedDate.month}-${formattedDate.day}T${formattedDate.hour}:${formattedDate.minute}:00`
+    );
+    
+    // Obter a hora UTC
+    const utcHours = dateInTimezone.getUTCHours().toString().padStart(2, '0');
+    const utcMinutes = dateInTimezone.getUTCMinutes().toString().padStart(2, '0');
+    
+    return `${utcHours}:${utcMinutes}`;
+  } catch (error) {
+    console.error(`[convertLocalTimeToUTC] Error converting time: ${error.message}`);
+    return time; // Retorna o valor original em caso de erro
+  }
+};
+
+/**
+ * Converte um horário UTC para local
+ * @param {string} date - Data no formato YYYY-MM-DD
+ * @param {string} utcTime - Hora UTC no formato HH:MM
+ * @param {string} timezone - Timezone do cliente (ex: 'America/Sao_Paulo')
+ * @returns {string} - Hora local no formato HH:MM
+ */
+const convertUTCToLocalTime = (date, utcTime, timezone) => {
+  try {
+    if (!date || !utcTime) return utcTime;
+    
+    // Criar um objeto Date com a data e hora UTC
+    const [hours, minutes] = utcTime.split(':').map(Number);
+    const utcDate = new Date(`${date}T${utcTime}:00Z`);
+    
+    // Formatar para o timezone especificado
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    
+    // Obter a hora formatada
+    const localTime = formatter.format(utcDate);
+    return localTime;
+  } catch (error) {
+    console.error(`[convertUTCToLocalTime] Error converting time: ${error.message}`);
+    return utcTime; // Retorna o valor original em caso de erro
+  }
+};
+
+/**
+ * Converte um horário no formato HH:MM para minutos desde meia-noite
+ * @param {string} timeStr - Horário no formato HH:MM
+ * @returns {number} - Minutos desde meia-noite
+ */
+const timeToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  
+  // Validar formato do horário (HH:MM ou HH:MM:SS)
+  if (!/^\d{1,2}:\d{2}(:\d{2})?$/.test(timeStr)) {
+    console.warn(`[timeToMinutes] Formato de horário inválido: ${timeStr}`);
+    return 0;
+  }
+  
+  // Dividir o horário em partes e converter para números
+  const parts = timeStr.split(':').map(Number);
+  
+  // Validar valores
+  if (parts[0] < 0 || parts[0] > 23 || parts[1] < 0 || parts[1] > 59) {
+    console.warn(`[timeToMinutes] Valores de hora/minuto inválidos: ${timeStr}`);
+    return 0;
+  }
+  
+  // Se tiver segundos, validar também
+  if (parts.length === 3 && (parts[2] < 0 || parts[2] > 59)) {
+    console.warn(`[timeToMinutes] Valor de segundos inválido: ${timeStr}`);
+    return 0;
+  }
+  
+  // Converter para minutos (ignorando segundos se existirem)
+  return parts[0] * 60 + parts[1];
+};
+
+/**
+ * Converte minutos desde meia-noite para horário no formato HH:MM
+ * @param {number} minutes - Minutos desde meia-noite
+ * @returns {string} - Horário no formato HH:MM
+ */
+const minutesToTime = (minutes) => {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+};
+
+/**
  * Processa uma ação de verificação de agenda
  * @param {Object} action - Configuração da ação
  * @param {Object} args - Argumentos da ferramenta
@@ -608,13 +863,74 @@ const processCheckScheduleAction = async (action, args, session) => {
     const config = action.config || {};
     
     // Extrair os argumentos principais
-    const operation = args.operation;
-    const dayValue = args.date; // Formato YYYY-MM-DD
-    const timeValue = args.time; // Formato HH:MM
-    const appointmentId = args.id_consulta || args.appointment_id;
-    const serviceId = args.id_servico || args.service_id;
-    const notes = args.observacoes || args.notes;
-    const byArrivalTime = args.by_arrival_time || args.order_of_arrival; // Se o cliente especificou atendimento por ordem de chegada
+    // Determinar a operação usando operationMapping ou diretamente
+    let operation;
+    if (config.operationMapping && config.operationMapping.variable && config.operationMapping.mapping) {
+      const operationValue = args[config.operationMapping.variable];
+      operation = config.operationMapping.mapping[operationValue] || operationValue;
+      console.log(`[processCheckScheduleAction] Operação mapeada: ${operationValue} -> ${operation}`);
+    } else if (config.operation) {
+      operation = args[config.operation];
+    } else {
+      operation = args.operation;
+    }
+    
+    // Obter os valores de data e hora das variáveis configuradas
+    const dayValue = args[config.dayVariable || 'date'] || args.date; // Formato YYYY-MM-DD
+    let timeValue = args[config.timeVariable || 'time'] || args.time; // Formato HH:MM
+    
+    // Obter ID do agendamento para cancelamento/consulta
+    let appointmentId = args[config.appointmentIdVariable || 'appointment_id'] || args.id_consulta || args.appointment_id;
+
+    // console.log('[processCheckScheduleAction] Appointment ID:', appointmentId);
+    // console.log('[processCheckScheduleAction] Appointment format:', appointmentId.includes('-'), appointmentId.split('-').length);
+    
+    // Se o ID vier no formato YYYY-MM-DD-HH:II, precisamos buscar o ID real do agendamento
+    if (appointmentId && appointmentId.includes('-') && appointmentId.split('-').length === 4) {
+      const [year, month, day, time] = appointmentId.split('-');
+      const date = `${year}-${month}-${day}`;
+      
+      // Buscar o agendamento pelo cliente, data e hora
+      const { data: appointment } = await supabase
+        .from('appointments')
+        .select('id')
+        .eq('customer_id', session.customer_id)
+        .eq('date', date)
+        .eq('start_time', time)
+        .in('status', ['scheduled', 'confirmed'])
+        .single();
+
+      if (appointment) {
+        appointmentId = appointment.id;
+      } else {
+        console.error(`[processCheckScheduleAction] Agendamento não encontrado para data ${date} e hora ${time}`);
+        return {
+          success: false,
+          instructions: `Please inform the customer that no appointment was found for the specified date ${date} and time ${time}.`
+        };
+      }
+    }
+    
+    // Obter ID do serviço usando mapeamento se disponível
+    let serviceId;
+    if (config.serviceMapping && config.serviceVariable) {
+      const serviceValue = args[config.serviceVariable];
+      serviceId = config.serviceMapping[serviceValue];
+      console.log(`[processCheckScheduleAction] Serviço mapeado: ${serviceValue} -> ${serviceId}`);
+    } else if (config.serviceId) {
+      serviceId = config.serviceId;
+    } else {
+      serviceId = args.id_servico || args.service_id;
+    }
+    
+    // Obter notas do agendamento
+    const notes = config.notes ? replaceVariables(config.notes, args) : args.notes || args.observacoes;
+    
+    // Flag para atendimento por ordem de chegada
+    const byArrivalTime = args.by_arrival_time || args.order_of_arrival;
+    
+    // Obter o timezone da configuração do prompt ou usar padrão
+    const timezone = args.timezone || session.variables?.find(v => v.name === 'timezone')?.value || 'America/Sao_Paulo';
     
     if (!operation) {
       return {
@@ -634,8 +950,10 @@ const processCheckScheduleAction = async (action, args, session) => {
       };
     }
     
+    console.log(`[processCheckScheduleAction] Operação: ${operation}, Data: ${dayValue}, Hora: ${timeValue}, Serviço: ${serviceId}, Agenda: ${scheduleId}`);
+    
     // Buscar o nome do serviço e suas propriedades se especificado
-    let serviceName = "Não especificado";
+    let serviceName = "Not specified";
     let isArrivalTimeService = false;
     let serviceCapacity = 1;
     
@@ -676,19 +994,53 @@ const processCheckScheduleAction = async (action, args, session) => {
     
     let operationResult;
     
+    // Remover a conversão de horário uma vez que os dados estarão na timezone da agenda
+    console.log(`[processCheckScheduleAction] Usando horário na timezone da agenda: ${timeValue}`);
+    
     // Executar a operação apropriada
     switch (operation) {
       case 'checkAvailability':
         console.log('checkAvailability', scheduleId, dayValue, timeValue, serviceId);
-        operationResult = await checkScheduleAvailability(scheduleId, dayValue, timeValue, serviceId);
+        // Obter o timezone da agenda
+        const { data: scheduleData } = await supabase
+          .from('schedules')
+          .select('timezone')
+          .eq('id', scheduleId)
+          .single();
+        
+        const scheduleTimezone = scheduleData?.timezone || timezone;
+        console.log(`[processCheckScheduleAction] Usando timezone da agenda: ${scheduleTimezone}`);
+        
+        operationResult = await checkScheduleAvailability(scheduleId, dayValue, timeValue, serviceId, scheduleTimezone);
         operationResult = formatArrivalTimeMessage(operationResult);
+        if (!operationResult.success) {
+          return operationResult;
+        }
         break;
         
       case 'createAppointment':
         console.log('createAppointment', dayValue, timeValue, serviceId);
-        if (!dayValue || !timeValue || !serviceId) {
-          throw new Error('Date, time and service are required to create an appointment');
+        // || !timeValue 
+        if (!dayValue || !serviceId) {
+          const missingParams = [];
+          if (!dayValue) missingParams.push('date');
+          if (!serviceId) missingParams.push('serviceId');
+          console.error(`[processCheckScheduleAction] Parâmetros obrigatórios não fornecidos: ${missingParams.join(', ')}`);
+          return {
+            success: false,
+            instructions: `I need the following information to create your appointment: ${missingParams.join(', ')}. Please provide these details in your next message. For example, if you need to provide a date, use the format YYYY-MM-DD, and for time use HH:MM.`
+          };
         }
+        
+        // Obter o timezone da agenda
+        const { data: scheduleDataForCreate } = await supabase
+          .from('schedules')
+          .select('timezone')
+          .eq('id', scheduleId)
+          .single();
+        
+        const scheduleTimezoneForCreate = scheduleDataForCreate?.timezone || timezone;
+        console.log(`[processCheckScheduleAction] Usando timezone da agenda para criação: ${scheduleTimezoneForCreate}`);
         
         // Se o cliente especificou que quer atendimento por ordem de chegada
         // e o serviço suporta isso, usamos modo por ordem de chegada
@@ -697,51 +1049,133 @@ const processCheckScheduleAction = async (action, args, session) => {
         // Se o serviço não suporta ordem de chegada mas o cliente pediu, informar
         if (byArrivalTime && !isArrivalTimeService) {
           operationResult = {
-            status: "warning",
-            success: true,
-            message: `This service doesn't support arrival time scheduling. A regular appointment has been created for ${dayValue} at ${timeValue}.`
+            status: "error",
+            message: "This service does not support arrival time scheduling. Please choose a specific time.",
+            operation
           };
-        }
-        
-        operationResult = await createAppointment(scheduleId, session.customer_id, dayValue, timeValue, serviceId, notes);
-        operationResult = formatArrivalTimeMessage(operationResult);
-        
-        // Adicionar instruções específicas para serviços por ordem de chegada
-        if (useArrivalTimeMode) {
-          operationResult.instructions = `Please arrive during the time range ${operationResult.time_slot}. There may be a wait depending on arrival order.`;
         } else {
-          operationResult.instructions = "Please arrive 15 minutes before your appointment. Bring your documents and health insurance card, if applicable.";
+          operationResult = await createAppointment(
+            scheduleId, 
+            session.customer_id, 
+            dayValue, 
+            timeValue, 
+            serviceId, 
+            notes,
+            scheduleTimezoneForCreate
+          );
+          
+          operationResult = formatArrivalTimeMessage(operationResult);
+          
+          // Adicionar instruções específicas para serviços por ordem de chegada
+          if (operationResult.success) {
+            if (useArrivalTimeMode) {
+              operationResult.instructions = `Please arrive during the time range ${operationResult.time_slot}. There may be a wait depending on arrival order.`;
+            } else {
+              operationResult.instructions = "Please arrive 15 minutes before your appointment. Bring your documents and health insurance card, if applicable.";
+            }
+          } else {
+            return operationResult;
+          }
         }
         break;
         
       case 'checkAppointment':
-        operationResult = await checkAppointment(session.customer_id, appointmentId);
-        
-        // Se algum agendamento for por ordem de chegada, formatar a mensagem
-        if (operationResult.success && operationResult.appointments) {
-          operationResult.appointments = operationResult.appointments.map(apt => {
-            if (apt.metadata?.by_arrival_time) {
-              apt.by_arrival_time = true;
-              apt.message = apt.message.replace('at', 'between');
-              if (apt.time_slot && apt.time_slot.includes('-')) {
-                const [start, end] = apt.time_slot.split('-');
-                apt.message += ` and ${end}`;
-              }
+        // Permitir consultar agendamentos mesmo sem ID ou data
+        if (!appointmentId) {
+          console.log(`[processCheckScheduleAction] Listando todos os agendamentos ativos do cliente`);
+          operationResult = await checkAppointment(session.customer_id);
+          if (!operationResult.success) {
+            return operationResult;
+          }
+        } else {
+          // Obter o timezone da agenda relacionada ao agendamento
+          const { data: appointmentForCheck } = await supabase
+            .from('appointments')
+            .select('schedule_id')
+            .eq('id', appointmentId)
+            .single();
+          
+          if (appointmentForCheck) {
+            const { data: scheduleForCheck } = await supabase
+              .from('schedules')
+              .select('timezone')
+              .eq('id', appointmentForCheck.schedule_id)
+              .single();
+            
+            const scheduleTimezoneForCheck = scheduleForCheck?.timezone || timezone;
+            console.log(`[processCheckScheduleAction] Usando timezone da agenda para checagem: ${scheduleTimezoneForCheck}`);
+            
+            operationResult = await checkAppointment(session.customer_id, appointmentId);
+            if (!operationResult.success) {
+              return operationResult;
             }
-            return apt;
-          });
+          } else {
+            operationResult = {
+              status: "error",
+              message: `Appointment not found with ID: ${appointmentId}`,
+              operation
+            };
+          }
         }
         break;
         
       case 'deleteAppointment':
-        if (!appointmentId) {
-          throw new Error('Appointment ID is required for cancellation');
+        // Permitir consultar agendamentos mesmo sem ID ou data
+        if (!appointmentId && !dayValue) {
+          console.error('[deleteAppointment] ID do agendamento ou data não fornecidos');
+          return {
+            success: false,
+            instructions: "Please ask the customer to provide either an appointment ID or a date."
+          };
         }
-        operationResult = await deleteAppointment(appointmentId, session.customer_id);
+        // Se temos uma data, mas não temos ID, usar a data para cancelar todos os agendamentos do cliente neste dia
+        else if (dayValue && !appointmentId) {
+          console.log(`[processCheckScheduleAction] Cancelando agendamentos por data: ${dayValue}`);
+          operationResult = await deleteAppointment(null, session.customer_id, dayValue);
+          if (!operationResult.success) {
+            return operationResult;
+          }
+        } 
+        // Caso contrário, continuar com a lógica de cancelar por ID
+        else {
+          // Obter o timezone da agenda relacionada ao agendamento
+          const { data: appointmentForDelete } = await supabase
+            .from('appointments')
+            .select('schedule_id')
+            .eq('id', appointmentId)
+            .single();
+          
+          if (appointmentForDelete) {
+            const { data: scheduleForDelete } = await supabase
+              .from('schedules')
+              .select('timezone')
+              .eq('id', appointmentForDelete.schedule_id)
+              .single();
+            
+            const scheduleTimezoneForDelete = scheduleForDelete?.timezone || timezone;
+            console.log(`[processCheckScheduleAction] Usando timezone da agenda para cancelamento: ${scheduleTimezoneForDelete}`);
+            
+            operationResult = await deleteAppointment(appointmentId, session.customer_id);
+            if (!operationResult.success) {
+              return operationResult;
+            }
+          } else {
+            operationResult = {
+              status: "error",
+              message: `Agendamento não encontrado com ID: ${appointmentId}`,
+              operation,
+              instructions: `The appointment with ID ${appointmentId} was not found. Inform the customer that no appointment exists with this ID.`
+            };
+          }
+        }
         break;
         
       default:
-        throw new Error(`Operation not supported: ${operation}`);
+        console.error(`[processCheckScheduleAction] Operação não suportada: ${operation}`);
+        return {
+          success: false,
+          instructions: `The operation "${operation}" is not supported. Please try a valid operation.`
+        };
     }
     
     // Adicionar informações contextuais para melhorar o resultado
@@ -754,8 +1188,12 @@ const processCheckScheduleAction = async (action, args, session) => {
         service_name: serviceName,
         appointment_date: dayValue,
         appointment_time: timeValue,
+        timezone: timezone, // Usar o timezone padrão da sessão em todos os casos
         notes: notes,
-        by_arrival_time: isArrivalTimeService || byArrivalTime
+        by_arrival_time: isArrivalTimeService || byArrivalTime,
+        // Incluir informações específicas para cancelamento por data
+        canceled_count: operationResult.canceled_count,
+        canceled_appointments: operationResult.appointments
       }
     };
     
@@ -797,21 +1235,32 @@ const processCheckScheduleAction = async (action, args, session) => {
  * @param {string} serviceId - ID do serviço
  * @returns {Object} - Resultado da verificação
  */
-const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
+const checkScheduleAvailability = async (scheduleId, date, time, serviceId, timezone = 'America/Sao_Paulo') => {
   try {
     // Verificar se a agenda existe
     const { data: schedule, error: scheduleError } = await supabase
       .from('schedules')
-      .select('*')
+      .select('*, timezone')
       .eq('id', scheduleId)
       .single();
       
     if (scheduleError || !schedule) {
-      throw new Error(`Schedule with ID ${scheduleId} not found`);
+      if (scheduleError) {
+        console.error(`[checkScheduleAvailability] Erro ao buscar agenda: ${scheduleError.message}`);
+      } else {
+        console.error(`[checkScheduleAvailability] Agenda não encontrada com ID ${scheduleId}`);
+      }
+      return {
+        success: false,
+        instructions: `Please check the schedule configuration. The schedule with ID ${scheduleId} was not found.`
+      };
     }
     
+    // Utilizar o timezone da agenda
+    const scheduleTimezone = schedule.timezone || timezone;
+    
     // Obter nome do serviço se especificado
-    let serviceName = "Não especificado";
+    let serviceName = "Not specified";
     let serviceDuration = 30; // Duração padrão em minutos
     let serviceCapacity = 1; // Capacidade padrão do serviço
     let isByArrivalTime = false; // Por padrão não é por ordem de chegada
@@ -840,6 +1289,17 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
     
     // Formatar a data para exibição
     const formattedDate = new Date(date).toLocaleDateString('pt-BR');
+
+
+    console.log(`[checkScheduleAvailability] Formatted date: ${formattedDate}`);
+    console.log(`[checkScheduleAvailability] Time: ${time}`);
+    console.log(`[checkScheduleAvailability] Service ID: ${serviceId}`);
+    console.log(`[checkScheduleAvailability] Service Name: ${serviceName}`);
+    console.log(`[checkScheduleAvailability] Service Duration: ${serviceDuration}`);
+    console.log(`[checkScheduleAvailability] Service Capacity: ${serviceCapacity}`);
+    console.log(`[checkScheduleAvailability] Is By Arrival Time: ${isByArrivalTime}`);
+    
+    
     
     // Se não foi especificado um horário, vamos apenas verificar se o dia tem slots disponíveis
     if (!time) {
@@ -857,6 +1317,7 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
         by_arrival_time: isByArrivalTime,
         capacity: serviceCapacity,
         available_times: availableSlots,
+        timezone: scheduleTimezone,
         message: availableSlots.length > 0
           ? `Slot available for scheduling on ${date} with ${availableSlots.length} available time slots`
           : `No availability for ${date}`
@@ -865,7 +1326,24 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
     
     // Se foi especificado um horário, verificar especificamente este horário
     const availableSlots = await getAvailableSlots(scheduleId, date, serviceId, serviceDuration, serviceCapacity, isByArrivalTime);
-    const isAvailable = availableSlots.includes(time);
+
+    console.log('[checkScheduleAvailability] Available slots:', availableSlots);
+   
+    // Verificar se o horário solicitado está disponível
+    const isAvailable = availableSlots.some(slot => {
+      if (isByArrivalTime) {
+        // Para atendimento por ordem de chegada, verificar se o horário está dentro do intervalo
+        const slotStart = timeToMinutes(slot);
+        const slotEnd = timeToMinutes(slot) + serviceDuration;
+        const requestedTime = timeToMinutes(time);
+        return requestedTime >= slotStart && requestedTime <= slotEnd;
+      } else {
+        // Para agendamento normal, verificar se o horário exato está disponível
+        return slot === time;
+      }
+    });
+    
+    console.log('[checkScheduleAvailability] Is Available:', isAvailable);
     
     return {
       success: true,
@@ -878,13 +1356,28 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
       by_arrival_time: isByArrivalTime,
       capacity: serviceCapacity,
       available_times: availableSlots,
+      timezone: scheduleTimezone,
       message: isAvailable 
-        ? `Slot available for scheduling on ${date} at ${time}`
+        ? isByArrivalTime
+          ? `Slot available for scheduling on ${date} between ${time} and ${minutesToTime(timeToMinutes(time) + serviceDuration)}`
+          : `Slot available for scheduling on ${date} at ${time}`
         : `No availability for ${date} at ${time}`
     };
   } catch (error) {
     console.error('[checkScheduleAvailability] Error:', error);
-    throw new Error(`Error checking availability: ${error.message}`);
+    Sentry.captureException(error, {
+      tags: {
+        scheduleId,
+        serviceId,
+        date,
+        time,
+        timezone
+      }
+    });
+    return {
+      success: false,
+      instructions: "I apologize, but I encountered an error while checking the schedule availability. Please try again or contact support if the problem persists."
+    };
   }
 };
 
@@ -900,15 +1393,25 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId) => {
  */
 const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity = 1, isByArrivalTime = false) => {
   try {
-    // Obter a configuração de slot da agenda
+    console.log('[getAvailableSlots] Schedule ID:', scheduleId);
+    console.log('[getAvailableSlots] Date:', date);
+    console.log('[getAvailableSlots] Service ID:', serviceId);
+    console.log('[getAvailableSlots] Duration:', duration);
+    console.log('[getAvailableSlots] Capacity:', capacity);
+    console.log('[getAvailableSlots] Is By Arrival Time:', isByArrivalTime);
+    
+    
+    // Obter a configuração de slot da agenda e o timezone
     const { data: scheduleConfig } = await supabase
       .from('schedules')
-      .select('default_slot_duration')
+      .select('default_slot_duration, timezone')
       .eq('id', scheduleId)
       .single();
     
     // Duração padrão do slot (em minutos)
     const defaultSlotDuration = scheduleConfig?.default_slot_duration || 60; // 60 minutos por padrão
+    // Timezone da agenda
+    const scheduleTimezone = scheduleConfig?.timezone || 'America/Sao_Paulo';
     
     // Obter todos os providers ativos para esta agenda que atendem este serviço
     const { data: providers } = await supabase
@@ -936,8 +1439,12 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
     }
     
     // Converter a data para dia da semana (0-6, onde 0 é domingo)
-    const dateObj = new Date(date);
+    console.log(`[getAvailableSlots] Date: ${date}`);
+    // Usar formato "YYYY-MM-DDT12:00:00Z" para garantir que o horário é 12:00 UTC, evitando problemas em qualquer fuso horário
+    const dateObj = new Date(`${date}T12:00:00Z`);
+    console.log(`[getAvailableSlots] Date object: ${dateObj}`);
     const dayOfWeek = dateObj.getDay();
+    console.log(`[getAvailableSlots] Day of week: ${dayOfWeek}`);
     
     // Obter providerId de cada provider
     const providerIds = filteredProviders.map(p => p.id);
@@ -948,11 +1455,15 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
       .select('provider_id, start_time, end_time')
       .in('provider_id', providerIds)
       .eq('day_of_week', dayOfWeek);
+
+      console.log(`[getAvailableSlots] Available slots:`, availabilities);
     
     // Se não temos disponibilidade configurada para este dia da semana, retornar lista vazia
     if (!availabilities || !availabilities.length) {
       return [];
     }
+
+    
     
     // Verificar feriados para a data específica
     const { data: holidays } = await supabase
@@ -1011,13 +1522,7 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
         }
       });
     }
-    
-    // Função auxiliar para converter tempo no formato HH:MM:SS para minutos desde meia-noite
-    const timeToMinutes = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      return hours * 60 + minutes;
-    };
-    
+  
     // Função auxiliar para converter minutos desde meia-noite para tempo no formato HH:MM
     const minutesToTime = (minutes) => {
       const hours = Math.floor(minutes / 60);
@@ -1029,7 +1534,7 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
     let availableSlots = [];
     
     // Intervalo de slot (de quanto em quanto tempo oferecemos slots)
-    const slotInterval = 15; // 15 minutos para agendamento normal
+    const slotInterval = defaultSlotDuration; // Usar a configuração da agenda
     
     // Para atendimento por ordem de chegada, usamos faixas de horário maiores
     if (isByArrivalTime) {
@@ -1140,6 +1645,16 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
     return availableSlots.sort();
   } catch (error) {
     console.error('[getAvailableSlots] Error:', error);
+    Sentry.captureException(error, {
+      tags: {
+        scheduleId,
+        serviceId,
+        date,
+        duration,
+        capacity,
+        isByArrivalTime
+      }
+    });
     return [];
   }
 };
@@ -1154,16 +1669,91 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
  * @param {string} notes - Observações do agendamento
  * @returns {Object} - Resultado da criação
  */
-const createAppointment = async (scheduleId, customerId, date, time, serviceId, notes) => {
+const createAppointment = async (scheduleId, customerId, date, time, serviceId, notes, timezone = 'America/Sao_Paulo') => {
   try {
     // Verificar se os parâmetros obrigatórios foram fornecidos
-    if (!scheduleId || !date || !time || !customerId) {
-      throw new Error('Schedule ID, date, time and customer ID are required');
+    const requiredParams = {
+      scheduleId: 'schedule ID',
+      date: 'date (YYYY-MM-DD)',
+      customerId: 'customer ID'
+    };
+
+    const missingParams = [];
+    for (const [param, description] of Object.entries(requiredParams)) {
+      if (!eval(param)) {
+        missingParams.push(description);
+      }
+    }
+
+    if (missingParams.length > 0) {
+      console.error(`[createAppointment] Parâmetros obrigatórios não fornecidos: ${missingParams.join(', ')}`);
+      return {
+        success: false,
+        instructions: `I need the following information to create your appointment: ${missingParams.join(', ')}. Please provide these details in your next message.`
+      };
+    }
+
+    // Verificar se já existe um agendamento para este serviço no mesmo dia
+    if (serviceId) {
+      const { data: existingAppointments } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('schedule_id', scheduleId)
+        .eq('customer_id', customerId)
+        .eq('service_id', serviceId)
+        // .eq('date', date)
+        .in('status', ['scheduled', 'confirmed']);
+
+      console.log('[createAppointment] Existing Appointments:', existingAppointments);
+
+      if (existingAppointments && existingAppointments.length > 0) {
+        const appointment = existingAppointments[0];
+        return {
+          success: false,
+          instructions: `You already have an appointment for this service on ${date} at ${appointment.start_time}. Would you like to cancel this existing appointment before creating a new one?`,
+          existingAppointment: existingAppointments[0]
+        };
+      }
+    }
+
+    // Se o horário não foi informado, buscar horários disponíveis
+    if (!time) {
+      // Obter informações do serviço para determinar a duração
+      const { data: serviceData } = await supabase
+        .from('services')
+        .select('duration, name')
+        .eq('id', serviceId)
+        .single();
+
+      const serviceDuration = serviceData?.duration || 60;
+      const serviceName = serviceData?.name || "Not specified";
+
+      // Buscar horários disponíveis
+      const availableSlots = await getAvailableSlots(scheduleId, date, serviceId, serviceDuration);
+      console.log('[createAppointment] Available Slots:', availableSlots);
+
+      if (availableSlots.length === 0) {
+        return {
+          success: false,
+          instructions: `There are no available slots for ${serviceName} on ${date}. Please choose another date.`,
+          availableSlots: []
+        };
+      }
+
+      // Formatar os horários disponíveis para exibição
+      const formattedSlots = availableSlots.join(', ');
+      console.log('[createAppointment] Formatted Slots:', formattedSlots);
+      
+      return {
+        success: false,
+        instructions: `For ${serviceName} on ${date}, the available slots are: ${formattedSlots}. Please choose one of these slots for your appointment.`,
+        availableSlots: availableSlots
+      };
     }
 
     // Obter informações do serviço e da agenda para determinar duração, slots e capacidade
     let serviceEndTime = time;
-    let serviceName = "Não especificado";
+    let serviceName = "Not specified";
     let isByArrivalTime = false;
     let serviceCapacity = 1;
     let slotDuration = 60; // Padrão de 60 minutos, será atualizado conforme configuração da agenda
@@ -1171,13 +1761,16 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
     // Obter a configuração de slot da agenda
     const { data: scheduleConfig } = await supabase
       .from('schedules')
-      .select('default_slot_duration')
+      .select('default_slot_duration, name, timezone')
       .eq('id', scheduleId)
       .single();
     
     if (scheduleConfig) {
       slotDuration = scheduleConfig.default_slot_duration || 60;
     }
+    
+    // Usar o timezone da agenda em vez do timezone padrão
+    const scheduleTimezone = scheduleConfig?.timezone || timezone;
     
     if (serviceId) {
       const { data: service } = await supabase
@@ -1239,10 +1832,16 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
     }
     
     // Verificar se o horário está disponível
-    const availabilityResult = await checkScheduleAvailability(scheduleId, date, time, serviceId);
+    const availabilityResult = await checkScheduleAvailability(scheduleId, date, time, serviceId, scheduleTimezone);
+
+    console.log('[createAppointment] Availability Result:', availabilityResult);
     
     if (!availabilityResult.available) {
-      throw new Error(`Time slot not available for scheduling: ${date} at ${time}`);
+      console.error(`[createAppointment] Horário não disponível: ${date} ${time}`);
+      return {
+        success: false,
+        instructions: `Please inform the customer that the requested time slot is not available. Available slots: ${availabilityResult.available_times}`
+      };
     }
     
     // Para serviços por ordem de chegada, verificar se ainda há capacidade disponível
@@ -1264,7 +1863,11 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
       }
       
       if (existingCount.length >= serviceCapacity) {
-        throw new Error(`This time slot is already at maximum capacity (${serviceCapacity})`);
+        console.error(`[createAppointment] Capacidade máxima atingida: ${serviceCapacity}`);
+        return {
+          success: false,
+          instructions: `Please inform the customer that this time slot is already at maximum capacity (${serviceCapacity}).`
+        };
       }
     }
     
@@ -1272,7 +1875,11 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
     const availableProvider = await findAvailableProvider(scheduleId, date, time, serviceEndTime, serviceId);
     
     if (!availableProvider) {
-      throw new Error(`No available provider for this service at ${date} ${time}`);
+      console.error(`[createAppointment] Nenhum provider disponível para ${date} ${time}`);
+      return {
+        success: false,
+        instructions: `Please inform the customer that there are no available providers for this service at ${date} ${time}.`
+      };
     }
     
     // Definir o time_slot baseado no tipo de serviço
@@ -1285,7 +1892,7 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
       .from('appointments')
       .insert({
         schedule_id: scheduleId,
-        provider_id: availableProvider.id,
+        provider_id: availableProvider.profile_id, // Usar profile_id em vez de id
         service_id: serviceId,
         customer_id: customerId,
         status: 'scheduled',
@@ -1306,6 +1913,63 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
     if (appointmentError) {
       throw appointmentError;
     }
+
+    // Buscar informações do cliente para a notificação
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('name, email, phone')
+      .eq('id', customerId)
+      .single();
+    
+    // Buscar todos os providers ativos desta agenda para enviar notificações
+    const { data: providers } = await supabase
+      .from('schedule_providers')
+      .select('profile_id')
+      .eq('schedule_id', scheduleId)
+      .eq('status', 'active');
+    
+    // Se temos providers e o cliente, enviar notificações
+    if (providers && providers.length > 0 && customer) {
+      // Enviar notificação em segundo plano, sem aguardar
+      (async () => {
+        try {
+          // Importar o módulo OneSignal
+          const oneSignal = await import('../lib/oneSignal.js');
+          
+          // Extrair IDs dos profiles para notificação
+          const profileIds = providers.map(provider => provider.profile_id);
+          
+          // Criar o conteúdo da notificação
+          const notificationHeading = 'Novo agendamento';
+          const notificationContent = `${customer.name} agendou ${serviceName} para ${date} às ${time}`;
+          
+          // Criar o objeto de dados da notificação com a URL para a página de agendamentos
+          const frontendUrl = process.env.FRONTEND_URL || 'https://app.interflow.ai';
+          const notificationData = {
+            type: 'appointment',
+            appointment_id: appointment.id,
+            url: `${frontendUrl}/app/schedules/${scheduleId}`,
+            schedule_id: scheduleId
+          };
+          
+          // Enviar notificação para todos os providers
+          await oneSignal.default.sendNotification({
+            heading: notificationHeading,
+            content: notificationContent,
+            include_aliases: {
+              external_id: profileIds
+            },
+            data: notificationData
+          });
+          
+          console.log(`[createAppointment] Notificação enviada para ${profileIds.length} providers`);
+        } catch (notificationError) {
+          // Registrar o erro, mas não falhar a criação do agendamento
+          console.error('[createAppointment] Erro ao enviar notificação:', notificationError);
+          Sentry.captureException(notificationError);
+        }
+      })();
+    }
     
     // Formatar a data para exibição
     const formattedDate = new Date(date).toLocaleDateString('pt-BR');
@@ -1322,15 +1986,28 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
       by_arrival_time: isByArrivalTime,
       service_id: serviceId,
       service_name: serviceName,
-      provider_id: availableProvider.id,
+      provider_id: availableProvider.profile_id,
+      timezone: scheduleTimezone,
       notes: notes,
       message: isByArrivalTime
-        ? `Appointment confirmed for ${date} between ${time} and ${serviceEndTime}`
-        : `Appointment confirmed for ${date} at ${time}`
+        ? `Appointment confirmed for ${date} between ${time} and ${serviceEndTime} (${scheduleTimezone} timezone)`
+        : `Appointment confirmed for ${date} at ${time} (${scheduleTimezone} timezone)`
     };
   } catch (error) {
     console.error('[createAppointment] Error:', error);
-    throw new Error(`Error creating appointment: ${error.message}`);
+    Sentry.captureException(error, {
+      tags: {
+        scheduleId,
+        customerId,
+        serviceId,
+        date,
+        time
+      }
+    });
+    return {
+      success: false,
+      instructions: "I apologize, but I encountered an error while trying to create your appointment. Please try again or contact support if the problem persists."
+    };
   }
 };
 
@@ -1374,7 +2051,7 @@ const findAvailableProvider = async (scheduleId, date, startTime, endTime, servi
     }
     
     // Converter a data para dia da semana (0-6, onde 0 é domingo)
-    const dateObj = new Date(date);
+    const dateObj = new Date(`${date}T12:00:00Z`); // Usar formato UTC para evitar problemas em qualquer fuso horário
     const dayOfWeek = dateObj.getDay();
     
     // Obter providerId de cada provider
@@ -1390,12 +2067,6 @@ const findAvailableProvider = async (scheduleId, date, startTime, endTime, servi
     if (!availabilities || availabilities.length === 0) {
       return null;
     }
-    
-    // Função auxiliar para converter tempo no formato HH:MM para minutos desde meia-noite
-    const timeToMinutes = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      return hours * 60 + minutes;
-    };
     
     // Converter horários de início e fim do agendamento para minutos
     const appointmentStartMinutes = timeToMinutes(startTime);
@@ -1519,7 +2190,11 @@ const findAvailableProvider = async (scheduleId, date, startTime, endTime, servi
 const checkAppointment = async (customerId, appointmentId) => {
   try {
     if (!customerId) {
-      throw new Error('Customer ID is required');
+      console.error('[checkAppointment] ID do cliente não fornecido');
+      return {
+        success: false,
+        instructions: "Please provide a valid customer ID to check appointments."
+      };
     }
     
     // Construir a consulta base
@@ -1535,9 +2210,9 @@ const checkAppointment = async (customerId, appointmentId) => {
         provider_id,
         schedule_id,
         service_id,
-        schedules(name),
+        schedules(title),
         schedule_services(title, price, currency, duration),
-        profiles(name)
+        profiles(full_name)
       `)
       .eq('customer_id', customerId)
       .in('status', ['scheduled', 'confirmed']);
@@ -1562,7 +2237,11 @@ const checkAppointment = async (customerId, appointmentId) => {
     const appointments = data || [];
     
     if (appointmentId && (!appointments || appointments.length === 0)) {
-      throw new Error(`Appointment with ID ${appointmentId} not found`);
+      console.error(`[checkAppointment] Agendamento não encontrado com ID ${appointmentId}`);
+      return {
+        success: false,
+        instructions: `Please inform the customer that no appointment was found with ID ${appointmentId}.`
+      };
     }
     
     // Formatar os resultados
@@ -1591,23 +2270,220 @@ const checkAppointment = async (customerId, appointmentId) => {
     };
   } catch (error) {
     console.error('[checkAppointment] Error:', error);
-    throw new Error(`Error checking appointment: ${error.message}`);
+    return {
+      success: false,
+      instructions: `There was an error checking the appointment: ${error.message}. Please try again.`
+    };
   }
 };
 
 /**
  * Cancela um agendamento
- * @param {string} appointmentId - ID do agendamento
+ * @param {string} appointmentId - ID do agendamento (opcional se date for fornecido)
  * @param {string} customerId - ID do cliente
+ * @param {string} date - Data do agendamento (formato YYYY-MM-DD, opcional se appointmentId for fornecido)
  * @returns {Object} - Resultado do cancelamento
  */
-const deleteAppointment = async (appointmentId, customerId) => {
+const deleteAppointment = async (appointmentId, customerId, date) => {
   try {
-    if (!appointmentId) {
-      throw new Error('Appointment ID is required');
+    if (!customerId) {
+      console.error('[deleteAppointment] ID do cliente não fornecido');
+      return {
+        success: false,
+        instructions: "Please provide a valid customer ID to delete appointments."
+      };
     }
     
-    // Verificar se o agendamento existe e pertence ao cliente
+    // Se tivermos um ID específico, tentar cancelar por ID
+    if (appointmentId) {
+      // Verificar se o agendamento existe e pertence ao cliente
+      const { data: appointment, error: fetchError } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('id', appointmentId)
+        .eq('customer_id', customerId)
+        .in('status', ['scheduled', 'confirmed'])
+        .single();
+
+      if (fetchError) {
+        if (fetchError.code === 'PGRST116') {
+          console.error('[deleteAppointment] Agendamento não encontrado ou não pertence ao cliente');
+          return {
+            success: false,
+            instructions: "Please inform the customer that the appointment was not found or doesn't belong to them."
+          };
+        }
+        throw fetchError;
+      }
+
+      // Atualizar o status do agendamento
+      const { error: updateError } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'canceled',
+          metadata: {
+            canceled_at: new Date().toISOString(),
+            canceled_via: 'agent_ia'
+          }
+         })
+        .eq('id', appointmentId);
+
+      if (updateError) throw updateError;
+
+      return {
+        success: true,
+        message: `Agendamento para ${appointment.date} às ${appointment.start_time} cancelado com sucesso.`,
+        instructions: `The appointment for ${appointment.date} at ${appointment.start_time} has been successfully canceled. Confirm to the customer that the cancellation was processed.`,
+        data: {
+          appointmentId,
+          date: appointment.date,
+          time: appointment.start_time,
+          status: 'cancelled'
+        }
+      };
+    }
+    
+    // Se não foi fornecido um ID de agendamento, mas foi fornecida uma data
+    if (!appointmentId && date) {
+      // Buscar todos os agendamentos do cliente para a data especificada
+      const { data: appointments, error: searchError } = await supabase
+        .from('appointments')
+        .select(`
+          id, 
+          date, 
+          start_time, 
+          end_time,
+          schedule_id,
+          service_id,
+          provider_id,
+          schedule_services(title),
+          metadata
+        `)
+        .eq('customer_id', customerId)
+        .eq('date', date)
+        .in('status', ['scheduled', 'confirmed']);
+      
+      if (searchError) {
+        throw searchError;
+      }
+      
+      if (!appointments || appointments.length === 0) {
+        console.error(`[deleteAppointment] Nenhum agendamento encontrado para a data ${date}`);
+        return {
+          success: false,
+          instructions: `Please inform the customer that no appointments were found for the specified date ${date}.`
+        };
+      }
+      
+      // Cancelar todos os agendamentos encontrados
+      let canceledCount = 0;
+      const canceledAppointments = [];
+      
+      for (const appointment of appointments) {
+        const { error: updateError } = await supabase
+          .from('appointments')
+          .update({
+            status: 'canceled',
+            metadata: {
+              ...appointment.metadata,
+              canceled_at: new Date().toISOString(),
+              canceled_via: 'agent_ia'
+            }
+          })
+          .eq('id', appointment.id);
+        
+        if (!updateError) {
+          canceledCount++;
+          canceledAppointments.push({
+            id: appointment.id,
+            date: appointment.date,
+            time: appointment.start_time,
+            service: appointment.schedule_services?.title || 'Serviço não especificado'
+          });
+        }
+      }
+      
+      // Buscar informações do cliente para a notificação
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('name, email, phone')
+        .eq('id', customerId)
+        .single();
+      
+      // Se cancelamos algum agendamento, enviar notificações para os providers
+      if (canceledCount > 0 && customer) {
+        // Enviar notificação em segundo plano, sem aguardar
+        (async () => {
+          try {
+            // Importar o módulo OneSignal
+            const oneSignal = await import('../lib/oneSignal.js');
+            
+            // Para cada agendamento cancelado, notificar os providers
+            for (const canceledAppointment of canceledAppointments) {
+              // Buscar providers desta agenda
+              const { data: providers } = await supabase
+                .from('schedule_providers')
+                .select('profile_id')
+                .eq('schedule_id', canceledAppointment.schedule_id)
+                .eq('status', 'active');
+              
+              if (providers && providers.length > 0) {
+                // Extrair IDs dos profiles para notificação
+                const profileIds = providers.map(provider => provider.profile_id);
+                
+                // Criar o conteúdo da notificação
+                const notificationHeading = 'Agendamento cancelado';
+                const notificationContent = `${customer.name} cancelou o agendamento para ${canceledAppointment.date} às ${canceledAppointment.time}`;
+                
+                // Criar o objeto de dados da notificação com a URL para a página de agendamentos
+                const frontendUrl = process.env.FRONTEND_URL || 'https://app.interflow.ai';
+                const notificationData = {
+                  type: 'appointment_canceled',
+                  appointment_id: canceledAppointment.id,
+                  url: `${frontendUrl}/app/schedules/${canceledAppointment.schedule_id}`,
+                  schedule_id: canceledAppointment.schedule_id
+                };
+                
+                // Enviar notificação para todos os providers
+                await oneSignal.default.sendNotification({
+                  heading: notificationHeading,
+                  content: notificationContent,
+                  include_aliases: {
+                    external_id: profileIds
+                  },
+                  data: notificationData
+                });
+              }
+            }
+            
+            console.log(`[deleteAppointment] Notificações de cancelamento enviadas para ${canceledCount} agendamentos`);
+          } catch (notificationError) {
+            // Registrar o erro, mas não falhar o cancelamento do agendamento
+            console.error('[deleteAppointment] Erro ao enviar notificação:', notificationError);
+            Sentry.captureException(notificationError);
+          }
+        })();
+      }
+      
+      // Retornar informações dos agendamentos cancelados
+      return {
+        success: true,
+        canceled_count: canceledCount,
+        appointments: canceledAppointments,
+        message: `Cancelado(s) ${canceledCount} agendamento(s) para ${date}`,
+        instructions: `Successfully canceled ${canceledCount} appointment(s) for ${date}. Inform the customer that their appointments have been canceled.`
+      };
+    }
+    // Caso contrário, exigir um ID de agendamento específico
+    else if (!appointmentId) {
+      console.error('[deleteAppointment] ID do agendamento ou data não fornecidos');
+      return {
+        success: false,
+        instructions: "Please ask the customer to provide either an appointment ID or a date."
+      };
+    }
+    
+    // Verificar se o agendamento específico existe e pertence ao cliente
     const { data: appointment, error: checkError } = await supabase
       .from('appointments')
       .select(`
@@ -1617,7 +2493,9 @@ const deleteAppointment = async (appointmentId, customerId) => {
         end_time,
         schedule_id,
         service_id,
-        schedule_services(title)
+        provider_id,
+        schedule_services(title),
+        metadata
       `)
       .eq('id', appointmentId)
       .eq('customer_id', customerId)
@@ -1625,7 +2503,15 @@ const deleteAppointment = async (appointmentId, customerId) => {
       .single();
     
     if (checkError || !appointment) {
-      throw new Error(`Appointment with ID ${appointmentId} not found or does not belong to customer`);
+      if (checkError) {
+        console.error(`[deleteAppointment] Erro ao verificar agendamento: ${checkError.message}`);
+      } else {
+        console.error(`[deleteAppointment] Agendamento não encontrado com ID ${appointmentId}`);
+      }
+      return {
+        success: false,
+        instructions: "Please inform the customer that the appointment was not found or doesn't belong to them."
+      };
     }
     
     // Atualizar status para cancelado
@@ -1645,19 +2531,236 @@ const deleteAppointment = async (appointmentId, customerId) => {
       throw updateError;
     }
     
+    // Buscar informações do cliente para a notificação
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('name, email, phone')
+      .eq('id', customerId)
+      .single();
+    
+    // Buscar todos os providers ativos desta agenda para enviar notificações
+    const { data: providers } = await supabase
+      .from('schedule_providers')
+      .select('profile_id')
+      .eq('schedule_id', appointment.schedule_id)
+      .eq('status', 'active');
+    
+    // Se temos providers e o cliente, enviar notificações
+    if (providers && providers.length > 0 && customer) {
+      // Enviar notificação em segundo plano, sem aguardar
+      (async () => {
+        try {
+          // Importar o módulo OneSignal
+          const oneSignal = await import('../lib/oneSignal.js');
+          
+          // Extrair IDs dos profiles para notificação
+          const profileIds = providers.map(provider => provider.profile_id);
+          
+          // Criar o conteúdo da notificação
+          const notificationHeading = 'Agendamento cancelado';
+          const notificationContent = `${customer.name} cancelou o agendamento para ${appointment.date} às ${appointment.start_time}`;
+          
+          // Criar o objeto de dados da notificação com a URL para a página de agendamentos
+          const frontendUrl = process.env.FRONTEND_URL || 'https://app.interflow.ai';
+          const notificationData = {
+            type: 'appointment_canceled',
+            appointment_id: appointmentId,
+            url: `${frontendUrl}/app/schedules/${appointment.schedule_id}`,
+            schedule_id: appointment.schedule_id
+          };
+          
+          // Enviar notificação para todos os providers
+          await oneSignal.default.sendNotification({
+            heading: notificationHeading,
+            content: notificationContent,
+            include_aliases: {
+              external_id: profileIds
+            },
+            data: notificationData
+          });
+          
+          console.log(`[deleteAppointment] Notificação de cancelamento enviada para ${profileIds.length} providers`);
+        } catch (notificationError) {
+          // Registrar o erro, mas não falhar o cancelamento do agendamento
+          console.error('[deleteAppointment] Erro ao enviar notificação:', notificationError);
+          Sentry.captureException(notificationError);
+        }
+      })();
+    }
+    
     return {
       success: true,
       appointment_id: appointmentId,
       date: appointment.date,
       time: appointment.start_time,
       service_name: appointment.schedule_services?.title || 'Serviço não especificado',
-      message: `Appointment for ${appointment.date} at ${appointment.start_time} successfully cancelled`
+      message: `Agendamento de ${appointment.date} às ${appointment.start_time} cancelado com sucesso`,
+      instructions: `The appointment for ${appointment.date} at ${appointment.start_time} has been successfully canceled. Confirm to the customer that the cancellation was processed.`
     };
   } catch (error) {
     console.error('[deleteAppointment] Error:', error);
-    throw new Error(`Error canceling appointment: ${error.message}`);
+    return {
+      success: false,
+      instructions: `There was an error canceling the appointment: ${error.message}. Please try again.`
+    };
   }
 };
+
+/**
+ * Substitui as variáveis no formato {{nome_variavel}} pelo valor correspondente
+ * @param {string} text - Texto com possíveis variáveis para substituir
+ * @param {Object|Array} variables - Variáveis disponíveis (pode ser um objeto ou um array)
+ * @returns {string} - Texto com as variáveis substituídas
+ */
+const replaceVariables = (text, variables) => {
+  if (!text || !variables) return text;
+  
+  return text.replace(/\{\{([^}]+)\}\}/g, (match, variableName) => {
+    const trimmedName = variableName.trim();
+    let value;
+    
+    // Verifica se variables é um array ou um objeto
+    if (Array.isArray(variables)) {
+      // Procura a variável no array de variáveis
+      const variable = variables.find(v => v.name === trimmedName);
+      value = variable ? variable.value : '';
+    } else if (typeof variables === 'object') {
+      // Acessa diretamente a propriedade do objeto
+      value = variables[trimmedName] || '';
+    }
+    
+    // Se o valor for undefined ou null, retorna string vazia
+    return value || '';
+  }).replace(/\s+/g, ' ').trim(); // Remove espaços extras e espaços no início/fim
+};
+
+/**
+ * Transforms the result data into a format more suitable for contextualization
+ * @param {Object} result - Operation result
+ * @returns {Object} - Transformed data for contextualization
+ */
+const transformResultData = (result) => {
+  if (!result.data) return {};
+  
+  const { action_type } = result;
+  
+  // Format data based on specific action type
+  switch (action_type) {
+    case 'update_customer':
+      return {
+        customer_id: result.data.id,
+        customer_name: result.data.nome,
+        customer_email: result.data.email,
+        customer_phone: result.data.telefone,
+        funnel_name: result.data.funil,
+        stage_name: result.data.estagio,
+        funnel_id: result.data.funil_id,
+        stage_id: result.data.estagio_id,
+        updates: result.updates
+      };
+      
+    case 'update_chat':
+      return {
+        chat_id: result.data.id,
+        chat_title: result.data.titulo,
+        chat_status: result.data.status,
+        team_name: result.data.equipe,
+        updated_at: result.data.data_atualizacao,
+        updates: result.updates
+      };
+      
+    case 'start_flow':
+      return {
+        flow_name: result.data.fluxo,
+        flow_id: result.data.fluxo_id,
+        session_id: result.data.sessao_id,
+        customer_name: result.data.cliente,
+        started_at: result.data.data_inicio
+      };
+      
+    case 'check_schedule':
+      // For scheduling operations
+      const baseData = {
+        service_name: result.data.service_name,
+        operation: result.operation
+      };
+      
+      // Add specific data based on operation type
+      if (result.operation === 'checkAvailability') {
+        return {
+          ...baseData,
+          date: result.data.appointment_date,
+          time: result.data.appointment_time,
+          available: result.data.available,
+          available_times: result.data.available_times
+        };
+      } else if (result.operation === 'createAppointment') {
+        return {
+          ...baseData,
+          appointment_id: result.data.appointment_id,
+          date: result.data.appointment_date,
+          time: result.data.appointment_time,
+          notes: result.data.notes
+        };
+      } else if (result.operation === 'checkAppointment') {
+        return {
+          ...baseData,
+          appointments: result.data.appointments,
+          count: result.data.count
+        };
+      } else if (result.operation === 'deleteAppointment') {
+        // Para listagem de agendamentos (sem cancelamento)
+        if (result.data.list_only) {
+          // Se é um único agendamento
+          if (result.data.single_appointment) {
+            return {
+              ...baseData,
+              list_only: true,
+              single_appointment: true,
+              appointment: result.data.appointment,
+              instructions: result.data.instructions || 'Ask the customer if they want to cancel this appointment.'
+            };
+          }
+          // Se são múltiplos agendamentos
+          return {
+            ...baseData,
+            list_only: true,
+            appointments: result.data.appointments,
+            count: result.data.count,
+            instructions: result.data.instructions || 'Ask the customer to choose which appointment they want to cancel by specifying a date or ID.'
+          };
+        }
+        // Para exclusão por ID específico
+        else if (result.data.appointment_id) {
+          return {
+            ...baseData,
+            appointment_id: result.data.appointment_id,
+            date: result.data.appointment_date,
+            time: result.data.appointment_time,
+            instructions: result.data.instructions || 'Inform the customer that their appointment has been successfully canceled.'
+          };
+        } 
+        // Para exclusão por data (múltiplos agendamentos)
+        else if (result.data.canceled_count) {
+          return {
+            ...baseData,
+            canceled_count: result.data.canceled_count,
+            canceled_appointments: result.data.canceled_appointments,
+            date: result.data.appointment_date,
+            instructions: result.data.instructions || 'Inform the customer that their appointments have been successfully canceled.'
+          };
+        }
+        // Caso padrão
+        return baseData;
+      }
+      
+      return baseData;
+      
+    default:
+      // For other action types, return data as is
+      return result.data;
+  }
+}; 
 
 /**
  * Processa uma ação de atualização de cliente
@@ -1766,8 +2869,8 @@ const processUpdateCustomerAction = async (action, args, session) => {
         },
         updates: Object.keys(updates).map(field => {
           const fieldName = field === 'name' ? 'Nome' : 
-                           field === 'funnel_id' ? 'Funil' : 
-                           field === 'stage_id' ? 'Estágio' : field;
+                          field === 'funnel_id' ? 'Funil' : 
+                          field === 'stage_id' ? 'Estágio' : field;
           return `${fieldName}: ${updates[field]}`;
         }).join(', ')
       };
@@ -1951,7 +3054,15 @@ const processStartFlowAction = async (action, args, session) => {
       .single();
     
     if (flowError || !flow) {
-      throw new Error(`Flow with ID ${flowId} not found or is not active`);
+      if (flowError) {
+        console.error(`[processStartFlowAction] Erro ao buscar fluxo: ${flowError.message}`);
+      } else {
+        console.error(`[processStartFlowAction] Fluxo não encontrado com ID ${flowId}`);
+      }
+      return {
+        success: false,
+        instructions: `Please check the flow configuration. The flow with ID ${flowId} was not found or is not active.`
+      };
     }
     
     // Iniciar um novo fluxo
@@ -1960,7 +3071,11 @@ const processStartFlowAction = async (action, args, session) => {
     // Encontrar o nó inicial (geralmente do tipo 'start')
     const startNode = flow.nodes.find(node => node.id === 'start-node');
     if (!startNode) {
-      throw new Error(`Flow ${flowId} does not have a valid start node`);
+      console.error(`[processStartFlowAction] Fluxo ${flowId} não tem nó inicial válido`);
+      return {
+        success: false,
+        instructions: `Please check the flow configuration. The flow ${flowId} does not have a valid start node.`
+      };
     }
     
     // Garantir que flow.variables seja um array
@@ -2024,122 +3139,3 @@ const processStartFlowAction = async (action, args, session) => {
     };
   }
 };
-
-/**
- * Substitui as variáveis no formato {{nome_variavel}} pelo valor correspondente
- * @param {string} text - Texto com possíveis variáveis para substituir
- * @param {Object|Array} variables - Variáveis disponíveis (pode ser um objeto ou um array)
- * @returns {string} - Texto com as variáveis substituídas
- */
-const replaceVariables = (text, variables) => {
-  if (!text || !variables) return text;
-  
-  return text.replace(/\{\{([^}]+)\}\}/g, (match, variableName) => {
-    const trimmedName = variableName.trim();
-    let value;
-    
-    // Verifica se variables é um array ou um objeto
-    if (Array.isArray(variables)) {
-      // Procura a variável no array de variáveis
-      const variable = variables.find(v => v.name === trimmedName);
-      value = variable ? variable.value : undefined;
-    } else if (typeof variables === 'object') {
-      // Acessa diretamente a propriedade do objeto
-      value = variables[trimmedName];
-    }
-    
-    // Retorna o valor da variável ou mantém o placeholder se não encontrar
-    return value !== undefined ? value : match;
-  });
-};
-
-/**
- * Transforms the result data into a format more suitable for contextualization
- * @param {Object} result - Operation result
- * @returns {Object} - Transformed data for contextualization
- */
-const transformResultData = (result) => {
-  if (!result.data) return {};
-  
-  const { action_type } = result;
-  
-  // Format data based on specific action type
-  switch (action_type) {
-    case 'update_customer':
-      return {
-        customer_id: result.data.id,
-        customer_name: result.data.nome,
-        customer_email: result.data.email,
-        customer_phone: result.data.telefone,
-        funnel_name: result.data.funil,
-        stage_name: result.data.estagio,
-        funnel_id: result.data.funil_id,
-        stage_id: result.data.estagio_id,
-        updates: result.updates
-      };
-      
-    case 'update_chat':
-      return {
-        chat_id: result.data.id,
-        chat_title: result.data.titulo,
-        chat_status: result.data.status,
-        team_name: result.data.equipe,
-        updated_at: result.data.data_atualizacao,
-        updates: result.updates
-      };
-      
-    case 'start_flow':
-      return {
-        flow_name: result.data.fluxo,
-        flow_id: result.data.fluxo_id,
-        session_id: result.data.sessao_id,
-        customer_name: result.data.cliente,
-        started_at: result.data.data_inicio
-      };
-      
-    case 'check_schedule':
-      // For scheduling operations
-      const baseData = {
-        service_name: result.data.service_name,
-        operation: result.operation
-      };
-      
-      // Add specific data based on operation type
-      if (result.operation === 'checkAvailability') {
-        return {
-          ...baseData,
-          date: result.data.appointment_date,
-          time: result.data.appointment_time,
-          available: result.data.available,
-          available_times: result.data.available_times
-        };
-      } else if (result.operation === 'createAppointment') {
-        return {
-          ...baseData,
-          appointment_id: result.data.appointment_id,
-          date: result.data.appointment_date,
-          time: result.data.appointment_time,
-          notes: result.data.notes
-        };
-      } else if (result.operation === 'checkAppointment') {
-        return {
-          ...baseData,
-          appointments: result.data.appointments,
-          count: result.data.count
-        };
-      } else if (result.operation === 'deleteAppointment') {
-        return {
-          ...baseData,
-          appointment_id: result.data.appointment_id,
-          date: result.data.appointment_date,
-          time: result.data.appointment_time
-        };
-      }
-      
-      return baseData;
-      
-    default:
-      // For other action types, return data as is
-      return result.data;
-  }
-}; 
