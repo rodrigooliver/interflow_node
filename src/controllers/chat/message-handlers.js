@@ -256,7 +256,7 @@ export async function handleIncomingMessage(channel, messageData) {
               if (createError) throw createError;
 
               //Criar novo customer_contact
-              await supabase
+              const { error: insertError } = await supabase
                 .from('customer_contacts')
                 .insert({
                   customer_id: newCustomer.id,
