@@ -412,16 +412,41 @@ async function handleCustomerCreated(customer) {
   try {
     const { organization_id } = customer.metadata;
     
-    // Atualizar ou criar registro do cliente
-    const { error } = await supabase
+    // Verificar se o cliente já existe
+    const { data: existingCustomer, error: fetchError } = await supabase
       .from('stripe_customers')
-      .upsert({
+      .select('*')
+      .eq('stripe_customer_id', customer.id)
+      .eq('organization_id', organization_id)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 é o código para "nenhum resultado encontrado"
+      throw fetchError;
+    }
+
+    // Se o cliente já existe, apenas atualizar o updated_at
+    if (existingCustomer) {
+      const { error: updateError } = await supabase
+        .from('stripe_customers')
+        .update({
+          updated_at: new Date()
+        })
+        .eq('stripe_customer_id', customer.id);
+
+      if (updateError) throw updateError;
+      return;
+    }
+
+    // Se o cliente não existe, criar um novo registro
+    const { error: insertError } = await supabase
+      .from('stripe_customers')
+      .insert({
         organization_id,
         stripe_customer_id: customer.id,
         created_at: new Date()
       });
 
-    if (error) throw error;
+    if (insertError) throw insertError;
   } catch (error) {
     Sentry.captureException(error);
     throw error;
