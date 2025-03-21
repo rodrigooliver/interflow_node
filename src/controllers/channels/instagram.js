@@ -2,6 +2,7 @@ import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handl
 import { validateChannel } from '../webhooks/utils.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { supabase } from '../../lib/supabase.js';
+import Sentry from '../../lib/sentry.js';
 
 async function getInstagramUserInfo(userId, accessToken) {
   try {
@@ -16,6 +17,7 @@ async function getInstagramUserInfo(userId, accessToken) {
     return await response.json();
   } catch (error) {
     console.error('Erro ao buscar informações do usuário Instagram:', error);
+    Sentry.captureException(error);
     return null;
   }
 }
@@ -149,6 +151,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
     return chat;
   } catch (error) {
     console.error('Erro ao criar/buscar chat:', error);
+    Sentry.captureException(error);
     throw error;
   }
 }
@@ -216,6 +219,7 @@ export async function handleInstagramWebhook(req, res) {
     res.json({ success: true });
   } catch (error) {
     console.error('Erro ao processar webhook:', error);
+    Sentry.captureException(error);
     res.status(500).json({ error: error.message });
   }
 }
@@ -230,6 +234,7 @@ async function handleMessageSeen(channel, webhookData) {
       .lt('created_at', webhookData.seen_at);
   } catch (error) {
     console.error('Error handling message seen:', error);
+    Sentry.captureException(error);
     throw error;
   }
 }
@@ -327,6 +332,7 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
 
   } catch (error) {
     console.error('Error handling Instagram connection:', error);
+    Sentry.captureException(error);
     throw error;
   }
 }
@@ -394,6 +400,7 @@ export async function deleteInstagramChannel(req, res) {
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting Instagram channel:', error);
+    Sentry.captureException(error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -506,6 +513,7 @@ export async function handleSenderMessageInstagram(channel, messageData) {
     };
   } catch (error) {
     console.error('Erro ao enviar mensagem Instagram:', error);
+    Sentry.captureException(error);
     throw error;
   }
 }
