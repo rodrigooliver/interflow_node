@@ -158,19 +158,23 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 
 export async function handleInstagramWebhook(req, res) {
   const webhookData = req.body;
+  console.log('📥 Webhook Instagram recebido:', JSON.stringify(webhookData, null, 2));
 
   try {
     if (!webhookData?.entry?.length || !webhookData.entry[0]?.messaging?.length) {
+      console.log('❌ Estrutura do webhook inválida');
       return res.status(400).json({ error: 'Invalid webhook structure' });
     }
 
     for (const entry of webhookData.entry) {
       for (const messagingData of entry.messaging) {
         if (!messagingData?.recipient?.id || !messagingData?.sender?.id) {
+          console.log('⚠️ Dados de mensagem incompletos:', messagingData);
           continue;
         }
 
         try {
+          console.log('🔍 Buscando canal para recipient_id:', messagingData.recipient.id);
           const { data: channel } = await supabase
             .from('chat_channels')
             .select('*, organization:organizations(*)')
@@ -179,12 +183,28 @@ export async function handleInstagramWebhook(req, res) {
             .eq('external_id', messagingData.recipient.id)
             .single();
 
-          if (!channel) continue;
+          if (!channel) {
+            console.log('❌ Canal não encontrado para recipient_id:', messagingData.recipient.id);
+            continue;
+          }
+
+          console.log('✅ Canal encontrado:', channel.id);
 
           if (messagingData.message) {
+            console.log('📝 Processando mensagem:', {
+              sender_id: messagingData.sender.id,
+              message_id: messagingData.message.mid,
+              text: messagingData.message.text
+            });
+
             const accessToken = decrypt(channel.credentials.access_token);
             const chat = await findOrCreateChat(channel, messagingData.sender.id, accessToken);
             
+            console.log('💬 Chat processado:', {
+              chat_id: chat.id,
+              is_first_message: chat.is_first_message
+            });
+
             // Atualizar a data da última mensagem do cliente
             await supabase
               .from('chats')
@@ -208,17 +228,21 @@ export async function handleInstagramWebhook(req, res) {
               },
               fromMe: false
             });
+
+            console.log('✅ Mensagem processada com sucesso');
           }
         } catch (error) {
-          console.error('Erro ao processar mensagem:', error);
+          console.error('❌ Erro ao processar mensagem:', error);
+          Sentry.captureException(error);
           continue;
         }
       }
     }
 
+    console.log('✅ Webhook processado com sucesso');
     res.json({ success: true });
   } catch (error) {
-    console.error('Erro ao processar webhook:', error);
+    console.error('❌ Erro ao processar webhook:', error);
     Sentry.captureException(error);
     res.status(500).json({ error: error.message });
   }
