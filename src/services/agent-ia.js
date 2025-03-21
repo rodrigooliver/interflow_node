@@ -1061,7 +1061,8 @@ const processCheckScheduleAction = async (action, args, session) => {
             timeValue, 
             serviceId, 
             notes,
-            scheduleTimezoneForCreate
+            scheduleTimezoneForCreate,
+            session
           );
           
           operationResult = formatArrivalTimeMessage(operationResult);
@@ -1669,7 +1670,7 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
  * @param {string} notes - Observações do agendamento
  * @returns {Object} - Resultado da criação
  */
-const createAppointment = async (scheduleId, customerId, date, time, serviceId, notes, timezone = 'America/Sao_Paulo') => {
+const createAppointment = async (scheduleId, customerId, date, time, serviceId, notes, timezone = 'America/Sao_Paulo', session) => {
   try {
     // Verificar se os parâmetros obrigatórios foram fornecidos
     const requiredParams = {
@@ -1901,6 +1902,7 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
         end_time: serviceEndTime,
         time_slot: timeSlot,
         notes: notes || '',
+        chat_id: session.chat_id,
         metadata: {
           created_via: 'agent_ia',
           creation_date: new Date().toISOString(),
