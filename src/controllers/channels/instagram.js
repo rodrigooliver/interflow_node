@@ -158,7 +158,6 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 
 export async function handleInstagramWebhook(req, res) {
   const webhookData = req.body;
-  console.log('📥 Webhook Instagram recebido:', JSON.stringify(webhookData, null, 2));
 
   try {
     if (!webhookData?.entry?.length || !webhookData.entry[0]?.messaging?.length) {
@@ -340,7 +339,7 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
           profile_picture_url: userInfo.profile_picture_url,
           token_expires_at: new Date(Date.now() + (longLivedTokenData.expires_in * 1000)).toISOString()
         },
-        external_id: userInfo.id,
+        external_id: userInfo.user_id,
         status: 'active',
         is_connected: true,
         is_tested: true,

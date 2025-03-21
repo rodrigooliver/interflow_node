@@ -226,27 +226,8 @@ class EmailConnectionManager {
       }
     };
 
-    // Adicionar handler global para erros de socket não tratados
-    const handleSocketError = (err) => {
-      if (err.code === 'ECONNRESET' || err.code === 'EPIPE') {
-        console.warn(`Socket error (${err.code}) capturado para canal ${channel.id}:`, err);
-        return false; // Previne o crash
-      }
-      return true; // Permite que outros erros sejam propagados
-    };
-
-    process.removeListener('uncaughtException', handleSocketError);
-    process.on('uncaughtException', (err) => {
-      if (err.source === 'socket' && (err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
-        console.warn('Capturado erro de socket não tratado:', err);
-        return; // Previne o crash
-      }
-      if (err.source === 'socket-timeout') {
-        console.warn('Capturado socket timeout não tratado:', err);
-        return; // Previne o crash
-      }
-      throw err; // Re-throw outros erros
-    });
+    // Aumentar o limite de listeners para o processo
+    process.setMaxListeners(20);
 
     try {
       const connection = await connect(config);
