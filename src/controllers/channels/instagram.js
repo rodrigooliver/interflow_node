@@ -194,7 +194,7 @@ export async function handleInstagramWebhook(req, res) {
           const chatExternalId = isEcho ? messagingData.recipient.id : messagingData.sender.id;
 
           // console.log('🔍 Buscando canal para channel_id:', channelId);
-          const { data: dataChannel } = await supabase
+          const { data: dataChannel, error: errorChannel } = await supabase
             .from('chat_channels')
             .select('*, organization:organizations(*)')
             .eq('type', 'instagram')
@@ -202,6 +202,13 @@ export async function handleInstagramWebhook(req, res) {
             .eq('external_id', channelId)
             .order('created_at', { ascending: false })
             .limit(1);
+
+          if (errorChannel) {
+            console.error('❌ Erro ao buscar canal:', errorChannel);
+            Sentry.captureException(errorChannel);
+            continue;
+          }
+
           if (!dataChannel.length) {
             console.log('❌ Canal não encontrado para channel_id:', channelId);
             continue;
