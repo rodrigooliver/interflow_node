@@ -396,7 +396,7 @@ async function handleCheckoutExpired(session) {
     const { error } = await supabase
       .from('subscriptions')
       .update({
-        status: 'expired',
+        status: 'past_due',
         updated_at: new Date()
       })
       .eq('organization_id', organization_id);
