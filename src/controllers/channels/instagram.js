@@ -194,19 +194,19 @@ export async function handleInstagramWebhook(req, res) {
           const chatExternalId = isEcho ? messagingData.recipient.id : messagingData.sender.id;
 
           // console.log('🔍 Buscando canal para channel_id:', channelId);
-          const { data: channel } = await supabase
+          const { data: dataChannel } = await supabase
             .from('chat_channels')
             .select('*, organization:organizations(*)')
             .eq('type', 'instagram')
             .eq('status', 'active')
             .eq('external_id', channelId)
-            .single();
-
-          if (!channel) {
+            .order('created_at', { ascending: false })
+            .limit(1);
+          if (!dataChannel.length) {
             console.log('❌ Canal não encontrado para channel_id:', channelId);
             continue;
           }
-
+          const channel = dataChannel[0];
           // console.log('✅ Canal encontrado:', channel.id);
 
           // Se for uma atualização de status de leitura
