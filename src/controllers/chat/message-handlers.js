@@ -366,7 +366,7 @@ export async function handleIncomingMessage(channel, messageData) {
         content: messageData.message.content,
         type: messageData.message.type,
         sender_type: messageData.fromMe ? 'agent' : 'customer',
-        status: messageData.fromMe ? 'sent' : 'delivered',
+        status: messageData.fromMe ? 'sent' : 'received',
         external_id: messageData.messageId,
         ...(messageData.fromMe 
           ? {}

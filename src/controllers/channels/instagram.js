@@ -22,7 +22,7 @@ async function getInstagramUserInfo(userId, accessToken) {
   }
 }
 
-async function findOrCreateChat(channel, senderId, accessToken) {
+async function findOrCreateChat(channel, externalId, accessToken, isEcho = false) {
   try {
     // Buscar chat existente
     const { data: chats } = await supabase
@@ -30,18 +30,28 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       .select('*, customers(*)')
       .eq('channel_id', channel.id)
       .in('status', ['in_progress', 'pending'])
-      .eq('external_id', senderId)
+      .eq('external_id', externalId)
       .order('created_at', { ascending: false })
       .limit(1);
 
-    let userInfo = null;
     const existingChat = chats?.[0];
+
+    // Se for echo, apenas retorna o chat existente
+    if (isEcho) {
+      if (!existingChat) {
+        console.log('Chat não encontrado para mensagem echo', channel.id, externalId);
+        throw new Error('Chat não encontrado para mensagem echo');
+      }
+      return existingChat;
+    }
+
+    let userInfo = null;
 
     // Verificar se precisa buscar informações do usuário
     if (!existingChat || 
         !existingChat.profile_picture ||
         new Date(existingChat.profile_updated_at || 0) < new Date(Date.now() - 24 * 60 * 60 * 1000)) {
-      userInfo = await getInstagramUserInfo(senderId, accessToken);
+      userInfo = await getInstagramUserInfo(externalId, accessToken);
     }
 
     if (existingChat) {
@@ -85,7 +95,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       .from('customer_contacts')
       .select('*')
       .eq('type', 'instagramId')
-      .eq('value', senderId)
+      .eq('value', externalId)
       .eq('organization_id', channel.organization_id)
       .single();
 
@@ -113,7 +123,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       .from('customers')
       .insert({
         organization_id: channel.organization_id,
-        name: userInfo?.name || senderId,
+        name: userInfo?.name || externalId,
         profile_picture: userInfo?.profile_pic || null
       })
       .select()
@@ -125,7 +135,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
       .insert({
         customer_id: customer.id,
         type: 'instagramId',
-        value: senderId,
+        value: externalId,
         created_at: new Date().toISOString()
       });
 
@@ -136,7 +146,7 @@ async function findOrCreateChat(channel, senderId, accessToken) {
         organization_id: channel.organization_id,
         customer_id: customer.id,
         channel_id: channel.id,
-        external_id: senderId,
+        external_id: externalId,
         status: 'pending',
         profile_picture: userInfo?.profile_pic || null,
         profile_updated_at: new Date().toISOString(),
@@ -159,6 +169,8 @@ async function findOrCreateChat(channel, senderId, accessToken) {
 export async function handleInstagramWebhook(req, res) {
   const webhookData = req.body;
 
+  console.log('🔍 Webhook recebido:', webhookData);
+
   try {
     if (!webhookData?.entry?.length || !webhookData.entry[0]?.messaging?.length) {
       console.log('❌ Estrutura do webhook inválida');
@@ -172,37 +184,108 @@ export async function handleInstagramWebhook(req, res) {
           continue;
         }
 
+        // console.log('Dados da mensagem:', messagingData);
+
         try {
-          console.log('🔍 Buscando canal para recipient_id:', messagingData.recipient.id);
+          // Verificar se é uma mensagem echo (enviada pelo sistema)
+          const isEcho = messagingData.message?.is_echo === true;
+          const isRead = messagingData.read !== undefined;
+          const channelId = isEcho ? messagingData.sender.id : messagingData.recipient.id;
+          const chatExternalId = isEcho ? messagingData.recipient.id : messagingData.sender.id;
+
+          // console.log('🔍 Buscando canal para channel_id:', channelId);
           const { data: channel } = await supabase
             .from('chat_channels')
             .select('*, organization:organizations(*)')
             .eq('type', 'instagram')
             .eq('status', 'active')
-            .eq('external_id', messagingData.recipient.id)
+            .eq('external_id', channelId)
             .single();
 
           if (!channel) {
-            console.log('❌ Canal não encontrado para recipient_id:', messagingData.recipient.id);
+            console.log('❌ Canal não encontrado para channel_id:', channelId);
             continue;
           }
 
-          console.log('✅ Canal encontrado:', channel.id);
+          // console.log('✅ Canal encontrado:', channel.id);
+
+          // Se for uma atualização de status de leitura
+          if (isRead) {
+            // console.log('👀 Processando atualização de status de leitura:', messagingData.read);
+            await handleStatusUpdate(channel, {
+              messageId: messagingData.read.mid,
+              status: 'read',
+              timestamp: messagingData.timestamp || Date.now(),
+              fromMe: true
+            });
+            continue;
+          }
 
           if (messagingData.message) {
-            console.log('📝 Processando mensagem:', {
-              sender_id: messagingData.sender.id,
-              message_id: messagingData.message.mid,
-              text: messagingData.message.text
-            });
+            // console.log('📝 Processando mensagem:', {
+            //   sender_id: messagingData.sender.id,
+            //   message_id: messagingData.message.mid,
+            //   text: messagingData.message.text,
+            //   is_echo: isEcho
+            // });
+
+            // Verificar se a mensagem foi deletada
+            if (messagingData.message?.is_deleted) {
+              console.log('🗑️ Mensagem deletada, atualizando status:', messagingData.message.mid);
+              
+              // Buscar o chat associado à mensagem
+              const { data: messageData } = await supabase
+                .from('messages')
+                .select('chat_id')
+                .eq('external_id', messagingData.message.mid)
+                .single();
+
+              if (messageData) {
+                // Buscar a última mensagem antes da deletada
+                const { data: lastMessage } = await supabase
+                  .from('messages')
+                  .select('*')
+                  .eq('chat_id', messageData.chat_id)
+                  .neq('external_id', messagingData.message.mid)
+                  .order('created_at', { ascending: false })
+                  .limit(1)
+                  .single();
+
+                if (lastMessage) {
+                  // Atualizar o chat com a última mensagem
+                  await supabase
+                    .from('chats')
+                    .update({
+                      last_message_at: lastMessage.created_at,
+                      last_message_id: lastMessage.id
+                    })
+                    .eq('id', messageData.chat_id);
+                }
+              }
+
+              // Atualizar o status da mensagem para deleted
+              const { error: updateError } = await supabase
+                .from('messages')
+                .update({ status: 'deleted' })
+                .eq('external_id', messagingData.message.mid);
+
+              if (updateError) {
+                console.error('❌ Erro ao atualizar status da mensagem:', updateError);
+                Sentry.captureException(updateError);
+              } else {
+                console.log('✅ Status da mensagem atualizado para deleted');
+              }
+              
+              continue;
+            }
 
             const accessToken = decrypt(channel.credentials.access_token);
-            const chat = await findOrCreateChat(channel, messagingData.sender.id, accessToken);
+            const chat = await findOrCreateChat(channel, chatExternalId, accessToken, isEcho);
             
-            console.log('💬 Chat processado:', {
-              chat_id: chat.id,
-              is_first_message: chat.is_first_message
-            });
+            // console.log('💬 Chat processado:', {
+            //   chat_id: chat.id,
+            //   is_first_message: chat.is_first_message
+            // });
 
             // Atualizar a data da última mensagem do cliente
             await supabase
@@ -225,10 +308,11 @@ export async function handleInstagramWebhook(req, res) {
                 content: messagingData.message.text || '',
                 raw: messagingData
               },
-              fromMe: false
+              event: isEcho ? 'messageSent' : 'messageReceived',
+              fromMe: isEcho
             });
 
-            console.log('✅ Mensagem processada com sucesso');
+            // console.log('✅ Mensagem processada com sucesso');
           }
         } catch (error) {
           console.error('❌ Erro ao processar mensagem:', error);
@@ -238,7 +322,7 @@ export async function handleInstagramWebhook(req, res) {
       }
     }
 
-    console.log('✅ Webhook processado com sucesso');
+    // console.log('✅ Webhook processado com sucesso');
     res.json({ success: true });
   } catch (error) {
     console.error('❌ Erro ao processar webhook:', error);

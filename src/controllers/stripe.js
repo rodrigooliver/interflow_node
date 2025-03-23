@@ -390,18 +390,26 @@ async function handleCheckoutAsyncPaymentSucceeded(session) {
 
 async function handleCheckoutExpired(session) {
   try {
+    // Não é necessário atualizar a assinatura, pois a sessão de checkout expirou
+    // antes que o cliente concluísse o pagamento, então nenhuma assinatura foi criada.
+    
+    // Registrar que a sessão de checkout expirou
     const { organization_id } = session.metadata;
     
-    // Atualizar status da assinatura para expirado
-    const { error } = await supabase
-      .from('subscriptions')
-      .update({
-        status: 'past_due',
-        updated_at: new Date()
-      })
-      .eq('organization_id', organization_id);
-
-    if (error) throw error;
+    if (organization_id) {
+      // Opcional: Registrar tentativa de checkout que expirou
+      // await supabase
+      //   .from('checkout_events')
+      //   .insert({
+      //     organization_id,
+      //     event_type: 'checkout_expired',
+      //     metadata: {
+      //       checkout_session_id: session.id,
+      //       created_at: new Date(session.created * 1000),
+      //       expired_at: new Date()
+      //     }
+      //   });
+    }
   } catch (error) {
     Sentry.captureException(error);
     throw error;

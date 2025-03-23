@@ -458,6 +458,7 @@ const prepareContextMessages = async (prompt, session) => {
     .eq('chat_id', session.chat_id)
     .in('sender_type', ['customer', 'agent'])
     .not('content', 'is', null)
+    .neq('status', 'deleted')
     .order('created_at', { ascending: true });
 
   chatMessages?.forEach(msg => {
