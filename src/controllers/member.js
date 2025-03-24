@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import nodemailer from 'nodemailer';
+import Sentry from '../lib/sentry.js';
+
 
 // Configuração do serviço de email
 const createTransporter = () => {
@@ -211,6 +213,7 @@ export const updateMember = async (req, res) => {
     res.status(200).json({ success: true, profile: data[0] });
   } catch (error) {
     console.error('Erro ao atualizar membro:', error);
+    Sentry.captureException(error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
 };
@@ -449,6 +452,7 @@ export const inviteMember = async (req, res) => {
     res.status(201).json({ success: true, user: authData.user });
   } catch (error) {
     console.error('Erro ao convidar membro:', error);
+    Sentry.captureException(error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
 };
@@ -504,6 +508,7 @@ export const joinOrganization = async (req, res) => {
     res.status(404).json({ success: false, message: 'Convite não encontrado' });
   } catch (error) {
     console.error('Erro ao adicionar usuário à organização:', error);
+    Sentry.captureException(error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
 };
@@ -666,6 +671,7 @@ export const testEmailConnection = async (req, res) => {
       });
     } catch (error) {
       console.error('Erro ao testar conexão de email:', error);
+      Sentry.captureException(error);
       
       // Verificar se é um erro de timeout
       const isTimeout = error.message.includes('ETIMEDOUT') || error.message.includes('timeout');
@@ -692,6 +698,7 @@ export const testEmailConnection = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao testar conexão de email:', error);
+    Sentry.captureException(error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
 };

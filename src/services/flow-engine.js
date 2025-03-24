@@ -223,7 +223,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const continueFlow = async (session, message) => {
     try {
       const currentNode = session.flow.nodes.find(n => n.id === session.current_node_id);
-      if (!currentNode) throw new Error('Current node not found');
+      if (!currentNode) {
+        const error = new Error('Current node not found');
+        Sentry.captureException(error);
+        throw error;
+      }
       
       let updatedSession = { ...session };
       
@@ -738,7 +742,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     try {
       if(content || files) {
         const result = await createMessageToSend(chatId, organization.id, content, null, files, null);
-        if (result.status !== 201) throw new Error(result.error);
+        if (result.status !== 201) {
+          const error = new Error(result.error);
+          Sentry.captureException(error);
+          throw error;
+        }
         
         // // Aguardar que todas as mensagens sejam realmente enviadas para o canal
         // if (result.messages && result.messages.length > 0) {
@@ -799,7 +807,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       const decryptedApiKey = decrypt(integration.credentials.api_key);
       
       if (!decryptedApiKey) {
-        throw new Error('Erro ao descriptografar a chave da API OpenAI');
+        const error = new Error('Erro ao descriptografar a chave da API OpenAI');
+        Sentry.captureException(error);
+        throw error;
       }
 
       const openai = new OpenAI({
@@ -807,7 +817,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       });
 
       if (!openAIConfig) {
-        throw new Error('Configuração do OpenAI não encontrada');
+        const error = new Error('Configuração do OpenAI não encontrada');
+        Sentry.captureException(error);
+        throw error;
       }
 
       let updatedSession = { ...session };
@@ -850,7 +862,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           break;
           
         default:
-          throw new Error(`Tipo de OpenAI não suportado: ${openAIConfig.apiType}`);
+          const error = new Error(`Tipo de OpenAI não suportado: ${openAIConfig.apiType}`);
+          Sentry.captureException(error);
+          throw error;
       }
       
       return updatedSession;
@@ -1095,12 +1109,16 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
   const handleAudioGeneration = async (openai, config, session) => {
     // Implementar lógica para geração de áudio
-    throw new Error('Audio generation not implemented yet');
+    const error = new Error('Audio generation not implemented yet');
+    Sentry.captureException(error);
+    throw error;
   };
 
   const handleTextToSpeech = async (openai, config, session) => {
     // Implementar lógica para text-to-speech
-    throw new Error('Text to speech not implemented yet');
+    const error = new Error('Text to speech not implemented yet');
+    Sentry.captureException(error);
+    throw error;
   };
 
   /**
@@ -1112,7 +1130,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const processVariable = async (data, session) => {
     try {
       if (!data.variable || !data.variable.name) {
-        throw new Error('Nome da variável não especificado');
+        const error = new Error('Nome da variável não especificado');
+        Sentry.captureException(error);
+        throw error;
       }
 
       // Processa o valor da variável, substituindo quaisquer variáveis existentes
@@ -1179,7 +1199,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     try {
       const { fields } = data;
       if (!fields || !Array.isArray(fields) || fields.length === 0) {
-        throw new Error('Campos para atualização não especificados');
+        const error = new Error('Campos para atualização não especificados');
+        Sentry.captureException(error);
+        throw error;
       }
 
       const updates = {};

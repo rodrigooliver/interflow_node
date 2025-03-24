@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase.js';
+import Sentry from '../lib/sentry.js';
 
 export async function createChat(data) {
   try {
@@ -11,7 +12,7 @@ export async function createChat(data) {
     if (error) throw error;
     return chat;
   } catch (error) {
-    console.error('Error creating chat:', error);
+    Sentry.captureException(error);
     throw error;
   }
 }

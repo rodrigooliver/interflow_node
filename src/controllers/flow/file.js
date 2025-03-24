@@ -1,5 +1,6 @@
 import { uploadFile, deleteFile } from '../../utils/file-upload.js';
 import { supabase } from '../../lib/supabase.js';
+import Sentry from '../../lib/sentry.js';
 
 export async function createFileRoute(req, res) {
   const { flowId, organizationId } = req.params;
@@ -25,6 +26,7 @@ export async function createFileRoute(req, res) {
       .single();
 
   if (flowError || !flowData) {
+    Sentry.captureException(flowError || new Error('Flow not found'));
     return res.status(404).json({
       success: false,
       error: 'Flow not found or permission denied'
@@ -45,6 +47,7 @@ export async function createFileRoute(req, res) {
     return res.status(200).json(uploadResult);
   }
 
+  Sentry.captureException(new Error(uploadResult.error));
   return res.status(500).json({
     success: false,
     error: uploadResult.error
@@ -77,6 +80,7 @@ export async function deleteFileRoute(req, res) {
     .single();
 
   if (flowError || !flowData) {
+    Sentry.captureException(flowError || new Error('Flow not found'));
     return res.status(404).json({
       success: false,
       error: 'Fluxo não encontrado ou permissão negada'
@@ -94,6 +98,7 @@ export async function deleteFileRoute(req, res) {
     return res.status(200).json(deleteResult);
   }
 
+  Sentry.captureException(new Error(deleteResult.error));
   return res.status(500).json({
     success: false,
     error: deleteResult.error

@@ -73,6 +73,7 @@ export async function createCheckoutSession(req, res) {
       .single();
 
     if (!plan) {
+      Sentry.captureMessage('Plano não encontrado', { extra: { planId } });
       return res.status(404).json({ error: 'Plano não encontrado' });
     }
 
@@ -85,6 +86,13 @@ export async function createCheckoutSession(req, res) {
     }
 
     if (!stripePriceId) {
+      Sentry.captureMessage('Preço não configurado', { 
+        extra: { 
+          planId, 
+          currency, 
+          billingPeriod 
+        } 
+      });
       return res.status(400).json({ error: 'Preço não configurado para esta combinação de moeda e período' });
     }
 
@@ -279,7 +287,12 @@ async function handleCheckoutCompleted(session) {
     const subscriptionId = session.subscription;
     
     if (!subscriptionId) {
-      Sentry.captureMessage('No subscription ID found in session');
+      Sentry.captureMessage('No subscription ID found in session', { 
+        extra: { 
+          sessionId: session.id,
+          organizationId: session.metadata.organization_id 
+        } 
+      });
       return;
     }
 
@@ -339,7 +352,12 @@ async function handleCheckoutCompleted(session) {
       .insert(subscriptionData);
 
     if (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, {
+        extra: {
+          organizationId,
+          subscriptionId
+        }
+      });
       throw error;
     }
   } catch (error) {
@@ -456,7 +474,12 @@ async function handleCustomerCreated(customer) {
 
     if (insertError) throw insertError;
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, {
+      extra: {
+        customerId: customer.id,
+        organizationId: customer.metadata.organization_id
+      }
+    });
     throw error;
   }
 }
@@ -507,7 +530,15 @@ async function handleInvoicePaid(invoice) {
       })
       .eq('organization_id', organizationId);
 
-    if (subscriptionError) throw subscriptionError;
+    if (subscriptionError) {
+      Sentry.captureException(subscriptionError, {
+        extra: {
+          organizationId,
+          subscriptionId: subscription.id
+        }
+      });
+      throw subscriptionError;
+    }
 
     // Criar ou atualizar invoice
     const invoiceData = {
@@ -534,7 +565,15 @@ async function handleInvoicePaid(invoice) {
         onConflict: 'stripe_invoice_id'
       });
 
-    if (invoiceError) throw invoiceError;
+    if (invoiceError) {
+      Sentry.captureException(invoiceError, {
+        extra: {
+          organizationId,
+          invoiceId: invoice.id
+        }
+      });
+      throw invoiceError;
+    }
   } catch (error) {
     Sentry.captureException(error);
     throw error;
@@ -554,7 +593,15 @@ async function handleInvoicePaymentFailed(invoice) {
       })
       .eq('organization_id', organizationId);
 
-    if (subscriptionError) throw subscriptionError;
+    if (subscriptionError) {
+      Sentry.captureException(subscriptionError, {
+        extra: {
+          organizationId,
+          subscriptionId: subscription.id
+        }
+      });
+      throw subscriptionError;
+    }
 
     // Atualizar ou criar invoice
     const invoiceData = {
@@ -581,7 +628,15 @@ async function handleInvoicePaymentFailed(invoice) {
         onConflict: 'stripe_invoice_id'
       });
 
-    if (invoiceError) throw invoiceError;
+    if (invoiceError) {
+      Sentry.captureException(invoiceError, {
+        extra: {
+          organizationId,
+          invoiceId: invoice.id
+        }
+      });
+      throw invoiceError;
+    }
   } catch (error) {
     Sentry.captureException(error);
     throw error;
@@ -646,7 +701,11 @@ async function handleSubscriptionUpdated(subscription) {
       .eq('stripe_subscription_id', subscription.id);
 
     if (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, {
+        extra: {
+          subscriptionId: subscription.id
+        }
+      });
       throw error;
     }
   } catch (error) {

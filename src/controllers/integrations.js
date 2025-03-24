@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import axios from 'axios';
-
+import Sentry from '../lib/sentry.js';
 /**
  * Busca uma integração específica
  * GET /api/:organizationId/integrations/:integrationId
@@ -54,6 +54,7 @@ export const getIntegration = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar integração:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao buscar integração'
@@ -113,6 +114,7 @@ export const createIntegration = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao criar integração:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao criar integração'
@@ -193,6 +195,7 @@ export const updateIntegration = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao atualizar integração:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao atualizar integração'
@@ -237,6 +240,7 @@ export const validateOpenAIKey = async (req, res) => {
       }
     } catch (error) {
       console.error('Erro ao validar chave OpenAI:', error);
+      Sentry.captureException(error);
       return res.status(400).json({
         success: false,
         error: 'Chave API inválida ou erro na validação'
@@ -244,6 +248,7 @@ export const validateOpenAIKey = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao processar validação de chave OpenAI:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao validar chave API'
@@ -304,6 +309,7 @@ export const testOpenAIPrompt = async (req, res) => {
       apiKey = decrypt(integration.credentials.api_key);
     } catch (error) {
       console.error('Erro ao descriptografar chave API:', error);
+      Sentry.captureException(error);
       return res.status(500).json({
         success: false,
         error: 'Erro ao processar credenciais da integração'
@@ -347,7 +353,7 @@ export const testOpenAIPrompt = async (req, res) => {
       });
     } catch (error) {
       console.error('Erro ao chamar API da OpenAI:', error.response?.data || error);
-      
+      Sentry.captureException(error);
       return res.status(error.response?.status || 500).json({
         success: false,
         error: error.response?.data?.error?.message || 'Erro ao processar o prompt com a API da OpenAI'
@@ -355,6 +361,7 @@ export const testOpenAIPrompt = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao testar prompt:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao testar prompt'
@@ -397,6 +404,7 @@ export const getOpenAIModels = async (req, res) => {
       apiKey = decrypt(integration.credentials.api_key);
     } catch (error) {
       console.error('Erro ao descriptografar chave API:', error);
+      Sentry.captureException(error);
       return res.status(500).json({
         success: false,
         error: 'Erro ao processar credenciais da integração'
@@ -448,7 +456,7 @@ export const getOpenAIModels = async (req, res) => {
       });
     } catch (error) {
       console.error('Erro ao buscar modelos da OpenAI:', error.response?.data || error);
-      
+      Sentry.captureException(error);
       return res.status(error.response?.status || 500).json({
         success: false,
         error: error.response?.data?.error?.message || 'Erro ao buscar modelos da OpenAI'
@@ -456,6 +464,7 @@ export const getOpenAIModels = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao buscar modelos:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao buscar modelos'

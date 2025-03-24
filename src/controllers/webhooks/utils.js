@@ -28,6 +28,9 @@ export async function findExistingChat(channelId, customerId) {
     // Return first chat or null
     return chats && chats.length > 0 ? chats[0] : null;
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: { channelId, customerId }
+    });
     console.error('Error in findExistingChat:', error);
     throw error;
   }
@@ -75,6 +78,9 @@ export async function validateChannel(channelId, type) {
 
     return channels[0];
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: { channelId, type }
+    });
     console.error('Error in validateChannel:', error);
     throw error;
   }
@@ -137,6 +143,9 @@ export async function findOrCreateCustomer(organization, contactInfo) {
 
     return newCustomers[0];
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: { organization, contactInfo }
+    });
     console.error('Error in findOrCreateCustomer:', error);
     throw error;
   }

@@ -35,6 +35,7 @@ async function getWhatsAppUserInfo(phoneNumber, accessToken) {
       phone_number: phoneNumber
     };
   } catch (error) {
+    Sentry.captureException(error);
     console.error('Erro ao buscar informações do usuário WhatsApp:', error);
     return null;
   }
@@ -378,6 +379,7 @@ async function downloadMediaWithRetry(url, accessToken, maxRetries = 3) {
       return response.data;
     } catch (error) {
       lastError = error;
+      Sentry.captureException(error);
       
       // Extrair detalhes do erro para melhor diagnóstico
       let errorMessage = error.message;
@@ -523,6 +525,7 @@ async function downloadWhatsAppMedia(channel, mediaObject) {
       throw new Error(`Erro ao obter informações da mídia: ${error.message}`);
     }
   } catch (error) {
+    Sentry.captureException(error);
     console.error('Erro ao processar mídia do WhatsApp:', error);
     
     // Retorna o objeto original com informações sobre o erro
@@ -1276,6 +1279,7 @@ export async function sendWhatsAppTemplate(channel, to, templateName, languageCo
       components: components.length > 0 ? components : undefined
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error('Erro ao enviar template WhatsApp:', error);
     throw error;
   }

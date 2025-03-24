@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase.js';
 import { stripe } from '../lib/stripe.js';
+import Sentry from '../lib/sentry.js';
 
 // Handle checkout completed
 export async function handleCheckoutCompleted(session) {
@@ -34,6 +35,13 @@ export async function handleCheckoutCompleted(session) {
       });
   } catch (error) {
     console.error('Error handling checkout completed:', error);
+    Sentry.captureException(error, {
+      tags: {
+        handler: 'handleCheckoutCompleted',
+        organizationId,
+        subscriptionId
+      }
+    });
     throw error;
   }
 }
@@ -64,6 +72,13 @@ export async function handleInvoicePaid(invoice) {
       });
   } catch (error) {
     console.error('Error handling invoice paid:', error);
+    Sentry.captureException(error, {
+      tags: {
+        handler: 'handleInvoicePaid',
+        invoiceId: invoice.id,
+        subscriptionId: invoice.subscription
+      }
+    });
     throw error;
   }
 }
@@ -89,6 +104,12 @@ export async function handleSubscriptionUpdated(subscription) {
       .eq('id', stripeSubscription.subscription_id);
   } catch (error) {
     console.error('Error handling subscription updated:', error);
+    Sentry.captureException(error, {
+      tags: {
+        handler: 'handleSubscriptionUpdated',
+        subscriptionId: subscription.id
+      }
+    });
     throw error;
   }
 }

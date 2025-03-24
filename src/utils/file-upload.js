@@ -3,6 +3,7 @@ import path from 'path';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabase } from '../lib/supabase.js';
 import { getActiveS3Integration } from '../lib/s3.js';
+import Sentry from '../lib/sentry.js';
 
 /**
  * Função unificada para upload de arquivos
@@ -183,6 +184,15 @@ export async function uploadFile({
     };
   } catch (error) {
     console.error('Erro no upload de arquivo:', error);
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        messageId,
+        flowId,
+        fileName,
+        contentType
+      }
+    });
     return {
       success: false,
       error: error.message
@@ -211,7 +221,16 @@ export async function deleteFile({
 }) {
   try {
     if (!fileId) {
-      throw new Error('É necessário fornecer o ID do arquivo para excluí-lo');
+      const error = new Error('É necessário fornecer o ID do arquivo para excluí-lo');
+      Sentry.captureException(error, {
+        tags: {
+          organizationId,
+          fileId,
+          flowId,
+          messageId
+        }
+      });
+      throw error;
     }
 
     // Buscar o registro do arquivo no banco de dados
@@ -233,13 +252,31 @@ export async function deleteFile({
     const { data: fileData, error: fileError } = await query.single();
 
     if (fileError) {
-      throw new Error(`Erro ao buscar arquivo: ${fileError.message}`);
+      const error = new Error(`Erro ao buscar arquivo: ${fileError.message}`);
+      Sentry.captureException(error, {
+        tags: {
+          organizationId,
+          fileId,
+          flowId,
+          messageId
+        }
+      });
+      throw error;
     }
 
     if (!fileData) {
+      const error = new Error(`Arquivo com ID ${fileId} não encontrado`);
+      Sentry.captureException(error, {
+        tags: {
+          organizationId,
+          fileId,
+          flowId,
+          messageId
+        }
+      });
       return {
         success: false,
-        error: `Arquivo com ID ${fileId} não encontrado`
+        error: error.message
       };
     }
 
@@ -249,7 +286,16 @@ export async function deleteFile({
       const s3Integration = await getActiveS3Integration(organizationId);
       
       if (!s3Integration) {
-        throw new Error('Integração S3 não encontrada');
+        const error = new Error('Integração S3 não encontrada');
+        Sentry.captureException(error, {
+          tags: {
+            organizationId,
+            fileId,
+            flowId,
+            messageId
+          }
+        });
+        throw error;
       }
       
       const s3Client = new S3Client({
@@ -272,7 +318,16 @@ export async function deleteFile({
         .remove([fileData.path]);
         
       if (deleteError) {
-        throw new Error(`Erro ao excluir arquivo do storage: ${deleteError.message}`);
+        const error = new Error(`Erro ao excluir arquivo do storage: ${deleteError.message}`);
+        Sentry.captureException(error, {
+          tags: {
+            organizationId,
+            fileId,
+            flowId,
+            messageId
+          }
+        });
+        throw error;
       }
     }
     
@@ -283,7 +338,16 @@ export async function deleteFile({
       .eq('id', fileData.id);
       
     if (deleteRecordError) {
-      throw new Error(`Erro ao excluir registro do arquivo: ${deleteRecordError.message}`);
+      const error = new Error(`Erro ao excluir registro do arquivo: ${deleteRecordError.message}`);
+      Sentry.captureException(error, {
+        tags: {
+          organizationId,
+          fileId,
+          flowId,
+          messageId
+        }
+      });
+      throw error;
     }
     
     return {
@@ -293,6 +357,14 @@ export async function deleteFile({
     };
   } catch (error) {
     console.error('Erro ao excluir arquivo:', error);
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        fileId,
+        flowId,
+        messageId
+      }
+    });
     return {
       success: false,
       error: error.message || 'Erro ao excluir arquivo'
@@ -332,6 +404,12 @@ export async function downloadFileFromUrl(url, options = {}) {
     return Buffer.from(arrayBuffer);
   } catch (error) {
     console.error('Erro ao baixar arquivo:', error);
+    Sentry.captureException(error, {
+      tags: {
+        url,
+        ...options
+      }
+    });
     throw error;
   }
 } 

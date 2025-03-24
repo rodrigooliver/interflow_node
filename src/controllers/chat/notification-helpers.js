@@ -56,7 +56,12 @@ export async function sendChatNotifications(chat, customer, message) {
   } catch (error) {
     console.error('Erro ao enviar notificações push:', error);
     Sentry.captureException(error, {
-      extra: { context: 'sending_push_notifications', chat_id: chat?.id }
+      extra: { 
+        context: 'sending_push_notifications', 
+        chat_id: chat?.id,
+        customer_id: customer?.id,
+        message_id: message?.id
+      }
     });
   }
 }
@@ -96,6 +101,13 @@ async function sendToTeamMembers(chat, notificationData) {
     await sendNotificationWithFilters(userIds, notificationData);
   } catch (error) {
     console.error('Erro ao enviar notificações para membros da equipe:', error);
+    Sentry.captureException(error, {
+      extra: { 
+        context: 'sending_team_notifications',
+        chat_id: chat?.id,
+        team_id: chat?.team_id
+      }
+    });
     throw error;
   }
 }
@@ -143,6 +155,13 @@ async function sendToAssignedAndCollaborators(chat, notificationData) {
     await sendNotificationWithFilters(Array.from(userIds), notificationData);
   } catch (error) {
     console.error('Erro ao enviar notificações para atendente e colaboradores:', error);
+    Sentry.captureException(error, {
+      extra: { 
+        context: 'sending_assigned_notifications',
+        chat_id: chat?.id,
+        assigned_to: chat?.assigned_to
+      }
+    });
     throw error;
   }
 }
@@ -171,6 +190,12 @@ async function sendNotificationWithFilters(profileIds, notificationData) {
     console.log(`Notificação enviada para ${profileIds.length} usuários com external_id`);
   } catch (error) {
     console.error('Erro ao enviar notificações com external_id:', error);
+    Sentry.captureException(error, {
+      extra: { 
+        context: 'sending_notification_with_filters',
+        profile_ids_count: profileIds?.length
+      }
+    });
     throw error;
   }
 } 

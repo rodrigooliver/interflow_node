@@ -439,6 +439,7 @@ const prepareContextMessages = async (prompt, session) => {
     }
   } catch (error) {
     console.error('[prepareContextMessages] Error adding context info:', error);
+    Sentry.captureException(error);
     
     // Adicionar prompt do sistema sem informações contextuais
     if (prompt.content) {
@@ -772,7 +773,8 @@ const convertLocalTimeToUTC = (date, time, timezone) => {
     return `${utcHours}:${utcMinutes}`;
   } catch (error) {
     console.error(`[convertLocalTimeToUTC] Error converting time: ${error.message}`);
-    return time; // Retorna o valor original em caso de erro
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -804,7 +806,8 @@ const convertUTCToLocalTime = (date, utcTime, timezone) => {
     return localTime;
   } catch (error) {
     console.error(`[convertUTCToLocalTime] Error converting time: ${error.message}`);
-    return utcTime; // Retorna o valor original em caso de erro
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -1219,13 +1222,8 @@ const processCheckScheduleAction = async (action, args, session) => {
     return enrichedResult;
   } catch (error) {
     console.error('[processCheckScheduleAction] Error:', error);
-    
-    // Retornar o resultado do erro
-    return {
-      status: "error",
-      message: `Error: ${error.message}`,
-      error: error.message
-    };
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -1367,19 +1365,8 @@ const checkScheduleAvailability = async (scheduleId, date, time, serviceId, time
     };
   } catch (error) {
     console.error('[checkScheduleAvailability] Error:', error);
-    Sentry.captureException(error, {
-      tags: {
-        scheduleId,
-        serviceId,
-        date,
-        time,
-        timezone
-      }
-    });
-    return {
-      success: false,
-      instructions: "I apologize, but I encountered an error while checking the schedule availability. Please try again or contact support if the problem persists."
-    };
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -1647,17 +1634,8 @@ const getAvailableSlots = async (scheduleId, date, serviceId, duration, capacity
     return availableSlots.sort();
   } catch (error) {
     console.error('[getAvailableSlots] Error:', error);
-    Sentry.captureException(error, {
-      tags: {
-        scheduleId,
-        serviceId,
-        date,
-        duration,
-        capacity,
-        isByArrivalTime
-      }
-    });
-    return [];
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -1967,9 +1945,13 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
           
           console.log(`[createAppointment] Notificação enviada para ${profileIds.length} providers`);
         } catch (notificationError) {
-          // Registrar o erro, mas não falhar a criação do agendamento
-          console.error('[createAppointment] Erro ao enviar notificação:', notificationError);
-          Sentry.captureException(notificationError);
+          console.error('[createAppointment] Error sending notification:', notificationError);
+          Sentry.captureException(notificationError, {
+            tags: {
+              type: 'notification_error',
+              appointmentId: appointment.id
+            }
+          });
         }
       })();
     }
@@ -1998,19 +1980,8 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
     };
   } catch (error) {
     console.error('[createAppointment] Error:', error);
-    Sentry.captureException(error, {
-      tags: {
-        scheduleId,
-        customerId,
-        serviceId,
-        date,
-        time
-      }
-    });
-    return {
-      success: false,
-      instructions: "I apologize, but I encountered an error while trying to create your appointment. Please try again or contact support if the problem persists."
-    };
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -2180,7 +2151,8 @@ const findAvailableProvider = async (scheduleId, date, startTime, endTime, servi
     
   } catch (error) {
     console.error('[findAvailableProvider] Error:', error);
-    return null;
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -2273,10 +2245,8 @@ const checkAppointment = async (customerId, appointmentId) => {
     };
   } catch (error) {
     console.error('[checkAppointment] Error:', error);
-    return {
-      success: false,
-      instructions: `There was an error checking the appointment: ${error.message}. Please try again.`
-    };
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -2461,9 +2431,13 @@ const deleteAppointment = async (appointmentId, customerId, date) => {
             
             console.log(`[deleteAppointment] Notificações de cancelamento enviadas para ${canceledCount} agendamentos`);
           } catch (notificationError) {
-            // Registrar o erro, mas não falhar o cancelamento do agendamento
-            console.error('[deleteAppointment] Erro ao enviar notificação:', notificationError);
-            Sentry.captureException(notificationError);
+            console.error('[deleteAppointment] Error sending notification:', notificationError);
+            Sentry.captureException(notificationError, {
+              tags: {
+                type: 'notification_error',
+                appointmentId: appointment.id
+              }
+            });
           }
         })();
       }
@@ -2584,9 +2558,13 @@ const deleteAppointment = async (appointmentId, customerId, date) => {
           
           console.log(`[deleteAppointment] Notificação de cancelamento enviada para ${profileIds.length} providers`);
         } catch (notificationError) {
-          // Registrar o erro, mas não falhar o cancelamento do agendamento
-          console.error('[deleteAppointment] Erro ao enviar notificação:', notificationError);
-          Sentry.captureException(notificationError);
+          console.error('[deleteAppointment] Error sending notification:', notificationError);
+          Sentry.captureException(notificationError, {
+            tags: {
+              type: 'notification_error',
+              appointmentId: appointment.id
+            }
+          });
         }
       })();
     }
@@ -2602,10 +2580,8 @@ const deleteAppointment = async (appointmentId, customerId, date) => {
     };
   } catch (error) {
     console.error('[deleteAppointment] Error:', error);
-    return {
-      success: false,
-      instructions: `There was an error canceling the appointment: ${error.message}. Please try again.`
-    };
+    Sentry.captureException(error);
+    throw error;
   }
 };
 
@@ -2886,11 +2862,7 @@ const processUpdateCustomerAction = async (action, args, session) => {
   } catch (error) {
     console.error('[processUpdateCustomerAction] Erro:', error);
     Sentry.captureException(error);
-    return {
-      status: "error",
-      message: `Error updating customer: ${error.message}`,
-      error: error.message
-    };
+    throw error;
   }
 };
 
@@ -3011,11 +2983,7 @@ const processUpdateChatAction = async (action, args, session) => {
   } catch (error) {
     console.error('[processUpdateChatAction] Erro:', error);
     Sentry.captureException(error);
-    return {
-      status: "error",
-      message: `Error updating chat: ${error.message}`,
-      error: error.message
-    };
+    throw error;
   }
 };
 
@@ -3135,10 +3103,6 @@ const processStartFlowAction = async (action, args, session) => {
   } catch (error) {
     console.error('[processStartFlowAction] Erro:', error);
     Sentry.captureException(error);
-    return {
-      status: "error",
-      message: `Error starting flow: ${error.message}`,
-      error: error.message
-    };
+    throw error;
   }
 };

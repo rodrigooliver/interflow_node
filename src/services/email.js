@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { ConnectionPool } from './connection-pool.js';
 import { RateLimiter } from './rate-limiter.js';
 import { createEmailTemplate } from './email-template.js';
+import Sentry from '../lib/sentry.js';
 
 // Test email connection
 export async function testEmailConnection(config) {
@@ -53,7 +54,12 @@ export async function testEmailConnection(config) {
 
     return { success: true };
   } catch (error) {
-    // console.error('Error testing email connection:', error);
+    Sentry.captureException(error, {
+      tags: {
+        type: 'email_connection_test',
+        host: config.host
+      }
+    });
     return { 
       success: false, 
       error: error.message 
@@ -268,6 +274,12 @@ class EmailConnectionManager {
           connection.imap._sock.setKeepAlive(true, 30000);
           connection.imap._sock.setTimeout(120000);
         } catch (sockErr) {
+          Sentry.captureException(sockErr, {
+            tags: {
+              type: 'email_socket_error',
+              channel_id: channel.id
+            }
+          });
           // console.warn(`Erro ao configurar socket para canal ${channel.id}:`, sockErr);
         }
       }
@@ -316,7 +328,13 @@ class EmailConnectionManager {
 
       return connection;
     } catch (error) {
-      // console.error(`Erro ao criar conexão para canal ${channel.id}:`, error);
+      Sentry.captureException(error, {
+        tags: {
+          type: 'email_connection_error',
+          channel_id: channel.id,
+          host: channel.credentials.host
+        }
+      });
       await this.handleConnectionError(channel).catch(console.error);
       return null;
     }
@@ -335,6 +353,12 @@ class EmailConnectionManager {
       connection.imap._sock.setKeepAlive(true);
       
     } catch (err) {
+      Sentry.captureException(err, {
+        tags: {
+          type: 'email_idle_listener_error',
+          channel_id: channel.id
+        }
+      });
       // console.error(`Erro ao configurar listener para canal ${channel.id}:`, err);
       throw err;
     }
@@ -430,6 +454,13 @@ class EmailConnectionManager {
           });
           
         } catch (err) {
+          Sentry.captureException(err, {
+            tags: {
+              type: 'email_process_error',
+              message_id: messageId,
+              channel_id: channel.id
+            }
+          });
           // console.error(`Erro ao processar email ${messageId}:`, err);
           await this.recordFailure(host);
         }
@@ -620,6 +651,13 @@ async function handleIncomingEmail(channel, email) {
     if (updateError) throw updateError;
 
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        type: 'email_handle_incoming_error',
+        channel_id: channel.id,
+        organization_id: organization.id
+      }
+    });
     // console.error('Error handling incoming email:', error);
     throw error;
   }
@@ -754,6 +792,13 @@ export async function sendEmailReply(chat, message) {
       .eq('id', message.id);
 
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        type: 'email_send_reply_error',
+        chat_id: chat.id,
+        message_id: message.id
+      }
+    });
     // console.error('Error sending email reply:', error);
     
     await supabase
@@ -845,6 +890,13 @@ export async function handleSenderMessageEmail(channel, messageData) {
       status: 'sent'
     };
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        type: 'email_sender_message_error',
+        chat_id: messageData.chat_id,
+        channel_id: channel.id
+      }
+    });
     // console.error('Erro ao enviar email:', error);
     throw error;
   }

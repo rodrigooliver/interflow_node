@@ -6,6 +6,10 @@ import { supabase } from '../lib/supabase.js';
  * Função principal que verifica e processa sessões com timeout
  */
 export const checkTimeouts = async () => {
+  const transaction = Sentry.startTransaction({
+    name: 'checkTimeouts',
+  });
+
   try {
     const now = new Date();
     
@@ -36,11 +40,20 @@ export const checkTimeouts = async () => {
       .lt('timeout_at', new Date().toISOString())
       .not('timeout_at', 'is', null);
     
-    if (error) throw error;
+    if (error) {
+      Sentry.withScope((scope) => {
+        scope.setExtra('error', error);
+        scope.setTag('operation', 'fetch_sessions');
+        Sentry.captureException(error);
+      });
+      throw error;
+    }
     
     if (!sessions || sessions.length === 0) {
       return;
     }
+
+    Sentry.setTag('sessions_count', sessions.length);
     
     // Processa cada sessão
     for (const session of sessions) {
@@ -52,7 +65,16 @@ export const checkTimeouts = async () => {
           .eq('id', session.chat.channel_id)
           .single();
         
-        if (channelError) throw channelError;
+        if (channelError) {
+          Sentry.withScope((scope) => {
+            scope.setExtra('session_id', session.id);
+            scope.setExtra('channel_id', session.chat.channel_id);
+            scope.setExtra('error', channelError);
+            scope.setTag('operation', 'fetch_channel');
+            Sentry.captureException(channelError);
+          });
+          throw channelError;
+        }
         
         // Cria o flow engine para esta sessão específica
         const flowEngine = createFlowEngine(
@@ -66,14 +88,25 @@ export const checkTimeouts = async () => {
         await flowEngine.handleSessionTimeout(session);
         
       } catch (sessionError) {
-        Sentry.captureException(sessionError);
+        Sentry.withScope((scope) => {
+          scope.setExtra('session_id', session.id);
+          scope.setExtra('organization_id', session.organization.id);
+          scope.setExtra('chat_id', session.chat_id);
+          scope.setTag('operation', 'process_session_timeout');
+          Sentry.captureException(sessionError);
+        });
         console.error(`Erro ao processar timeout para a sessão ${session.id}:`, sessionError);
       }
     }
     
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.withScope((scope) => {
+      scope.setTag('operation', 'check_timeouts');
+      Sentry.captureException(error);
+    });
     console.error('Erro ao verificar timeouts:', error);
+  } finally {
+    transaction.finish();
   }
 };
 
@@ -82,6 +115,10 @@ if (process.argv[1] === import.meta.url) {
   checkTimeouts()
     .then(() => process.exit(0))
     .catch((error) => {
+      Sentry.withScope((scope) => {
+        scope.setTag('operation', 'main_execution');
+        Sentry.captureException(error);
+      });
       console.error('Erro fatal ao verificar timeouts:', error);
       process.exit(1);
     });

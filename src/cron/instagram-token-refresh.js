@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import Sentry from '../lib/sentry.js';
 
 export async function refreshInstagramTokens() {
   const thirtyDaysFromNow = new Date();
@@ -15,6 +16,11 @@ export async function refreshInstagramTokens() {
 
   if (error) {
     console.error('Erro ao buscar canais para atualização de token:', error);
+    Sentry.captureException(error, {
+      tags: {
+        operation: 'fetch_channels_for_token_refresh'
+      }
+    });
     return;
   }
 
@@ -30,11 +36,21 @@ export async function refreshInstagramTokens() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(`Erro ao renovar token: ${JSON.stringify(data)}`);
+        const error = new Error(`Erro ao renovar token: ${JSON.stringify(data)}`);
+        Sentry.captureException(error, {
+          tags: {
+            operation: 'refresh_instagram_token',
+            channel_id: channel.id
+          },
+          extra: {
+            response_data: data
+          }
+        });
+        throw error;
       }
 
       // Atualizar o token no banco de dados
-      await supabase
+      const { error: updateError } = await supabase
         .from('chat_channels')
         .update({
           credentials: {
@@ -46,9 +62,19 @@ export async function refreshInstagramTokens() {
         })
         .eq('id', channel.id);
 
+      if (updateError) {
+        throw updateError;
+      }
+
       console.log(`Token renovado com sucesso para o canal ${channel.id}`);
     } catch (error) {
       console.error(`Erro ao renovar token para o canal ${channel.id}:`, error);
+      Sentry.captureException(error, {
+        tags: {
+          operation: 'process_channel_token_refresh',
+          channel_id: channel.id
+        }
+      });
     }
   }
 } 

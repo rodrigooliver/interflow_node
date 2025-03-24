@@ -211,7 +211,15 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
       case 'exchange_code': {
         const { code } = requestBody;
         if (!code) {
-          throw new Error('Código de autorização ausente');
+          const error = new Error('Código de autorização ausente');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId
+            }
+          });
+          throw error;
         }
         
         const tokenResult = await exchangeCodeForToken({ code, channelId, newCredentials });
@@ -235,7 +243,15 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
       case 'verify_token': {
         const { token } = requestBody;
         if (!token) {
-          throw new Error('Token de acesso ausente');
+          const error = new Error('Token de acesso ausente');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId
+            }
+          });
+          throw error;
         }
         
         const tokenResult = await verifyToken({ 
@@ -280,7 +296,15 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
           newCredentials.selected_waba_id = accountsResult.selectedWabaId;
           nextStep = 'fetch_waba_details';
         } else {
-          throw new Error('Nenhuma conta do WhatsApp Business encontrada');
+          const error = new Error('Nenhuma conta do WhatsApp Business encontrada');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId
+            }
+          });
+          throw error;
         }
         break;
       }
@@ -294,7 +318,16 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
         }
         
         if (!wabaId) {
-          throw new Error('ID da conta do WhatsApp Business não encontrado');
+          const error = new Error('ID da conta do WhatsApp Business não encontrado');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId,
+              wabaId
+            }
+          });
+          throw error;
         }
         
         const wabaDetails = await fetchWabaDetails({ 
@@ -322,7 +355,16 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
         }
         
         if (!wabaId) {
-          throw new Error('ID da conta do WhatsApp Business não encontrado');
+          const error = new Error('ID da conta do WhatsApp Business não encontrado');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId,
+              wabaId
+            }
+          });
+          throw error;
         }
         
         const phoneResult = await fetchPhoneNumbers({ 
@@ -363,7 +405,16 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
         }
         
         if (!wabaId) {
-          throw new Error('ID da conta do WhatsApp Business não encontrado');
+          const error = new Error('ID da conta do WhatsApp Business não encontrado');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId,
+              wabaId
+            }
+          });
+          throw error;
         }
         
         const templatesResult = await fetchMessageTemplates({ 
@@ -391,7 +442,16 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
         }
         
         if (!wabaId) {
-          throw new Error('ID da conta do WhatsApp Business não encontrado');
+          const error = new Error('ID da conta do WhatsApp Business não encontrado');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId,
+              wabaId
+            }
+          });
+          throw error;
         }
         
         const subscriptionResult = await subscribeApp({ 
@@ -425,7 +485,16 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
         }
         
         if (!phoneNumberId) {
-          throw new Error('ID do número de telefone não encontrado');
+          const error = new Error('ID do número de telefone não encontrado');
+          Sentry.captureException(error, {
+            tags: {
+              step,
+              channelId,
+              organizationId,
+              phoneNumberId
+            }
+          });
+          throw error;
         }
         
         const registerResult = await registerPhone({ 
@@ -463,7 +532,15 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
       }
       
       default:
-        throw new Error(`Etapa desconhecida: ${step}`);
+        const error = new Error(`Etapa desconhecida: ${step}`);
+        Sentry.captureException(error, {
+          tags: {
+            step,
+            channelId,
+            organizationId
+          }
+        });
+        throw error;
     }
     
     // Atualizar status de conclusão e próxima etapa
@@ -492,7 +569,17 @@ async function processStepInBackground(accessToken, step, requestBody, channelId
     
   } catch (error) {
     console.error(`Erro ao processar etapa ${step} em segundo plano:`, error);
-    Sentry.captureException(error);
+    Sentry.captureException(error, {
+      tags: {
+        step,
+        channelId,
+        organizationId,
+        setupStatus: newCredentials.setup_status
+      },
+      extra: {
+        credentials: newCredentials
+      }
+    });
     
     // Extrair mensagem de erro mais relevante
     const errorMessage = extractErrorMessage(error);
@@ -544,6 +631,17 @@ async function tokenNotFound(newCredentials, channelId) {
     tokenLength: newCredentials.access_token ? newCredentials.access_token.length : 0
   }));
   
+  const error = new Error('Token de acesso não encontrado');
+  Sentry.captureException(error, {
+    tags: {
+      channelId,
+      setupStatus: newCredentials.setup_status
+    },
+    extra: {
+      credentials: newCredentials
+    }
+  });
+  
   // Atualizar status de erro
   newCredentials.setup_status = 'erro_token_ausente';
   newCredentials.setup_error = 'Token de acesso não encontrado';
@@ -559,7 +657,7 @@ async function tokenNotFound(newCredentials, channelId) {
     })
     .eq('id', channelId);
     
-  throw new Error('Token de acesso não encontrado. Por favor, forneça um novo token.');
+  throw error;
 }
 
 /**
@@ -586,47 +684,67 @@ export async function exchangeCodeForToken({ code, channelId, newCredentials }) 
   console.log('client_id:', process.env.FACEBOOK_APP_ID);
   console.log('code length:', code.length);
   
-  const tokenResponse = await axios({
+  try {
+    const tokenResponse = await axios({
       method: 'POST',
-    url: 'https://graph.facebook.com/v22.0/oauth/access_token',
+      url: 'https://graph.facebook.com/v22.0/oauth/access_token',
       headers: {
         'Content-Type': 'application/json'
       },
       data: {
-      client_id: process.env.FACEBOOK_APP_ID,
-      client_secret: process.env.FACEBOOK_APP_SECRET,
-      grant_type: 'authorization_code',
-      code
-    }
-  });
+        client_id: process.env.FACEBOOK_APP_ID,
+        client_secret: process.env.FACEBOOK_APP_SECRET,
+        grant_type: 'authorization_code',
+        code
+      }
+    });
 
-  console.log('Resposta da troca de código:', JSON.stringify(tokenResponse.data));
-  
-  const accessToken = tokenResponse.data.access_token;
-  const tokenType = tokenResponse.data.token_type;
-  const expiresIn = tokenResponse.data.expires_in;
-
-  if (!accessToken) {
-    throw new Error('Falha ao obter token de acesso');
-  }
-
-  newCredentials.access_token = encrypt(accessToken);
-  newCredentials.token_type = tokenType;
-  newCredentials.expires_in = expiresIn;
-  
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
+    console.log('Resposta da troca de código:', JSON.stringify(tokenResponse.data));
     
-  return {
-    accessToken,
-    tokenType,
-    expiresIn
-  };
+    const accessToken = tokenResponse.data.access_token;
+    const tokenType = tokenResponse.data.token_type;
+    const expiresIn = tokenResponse.data.expires_in;
+
+    if (!accessToken) {
+      const error = new Error('Falha ao obter token de acesso');
+      Sentry.captureException(error, {
+        tags: {
+          channelId,
+          setupStatus: newCredentials.setup_status
+        }
+      });
+      throw error;
+    }
+
+    newCredentials.access_token = encrypt(accessToken);
+    newCredentials.token_type = tokenType;
+    newCredentials.expires_in = expiresIn;
+    
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+      
+    return {
+      accessToken,
+      tokenType,
+      expiresIn
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status
+      },
+      extra: {
+        codeLength: code.length
+      }
+    });
+    throw error;
+  }
 }
 
 /**
@@ -664,26 +782,47 @@ export async function verifyToken({ token, channelId, newCredentials }) {
 
     // Verificar se o token é válido
     if (!response.data || !response.data.data) {
-      console.error('Resposta inválida do debug_token:', response.data);
-      throw new Error('Resposta inválida da API do Facebook ao verificar token');
+      const error = new Error('Resposta inválida do debug_token');
+      Sentry.captureException(error, {
+        tags: {
+          channelId,
+          setupStatus: newCredentials.setup_status
+        },
+        extra: {
+          response: response.data
+        }
+      });
+      throw error;
     }
     
     if (!response.data.data.is_valid) {
-      console.error('Token inválido:', response.data.data);
-      
-      // Verificar se há uma mensagem de erro específica
-      if (response.data.data.error && response.data.data.error.message) {
-        throw new Error(`Token inválido: ${response.data.data.error.message}`);
-      }
-      
-      throw new Error('Token inválido ou expirado');
+      const error = new Error(response.data.data.error?.message || 'Token inválido ou expirado');
+      Sentry.captureException(error, {
+        tags: {
+          channelId,
+          setupStatus: newCredentials.setup_status
+        },
+        extra: {
+          tokenData: response.data.data
+        }
+      });
+      throw error;
     }
     
     // Verificar permissões do token
     const verificacaoPermissoes = verificarPermissoesToken(response.data.data.scopes);
     if (!verificacaoPermissoes.valido) {
       console.warn('Token não possui todas as permissões necessárias:', verificacaoPermissoes);
-      // Não falhar, apenas registrar o aviso
+      Sentry.captureMessage('Token com permissões insuficientes', {
+        level: 'warning',
+        tags: {
+          channelId,
+          setupStatus: newCredentials.setup_status
+        },
+        extra: {
+          verificacaoPermissoes
+        }
+      });
     }
 
     // Obter informações adicionais do usuário
@@ -725,7 +864,12 @@ export async function verifyToken({ token, channelId, newCredentials }) {
       permissoesFaltantes: verificacaoPermissoes.permissoesFaltantes
     };
   } catch (error) {
-    console.error('Erro ao verificar token:', error);
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status
+      }
+    });
     
     // Verificar se é um erro da API do Facebook
     if (error.response && error.response.data && error.response.data.error) {
@@ -770,6 +914,13 @@ export async function fetchWhatsAppAccounts({ accessToken, channelId, newCredent
     clientWabaAccounts = clientWabaResponse.data.data || [];
     console.log('Contas do WhatsApp Business de clientes:', JSON.stringify(clientWabaAccounts));
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'fetch_accounts'
+      }
+    });
     console.error('Erro ao obter contas do WhatsApp Business de clientes:', error);
     // Não falhar o processo, apenas registrar o erro
   }
@@ -842,35 +993,47 @@ export async function fetchWabaDetails({ accessToken, wabaId, channelId, newCred
     })
     .eq('id', channelId);
   
-  const wabaDetailsResponse = await axios({
-    method: 'GET',
-    url: `https://graph.facebook.com/v22.0/${wabaId}`,
-    params: {
-      fields: 'id,name,currency,owner_business_info'
-    },
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+  try {
+    const wabaDetailsResponse = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/v22.0/${wabaId}`,
+      params: {
+        fields: 'id,name,currency,owner_business_info'
+      },
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-  const wabaDetails = wabaDetailsResponse.data;
-  console.log('Detalhes da conta do WhatsApp Business:', JSON.stringify(wabaDetails));
-  
-  // Salvar os detalhes no banco de dados
-  newCredentials.last_error = null;
-  newCredentials.waba_details = wabaDetails;
-  newCredentials.business_account_id = wabaId;
-  newCredentials.business_name = wabaDetails.name || 'WhatsApp Business';
-  
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
-  
-  return wabaDetails;
+    const wabaDetails = wabaDetailsResponse.data;
+    console.log('Detalhes da conta do WhatsApp Business:', JSON.stringify(wabaDetails));
+    
+    // Salvar os detalhes no banco de dados
+    newCredentials.last_error = null;
+    newCredentials.waba_details = wabaDetails;
+    newCredentials.business_account_id = wabaId;
+    newCredentials.business_name = wabaDetails.name || 'WhatsApp Business';
+    
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+    
+    return wabaDetails;
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'fetch_waba_details',
+        wabaId
+      }
+    });
+    throw error;
+  }
 }
 
 /**
@@ -887,74 +1050,95 @@ export async function fetchPhoneNumbers({ accessToken, wabaId, channelId, newCre
     })
     .eq('id', channelId);
   
-  const phoneNumbersResponse = await axios({
-    method: 'GET',
-    url: `https://graph.facebook.com/v22.0/${wabaId}/phone_numbers`,
-    params: {
-      fields: 'id,cc,country_dial_code,display_phone_number,verified_name,status,quality_rating,search_visibility,platform_type,code_verification_status'
-    },
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+  try {
+    const phoneNumbersResponse = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/v22.0/${wabaId}/phone_numbers`,
+      params: {
+        fields: 'id,cc,country_dial_code,display_phone_number,verified_name,status,quality_rating,search_visibility,platform_type,code_verification_status'
+      },
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-  const phoneNumbers = phoneNumbersResponse.data.data || [];
-  console.log('Números de telefone:', JSON.stringify(phoneNumbers));
-  
-  // Salvar os números no banco de dados
-  newCredentials.phone_numbers = phoneNumbers;
-  newCredentials.last_error = null;
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
-  
-  // Determinar o número de telefone a ser usado
-  let selectedPhoneNumberId = null;
-  let displayPhoneNumber = null;
-  
-  if (phoneNumbers.length > 0) {
-    selectedPhoneNumberId = phoneNumbers[0].id;
-    displayPhoneNumber = phoneNumbers[0].display_phone_number || phoneNumbers[0].verified_name || 'WhatsApp Business';
+    const phoneNumbers = phoneNumbersResponse.data.data || [];
+    console.log('Números de telefone:', JSON.stringify(phoneNumbers));
     
-    // Obter informações detalhadas do número de telefone
-    try {
-      const phoneInfoResponse = await axios({
-        method: 'GET',
-        url: `https://graph.facebook.com/v22.0/${selectedPhoneNumberId}`,
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
+    // Salvar os números no banco de dados
+    newCredentials.phone_numbers = phoneNumbers;
+    newCredentials.last_error = null;
+    
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+    
+    // Determinar o número de telefone a ser usado
+    let selectedPhoneNumberId = null;
+    let displayPhoneNumber = null;
+    
+    if (phoneNumbers.length > 0) {
+      selectedPhoneNumberId = phoneNumbers[0].id;
+      displayPhoneNumber = phoneNumbers[0].display_phone_number || phoneNumbers[0].verified_name || 'WhatsApp Business';
+      
+      // Obter informações detalhadas do número de telefone
+      try {
+        const phoneInfoResponse = await axios({
+          method: 'GET',
+          url: `https://graph.facebook.com/v22.0/${selectedPhoneNumberId}`,
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        });
 
-      const phoneInfo = phoneInfoResponse.data;
-      console.log('Informações do telefone:', JSON.stringify(phoneInfo));
-      
-      newCredentials.phone_info = phoneInfo;
-      newCredentials.display_phone_number = phoneInfo.display_phone_number || phoneInfo.verified_name || displayPhoneNumber;
-      
-      // Atualizar status para rastreamento
-      await supabase
-        .from('chat_channels')
-        .update({
-          credentials: newCredentials,
-          ...(!newCredentials.phone_number_id ? {external_id: selectedPhoneNumberId} : {})
-        })
-        .eq('id', channelId);
-    } catch (error) {
-      console.error('Erro ao obter informações detalhadas do telefone:', error);
-      // Não falhar o processo, apenas registrar o erro
+        const phoneInfo = phoneInfoResponse.data;
+        console.log('Informações do telefone:', JSON.stringify(phoneInfo));
+        
+        newCredentials.phone_info = phoneInfo;
+        newCredentials.display_phone_number = phoneInfo.display_phone_number || phoneInfo.verified_name || displayPhoneNumber;
+        
+        // Atualizar status para rastreamento
+        await supabase
+          .from('chat_channels')
+          .update({
+            credentials: newCredentials,
+            ...(!newCredentials.phone_number_id ? {external_id: selectedPhoneNumberId} : {})
+          })
+          .eq('id', channelId);
+      } catch (error) {
+        Sentry.captureException(error, {
+          tags: {
+            channelId,
+            setupStatus: newCredentials.setup_status,
+            step: 'fetch_phone_info',
+            phoneNumberId: selectedPhoneNumberId
+          }
+        });
+        console.error('Erro ao obter informações detalhadas do telefone:', error);
+        // Não falhar o processo, apenas registrar o erro
+      }
     }
+    
+    return {
+      phoneNumbers,
+      selectedPhoneNumberId,
+      displayPhoneNumber
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'fetch_phone_numbers',
+        wabaId
+      }
+    });
+    throw error;
   }
-  
-  return {
-    phoneNumbers,
-    selectedPhoneNumberId,
-    displayPhoneNumber
-  };
 }
 
 /**
@@ -971,36 +1155,48 @@ export async function fetchMessageTemplates({ accessToken, wabaId, channelId, ne
     })
     .eq('id', channelId);
   
-  const messageTemplatesResponse = await axios({
-    method: 'GET',
-    url: `https://graph.facebook.com/v22.0/${wabaId}/message_templates`,
-    params: {
-      fields: 'language,name,rejected_reason,status,category,sub_category,last_updated_time,components,quality_score',
-      limit: 50
-    },
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+  try {
+    const messageTemplatesResponse = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/v22.0/${wabaId}/message_templates`,
+      params: {
+        fields: 'language,name,rejected_reason,status,category,sub_category,last_updated_time,components,quality_score',
+        limit: 50
+      },
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-  const messageTemplates = messageTemplatesResponse.data.data || [];
-  console.log('Modelos de mensagem:', JSON.stringify(messageTemplates));
-  
-  // Salvar os modelos no banco de dados
-  newCredentials.message_templates = messageTemplates;
-  newCredentials.last_error = null;
-  
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
-  
-  return {
-    messageTemplates
-  };
+    const messageTemplates = messageTemplatesResponse.data.data || [];
+    console.log('Modelos de mensagem:', JSON.stringify(messageTemplates));
+    
+    // Salvar os modelos no banco de dados
+    newCredentials.message_templates = messageTemplates;
+    newCredentials.last_error = null;
+    
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+    
+    return {
+      messageTemplates
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'fetch_templates',
+        wabaId
+      }
+    });
+    throw error;
+  }
 }
 
 /**
@@ -1017,46 +1213,58 @@ export async function subscribeApp({ accessToken, wabaId, channelId, newCredenti
     })
     .eq('id', channelId);
   
-  const subscribeAppResponse = await axios({
-    method: 'POST',
-    url: `https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+  try {
+    const subscribeAppResponse = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-  console.log('Resposta da inscrição do aplicativo:', JSON.stringify(subscribeAppResponse.data));
-  
-  // Verificar aplicativos inscritos
-  const subscribedAppsResponse = await axios({
-    method: 'GET',
-    url: `https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`,
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  });
+    console.log('Resposta da inscrição do aplicativo:', JSON.stringify(subscribeAppResponse.data));
+    
+    // Verificar aplicativos inscritos
+    const subscribedAppsResponse = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-  const subscribedApps = subscribedAppsResponse.data.data || [];
-  console.log('Aplicativos inscritos:', JSON.stringify(subscribedApps));
-  
-  // Salvar a inscrição no banco de dados
-  newCredentials.app_subscription = subscribeAppResponse.data;
-  newCredentials.subscribed_apps = subscribedApps;
-  newCredentials.last_error = null;
-  
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
-  
-  return {
-    subscription: subscribeAppResponse.data,
-    subscribedApps
-  };
+    const subscribedApps = subscribedAppsResponse.data.data || [];
+    console.log('Aplicativos inscritos:', JSON.stringify(subscribedApps));
+    
+    // Salvar a inscrição no banco de dados
+    newCredentials.app_subscription = subscribeAppResponse.data;
+    newCredentials.subscribed_apps = subscribedApps;
+    newCredentials.last_error = null;
+    
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+    
+    return {
+      subscription: subscribeAppResponse.data,
+      subscribedApps
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'subscribe_app',
+        wabaId
+      }
+    });
+    throw error;
+  }
 }
 
 /**
@@ -1108,7 +1316,15 @@ export async function registerPhone({ accessToken, phoneNumberId, channelId, new
       registration: registerPhoneResponse.data
     };
   } catch (error) {
-    // Registrar o erro, mas não falhar o processo
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        setupStatus: newCredentials.setup_status,
+        step: 'register_phone',
+        phoneNumberId
+      }
+    });
+    
     // Verificar se é um erro da API do Facebook
     if (error.response && error.response.data && error.response.data.error) {
       const fbError = error.response.data.error;
@@ -1116,11 +1332,6 @@ export async function registerPhone({ accessToken, phoneNumberId, channelId, new
     }
     console.error('Erro ao registrar telefone na API na Nuvem do WhatsApp:', error);
     throw new Error('Erro ao registrar telefone na API na Nuvem do WhatsApp');
-    
-    return {
-      success: false,
-      error: error.message
-    };
   }
 }
 
@@ -1130,35 +1341,48 @@ export async function registerPhone({ accessToken, phoneNumberId, channelId, new
 export async function completeSetup({ channelId, organizationId, newCredentials }) {
   newCredentials.setup_status = 'completed_complete_setup';
   newCredentials.last_error = null;
-  // Atualizar status para rastreamento
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials
-    })
-    .eq('id', channelId);
   
-  // Atualizar o canal com as credenciais do WhatsApp
-  await supabase
-    .from('chat_channels')
-    .update({
-      credentials: newCredentials,
+  try {
+    // Atualizar status para rastreamento
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials
+      })
+      .eq('id', channelId);
+    
+    // Atualizar o canal com as credenciais do WhatsApp
+    await supabase
+      .from('chat_channels')
+      .update({
+        credentials: newCredentials,
+        status: 'active',
+        is_connected: true,
+        is_tested: true,
+        settings: {
+          autoReply: true,
+          notifyNewTickets: true
+        },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', channelId)
+      .eq('organization_id', organizationId);
+    
+    return {
+      success: true,
+      channelId,
       status: 'active',
-      is_connected: true,
-      is_tested: true,
-      settings: {
-        autoReply: true,
-        notifyNewTickets: true
-      },
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', channelId)
-    .eq('organization_id', organizationId);
-  
-  return {
-    success: true,
-    channelId,
-    status: 'active',
-    is_connected: true
-  };
+      is_connected: true
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        channelId,
+        organizationId,
+        setupStatus: newCredentials.setup_status,
+        step: 'complete_setup'
+      }
+    });
+    throw error;
+  }
 } 

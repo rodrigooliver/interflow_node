@@ -1,22 +1,50 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { supabase } from './supabase.js';
 import { decrypt } from '../utils/crypto.js';
+import Sentry from './sentry.js';
 
 export async function getActiveS3Integration(organizationId) {
-  // Buscar integração ativa de AWS S3 para a organização
-  const { data, error } = await supabase
-    .from('integrations')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .eq('type', 'aws_s3')
-    .eq('status', 'active')
-    .single();
+  try {
+    // Buscar integração ativa de AWS S3 para a organização
+    const { data, error } = await supabase
+      .from('integrations')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('type', 'aws_s3')
+      .eq('status', 'active')
+      .single();
 
-  if (error || !data) {
+    if (error) {
+      Sentry.captureException(error, {
+        tags: {
+          organizationId,
+          type: 's3_integration_fetch'
+        }
+      });
+      return null;
+    }
+
+    if (!data) {
+      Sentry.captureMessage('Nenhuma integração S3 ativa encontrada', {
+        level: 'warning',
+        tags: {
+          organizationId,
+          type: 's3_integration_not_found'
+        }
+      });
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_integration_error'
+      }
+    });
     return null;
   }
-
-  return data;
 }
 
 export async function uploadToS3({ 
@@ -30,7 +58,14 @@ export async function uploadToS3({
   const s3Integration = await getActiveS3Integration(organizationId);
   
   if (!s3Integration) {
-    throw new Error('Integração S3 não encontrada');
+    const error = new Error('Integração S3 não encontrada');
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_upload_no_integration'
+      }
+    });
+    throw error;
   }
 
   // Configurar cliente S3 com credenciais da integração
@@ -40,7 +75,14 @@ export async function uploadToS3({
   const decryptedSecretKey = decrypt(secret_access_key);
   
   if (!decryptedSecretKey) {
-    throw new Error('Erro ao descriptografar a chave secreta do S3');
+    const error = new Error('Erro ao descriptografar a chave secreta do S3');
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_decrypt_error'
+      }
+    });
+    throw error;
   }
   
   const s3Client = new S3Client({
@@ -72,7 +114,19 @@ export async function uploadToS3({
       key
     };
   } catch (error) {
-    console.error('Erro no upload para S3:', error);
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_upload_error',
+        bucket,
+        key
+      },
+      extra: {
+        fileName,
+        contentType,
+        folder
+      }
+    });
     throw error;
   }
 }
@@ -81,7 +135,14 @@ export async function deleteFromS3(key, organizationId) {
   const s3Integration = await getActiveS3Integration(organizationId);
   
   if (!s3Integration) {
-    throw new Error('Integração S3 não encontrada');
+    const error = new Error('Integração S3 não encontrada');
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_delete_no_integration'
+      }
+    });
+    throw error;
   }
 
   const { access_key_id, secret_access_key, region, bucket } = s3Integration.credentials;
@@ -90,7 +151,14 @@ export async function deleteFromS3(key, organizationId) {
   const decryptedSecretKey = decrypt(secret_access_key);
   
   if (!decryptedSecretKey) {
-    throw new Error('Erro ao descriptografar a chave secreta do S3');
+    const error = new Error('Erro ao descriptografar a chave secreta do S3');
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_decrypt_error'
+      }
+    });
+    throw error;
   }
   
   const s3Client = new S3Client({
@@ -111,7 +179,14 @@ export async function deleteFromS3(key, organizationId) {
     await s3Client.send(command);
     return true;
   } catch (error) {
-    console.error('Erro ao deletar arquivo do S3:', error);
+    Sentry.captureException(error, {
+      tags: {
+        organizationId,
+        type: 's3_delete_error',
+        bucket,
+        key
+      }
+    });
     throw error;
   }
 } 

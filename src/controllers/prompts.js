@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import { decrypt } from '../utils/crypto.js';
 import axios from 'axios';
+import Sentry from '../lib/sentry.js';
 
 /**
  * Busca todos os prompts de uma organização
@@ -27,6 +28,7 @@ export const getPrompts = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar prompts:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao buscar prompts'
@@ -67,6 +69,7 @@ export const getPrompt = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar prompt:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao buscar prompt'
@@ -116,6 +119,7 @@ export const createPrompt = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao criar prompt:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao criar prompt'
@@ -193,6 +197,7 @@ export const updatePrompt = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao atualizar prompt:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao atualizar prompt'
@@ -225,6 +230,7 @@ export const deletePrompt = async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao excluir prompt:', error);
+    Sentry.captureException(error);
     return res.status(500).json({
       success: false,
       error: 'Erro ao excluir prompt'
@@ -520,6 +526,7 @@ export const improveTextWithOpenAI = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao processar melhoria de texto:', error);
+    Sentry.captureException(error);
     
     const errorMessage = req.body.language === 'en' ? 'Error processing text improvement' : 
                          req.body.language === 'es' ? 'Error al procesar la mejora del texto' : 

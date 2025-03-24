@@ -1,5 +1,7 @@
 import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
+import { supabase } from '../../lib/supabase.js';
+import Sentry from '../../lib/sentry.js';
 
 export async function handleFacebookWebhook(req, res) {
   const { channelId } = req.params;
@@ -42,6 +44,12 @@ export async function handleFacebookWebhook(req, res) {
     res.json({ success: true });
   } catch (error) {
     console.error('Error handling Facebook webhook:', error);
+    Sentry.captureException(error, {
+      extra: {
+        channelId,
+        webhookData
+      }
+    });
     res.status(500).json({ error: error.message });
   }
 }
@@ -55,6 +63,12 @@ async function handleMessageDelivery(channel, webhookData) {
       .in('metadata->messageId', webhookData.delivery.mids);
   } catch (error) {
     console.error('Error handling message delivery:', error);
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        webhookData
+      }
+    });
     throw error;
   }
 }
@@ -69,6 +83,12 @@ async function handleMessageRead(channel, webhookData) {
       .lt('created_at', webhookData.read.watermark);
   } catch (error) {
     console.error('Error handling message read:', error);
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        webhookData
+      }
+    });
     throw error;
   }
 }

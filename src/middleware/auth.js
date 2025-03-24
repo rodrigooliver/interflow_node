@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { supabase } from '../lib/supabase.js';
 import dotenv from 'dotenv';
+import Sentry from '../lib/sentry.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -79,6 +80,11 @@ async function validateSupabaseToken(token) {
 
     return user;
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        location: 'validateSupabaseToken'
+      }
+    });
     console.error('Token validation error:', error);
     return null;
   }
@@ -113,6 +119,12 @@ export async function verifyPublicAuth(req, res, next) {
     req.profileId = apiKeyData.profile_id;
     next();
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        location: 'verifyPublicAuth',
+        organizationId: req.params.organizationId
+      }
+    });
     console.error('Auth error:', error);
     return res.status(401).json({ error: 'Authentication failed' });
   }
@@ -178,6 +190,13 @@ export async function verifyAuth(req, res, next) {
         req.profileId = user.id;
         req.organizationId = organizationId;
       } catch (error) {
+        Sentry.captureException(error, {
+          tags: {
+            location: 'verifyAuth_membership_check',
+            organizationId,
+            userId: user.id
+          }
+        });
         console.error('Error checking organization access:', error);
         return res.status(401).json({ error: 'Error checking organization access' });
       }
@@ -185,6 +204,14 @@ export async function verifyAuth(req, res, next) {
 
     next();
   } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        location: 'verifyAuth',
+        organizationId,
+        hasApiKey: !!apiKey,
+        hasAuthHeader: !!authHeader
+      }
+    });
     console.error('Auth error:', error);
     return res.status(401).json({ error: 'Authentication failed' });
   }

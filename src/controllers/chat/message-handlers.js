@@ -560,9 +560,27 @@ async function processMessageMedia(messageData, organizationId) {
             fileRecord: uploadResult.fileRecord
           };
         } else {
+          Sentry.captureMessage('Falha ao fazer upload do arquivo base64', {
+            level: 'error',
+            extra: {
+              organizationId,
+              fileName,
+              mimeType,
+              error: uploadResult.error,
+              context: 'upload_base64_file'
+            }
+          });
           throw new Error(`Falha ao fazer upload do arquivo base64: ${uploadResult.error}`);
         }
       } catch (base64Error) {
+        Sentry.captureException(base64Error, {
+          extra: {
+            organizationId,
+            fileName,
+            mimeType,
+            context: 'processing_base64_media'
+          }
+        });
         console.error('Erro ao processar mídia base64:', base64Error);
         // Se falhar, tentaremos outros métodos
       }
@@ -601,9 +619,29 @@ async function processMessageMedia(messageData, organizationId) {
             fileRecord: uploadResult.fileRecord
           };
         } else {
+          Sentry.captureMessage('Falha ao fazer upload do arquivo baixado', {
+            level: 'error',
+            extra: {
+              organizationId,
+              fileName,
+              mimeType,
+              mediaUrl,
+              error: uploadResult.error,
+              context: 'upload_downloaded_file'
+            }
+          });
           throw new Error(`Falha ao fazer upload do arquivo baixado: ${uploadResult.error}`);
         }
       } catch (downloadError) {
+        Sentry.captureException(downloadError, {
+          extra: {
+            organizationId,
+            fileName,
+            mimeType,
+            mediaUrl,
+            context: 'processing_downloaded_media'
+          }
+        });
         console.error('Erro ao baixar mídia diretamente:', downloadError);
         // Se falhar, tentaremos o próximo método
       }
@@ -620,6 +658,13 @@ async function processMessageMedia(messageData, organizationId) {
           .single();
           
         if (!channelData) {
+          Sentry.captureMessage('Canal não encontrado', {
+            level: 'error',
+            extra: {
+              channelId: messageData.channel.id,
+              context: 'fetching_channel_credentials'
+            }
+          });
           throw new Error('Canal não encontrado');
         }
         
@@ -629,6 +674,14 @@ async function processMessageMedia(messageData, organizationId) {
           // ...
         }
       } catch (channelError) {
+        Sentry.captureException(channelError, {
+          extra: {
+            channelId: messageData.channel.id,
+            mediaKey,
+            directPath,
+            context: 'channel_api_media_download'
+          }
+        });
         console.error('Erro ao tentar baixar mídia via API do canal:', channelError);
       }
     }
@@ -641,6 +694,16 @@ async function processMessageMedia(messageData, organizationId) {
     }
     
     // Se não conseguimos obter o buffer da mídia
+    Sentry.captureMessage('Não foi possível obter o conteúdo da mídia', {
+      level: 'warning',
+      extra: {
+        organizationId,
+        fileName,
+        mimeType,
+        mediaUrl,
+        context: 'media_processing_failed'
+      }
+    });
     console.warn('Não foi possível obter o conteúdo da mídia por nenhum método');
     return {
       success: false,
@@ -651,6 +714,13 @@ async function processMessageMedia(messageData, organizationId) {
       fileRecord: null
     };
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        messageData,
+        context: 'process_message_media'
+      }
+    });
     console.error('Erro ao processar mídia:', error);
     return {
       success: false,
@@ -689,21 +759,41 @@ export async function handleStatusUpdate(channel, messageData) {
     });
 
     // Tenta encontrar a mensagem pelo ID exato primeiro
-    let { data: message } = await supabase
+    let { data: message, error: findMessageError } = await supabase
       .from('messages')
       .select('*')
       .eq('external_id', messageData.messageId)
       .single();
 
+    if (findMessageError && findMessageError.code !== 'PGRST116') {
+      Sentry.captureException(findMessageError, {
+        extra: {
+          messageId: messageData.messageId,
+          context: 'finding_message_by_external_id'
+        }
+      });
+      throw findMessageError;
+    }
+
     // Se não encontrar e temos um chat_id, tenta buscar pelo ID no metadata
     if (!message && messageData.chat_id) {
-      const { data: messages } = await supabase
+      const { data: messages, error: findMessagesError } = await supabase
         .from('messages')
         .select('*')
         .eq('chat_id', messageData.chat_id)
         .eq('sender_type', 'agent') // Apenas mensagens enviadas pelo agente
         .order('created_at', { ascending: false })
         .limit(20);
+
+      if (findMessagesError) {
+        Sentry.captureException(findMessagesError, {
+          extra: {
+            chatId: messageData.chat_id,
+            context: 'finding_messages_by_chat_id'
+          }
+        });
+        throw findMessagesError;
+      }
 
       if (messages && messages.length > 0) {
         // Procura por mensagens que possam corresponder ao ID do WhatsApp
@@ -742,6 +832,12 @@ export async function handleStatusUpdate(channel, messageData) {
           try {
             currentStatusTimestamp = new Date(timestampStr).getTime();
           } catch (e) {
+            Sentry.captureException(e, {
+              extra: {
+                timestampStr,
+                context: 'parsing_status_timestamp'
+              }
+            });
             console.warn(`Erro ao converter timestamp: ${timestampStr}`, e);
           }
         }
@@ -811,10 +907,25 @@ export async function handleStatusUpdate(channel, messageData) {
           .eq('id', message.id);
           
         if (updateError) {
+          Sentry.captureException(updateError, {
+            extra: {
+              messageId: message.id,
+              updateData,
+              context: 'updating_message_status'
+            }
+          });
           console.error(`Erro ao atualizar status da mensagem: ${updateError.message}`);
         }
       }
     } else {
+      Sentry.captureMessage('Mensagem não encontrada para atualização de status', {
+        level: 'warning',
+        extra: {
+          messageId: messageData.messageId,
+          chatId: messageData.chat_id,
+          context: 'message_not_found_for_status_update'
+        }
+      });
       console.log(`Mensagem não encontrada para o ID: ${messageData.messageId}`);
     }
 
@@ -824,7 +935,8 @@ export async function handleStatusUpdate(channel, messageData) {
     Sentry.captureException(error, {
       extra: {
         channel,
-        messageData
+        messageData,
+        context: 'handle_status_update'
       }
     });
     console.error('Error handling status update:', error);
@@ -857,21 +969,56 @@ async function shouldDisconnectChannel(channelId) {
       .order('created_at', { ascending: false })
       .limit(8);
     
-    if (error) throw error;
+    if (error) {
+      Sentry.captureException(error, {
+        extra: {
+          channelId,
+          context: 'fetching_recent_messages'
+        }
+      });
+      throw error;
+    }
     
     // Se não houver mensagens suficientes para análise
-    if (!recentMessages || recentMessages.length < 6) return false;
+    if (!recentMessages || recentMessages.length < 6) {
+      Sentry.captureMessage('Mensagens insuficientes para análise de desconexão', {
+        level: 'info',
+        extra: {
+          channelId,
+          messageCount: recentMessages?.length || 0,
+          context: 'insufficient_messages_for_analysis'
+        }
+      });
+      return false;
+    }
     
     // Conta quantas das últimas mensagens falharam
     const failedCount = recentMessages.filter(msg => msg.status === 'failed').length;
     
     // Se 6 ou mais das últimas 8 mensagens falharam, desconecta o canal
-    return failedCount >= 6;
+    const shouldDisconnect = failedCount >= 6;
+    
+    if (shouldDisconnect) {
+      Sentry.captureMessage('Canal deve ser desconectado devido a falhas consecutivas', {
+        level: 'warning',
+        extra: {
+          channelId,
+          failedCount,
+          totalMessages: recentMessages.length,
+          context: 'channel_disconnect_recommended'
+        }
+      });
+    }
+    
+    return shouldDisconnect;
   } catch (error) {
-    console.error('Erro ao verificar histórico de falhas do canal:', error);
     Sentry.captureException(error, {
-      extra: { channelId, context: 'checking_channel_failures' }
+      extra: {
+        channelId,
+        context: 'checking_channel_failures'
+      }
     });
+    console.error('Erro ao verificar histórico de falhas do canal:', error);
     return false; // Em caso de erro na verificação, não desconecta
   }
 }
@@ -888,11 +1035,21 @@ async function shouldDisconnectChannel(channelId) {
 async function disconnectChannel(channelId, errorMessage) {
   try {
     // Primeiro, busca o canal para obter as configurações atuais
-    const { data: channelData } = await supabase
+    const { data: channelData, error: fetchError } = await supabase
       .from('chat_channels')
       .select('settings')
       .eq('id', channelId)
       .single();
+    
+    if (fetchError) {
+      Sentry.captureException(fetchError, {
+        extra: {
+          channelId,
+          context: 'fetching_channel_data'
+        }
+      });
+      throw fetchError;
+    }
     
     // Atualiza as configurações com as informações de erro
     const updatedSettings = {
@@ -913,15 +1070,34 @@ async function disconnectChannel(channelId, errorMessage) {
       .eq('id', channelId);
     
     if (channelUpdateError) {
+      Sentry.captureException(channelUpdateError, {
+        extra: {
+          channelId,
+          errorMessage,
+          context: 'updating_channel_status'
+        }
+      });
       console.error('Erro ao marcar canal como desconectado:', channelUpdateError);
     } else {
+      Sentry.captureMessage('Canal marcado como desconectado', {
+        level: 'warning',
+        extra: {
+          channelId,
+          errorMessage,
+          context: 'channel_disconnected'
+        }
+      });
       console.log(`Canal ${channelId} marcado como desconectado após falhas consecutivas.`);
     }
   } catch (error) {
-    console.error('Erro ao desconectar canal:', error);
     Sentry.captureException(error, {
-      extra: { channelId, errorMessage, context: 'disconnecting_channel' }
+      extra: {
+        channelId,
+        errorMessage,
+        context: 'disconnecting_channel'
+      }
     });
+    console.error('Erro ao desconectar canal:', error);
   }
 }
 
@@ -956,17 +1132,42 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       .eq('id', messageId)
       .single();
 
-    if (messageError) throw messageError;
+    if (messageError) {
+      Sentry.captureException(messageError, {
+        extra: {
+          messageId,
+          attempt,
+          context: 'fetching_message_data'
+        }
+      });
+      throw messageError;
+    }
     
     const chat = message.chat;
     const channel = chat.channel;
     
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
+      Sentry.captureMessage('Handler não encontrado para tipo de canal', {
+        level: 'error',
+        extra: {
+          messageId,
+          channelType: channel.type,
+          context: 'channel_handler_not_found'
+        }
+      });
       throw new Error(`Handler not found for channel type: ${channel.type}`);
     }
     
     if (!channelConfig.handler) {
+      Sentry.captureMessage('Handler não implementado para tipo de canal', {
+        level: 'error',
+        extra: {
+          messageId,
+          channelType: channel.type,
+          context: 'channel_handler_not_implemented'
+        }
+      });
       throw new Error(`Handler not implemented for channel type: ${channel.type}`);
     }
 
@@ -1002,12 +1203,28 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       })
       .eq('id', message.id);
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      Sentry.captureException(updateError, {
+        extra: {
+          messageId: message.id,
+          result,
+          context: 'updating_message_status'
+        }
+      });
+      throw updateError;
+    }
 
     transaction.finish();
     return result;
     
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        messageId,
+        attempt,
+        context: 'sending_system_message'
+      }
+    });
     console.log(`Erro ao enviar mensagem (tentativa ${attempt}/${MAX_ATTEMPTS}):`, error);
     
     // Verifica se deve tentar novamente
@@ -1015,13 +1232,23 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       console.log(`Tentando novamente em ${RETRY_DELAY/1000} segundos...`);
       
       // Atualiza status da mensagem para retry
-      await supabase
+      const { error: retryUpdateError } = await supabase
         .from('messages')
         .update({ 
           status: 'retry',
           error_message: `Tentativa ${attempt}/${MAX_ATTEMPTS} falhou: ${error.message}`
         })
         .eq('id', messageId);
+
+      if (retryUpdateError) {
+        Sentry.captureException(retryUpdateError, {
+          extra: {
+            messageId,
+            attempt,
+            context: 'updating_message_retry_status'
+          }
+        });
+      }
       
       // Espera antes de tentar novamente
       return new Promise((resolve, reject) => {
@@ -1035,7 +1262,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     
     // Se chegou aqui, todas as tentativas falharam
     // Busca novamente a mensagem para obter o ID do canal
-    const { data: failedMessage } = await supabase
+    const { data: failedMessage, error: fetchError } = await supabase
       .from('messages')
       .select(`
         chat:chats!messages_chat_id_fkey (
@@ -1045,14 +1272,32 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       .eq('id', messageId)
       .single();
     
+    if (fetchError) {
+      Sentry.captureException(fetchError, {
+        extra: {
+          messageId,
+          context: 'fetching_failed_message'
+        }
+      });
+    }
+    
     // Atualiza status da mensagem para erro
-    await supabase
+    const { error: finalUpdateError } = await supabase
       .from('messages')
       .update({ 
         status: 'failed',
         error_message: `Failed after ${MAX_ATTEMPTS} attempts. Last error: ${error.message}`
       })
       .eq('id', messageId);
+
+    if (finalUpdateError) {
+      Sentry.captureException(finalUpdateError, {
+        extra: {
+          messageId,
+          context: 'updating_message_final_status'
+        }
+      });
+    }
     
     // Verifica se deve desconectar o canal com base no histórico de falhas
     if (failedMessage && failedMessage.chat) {
@@ -1063,33 +1308,38 @@ export async function sendSystemMessage(messageId, attempt = 1) {
         await disconnectChannel(channelId, error.message);
       }
     }
-
-    Sentry.captureException(error, {
-      extra: { 
-        messageId,
-        context: 'sending_system_message',
-        attempts: attempt
-      }
-    });
     
     throw error;
   }
 }
 
 export async function createMessageRoute(req, res) {
-  // Obter chatId e organizationId dos parâmetros da rota
-  const { chatId, organizationId } = req.params;
-  
-  // Em requisições multipart/form-data, os campos de texto estão em req.body
-  const content = req.body.content || null;
-  const replyToMessageId = req.body.replyToMessageId || null;
+  try {
+    // Obter chatId e organizationId dos parâmetros da rota
+    const { chatId, organizationId } = req.params;
+    
+    // Em requisições multipart/form-data, os campos de texto estão em req.body
+    const content = req.body.content || null;
+    const replyToMessageId = req.body.replyToMessageId || null;
 
-  const files = req.files;
-  const userId = req.profileId;
-  const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId);
-  return res.status(result.status).json(result);
+    const files = req.files;
+    const userId = req.profileId;
+    const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId);
+    return res.status(result.status).json(result);
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        chatId: req.params.chatId,
+        organizationId: req.params.organizationId,
+        context: 'create_message_route'
+      }
+    });
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
 }
-
 
 export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId) {
   try {
@@ -1109,7 +1359,30 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       .eq('organization_id', organizationId)
       .single();
 
-    if (chatError || !chatData) {
+    if (chatError) {
+      Sentry.captureException(chatError, {
+        extra: {
+          chatId,
+          organizationId,
+          context: 'fetching_chat_data'
+        }
+      });
+      return {
+        status: 404,
+        success: false, 
+        error: 'Chat not found or permission denied' 
+      };
+    }
+
+    if (!chatData) {
+      Sentry.captureMessage('Chat not found', {
+        level: 'warning',
+        extra: {
+          chatId,
+          organizationId,
+          context: 'chat_not_found'
+        }
+      });
       return {
         status: 404,
         success: false, 
@@ -1293,6 +1566,14 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       .select('*');
 
     if (messagesError) {
+      Sentry.captureException(messagesError, {
+        extra: {
+          chatId,
+          organizationId,
+          messages,
+          context: 'inserting_messages'
+        }
+      });
       console.error('Erro ao criar mensagens:', messagesError);
       return {
         status: 500,
@@ -1333,6 +1614,14 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         .insert(fileRecords);
 
       if (filesError) {
+        Sentry.captureException(filesError, {
+          extra: {
+            chatId,
+            organizationId,
+            fileRecords,
+            context: 'inserting_files'
+          }
+        });
         console.error('Erro ao registrar arquivos:', filesError);
         // Não falhar a operação principal se o registro de arquivos falhar
       }
@@ -1347,6 +1636,16 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       messages: messagesData
     }
   } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        chatId,
+        organizationId,
+        content,
+        replyToMessageId,
+        userId,
+        context: 'create_message_to_send'
+      }
+    });
     console.error('Erro no createMessageRoute:', error);
     return { 
       status: 500,
