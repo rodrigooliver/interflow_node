@@ -610,6 +610,29 @@ async function handleIncomingEmail(channel, email) {
 function cleanEmailContent(content) {
   if (!content) return '';
 
+  let cleanContent = content;
+
+  // Primeiro, limpar todos os padrões HTML
+  const htmlPatterns = [
+    /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
+    /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
+    /<div class="gmail_extra"[\s\S]*?<\/div>/gi,
+    /<div class="yahoo_quoted"[\s\S]*?<\/div>/gi,
+    /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi,
+    /<div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div class="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi
+  ];
+
+  htmlPatterns.forEach(pattern => {
+    cleanContent = cleanContent.replace(pattern, '');
+  });
+
+  // Remover todas as tags HTML restantes
+  cleanContent = cleanContent.replace(/<[^>]+>/g, '');
+
+  // Depois, aplicar os outros padrões de limpeza
   const markers = [
     'Em .*?(?:às|at) .*?, .*? escreveu:',
     'Em .*?, .*? escreveu:',
@@ -632,34 +655,14 @@ function cleanEmailContent(content) {
   ];
 
   const regex = new RegExp(`(${markers.join('|')})`, 'ims');
-
-  let cleanContent = content;
-
-  const htmlPatterns = [
-    /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
-    /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_extra"[\s\S]*?<\/div>/gi,
-    /<div class="yahoo_quoted"[\s\S]*?<\/div>/gi,
-    /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi,
-    /<div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi
-  ];
-
-  htmlPatterns.forEach(pattern => {
-    cleanContent = cleanContent.replace(pattern, '');
-  });
-
   const parts = cleanContent.split(regex);
   cleanContent = parts[0];
 
+  // Limpeza final
   cleanContent = cleanContent
     .split('\n')
     .filter(line => !line.trim().startsWith('>'))
-    .join('\n');
-
-  cleanContent = cleanContent
+    .join('\n')
     .replace(/\s*\n\s*\n\s*\n+/g, '\n\n')
     .replace(/^\s+|\s+$/g, '')
     .replace(/\[cid:.*?\]/g, '')
@@ -667,20 +670,10 @@ function cleanEmailContent(content) {
     .trim();
 
   if (!cleanContent.trim()) {
-    cleanContent = content
-      .replace(/<[^>]+>/g, '')
-      .replace(/\s*\n\s*\n\s*\n+/g, '\n\n')
-      .split(regex)[0]
-      .trim();
+    cleanContent = 'Mensagem vazia';
   }
 
-  if (!cleanContent.trim()) {
-    cleanContent = content
-      .replace(/<[^>]+>/g, '')
-      .trim();
-  }
-
-  return cleanContent || 'Mensagem vazia';
+  return cleanContent;
 }
 
 async function findExistingChat(channelId, customerId) {
