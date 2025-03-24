@@ -612,8 +612,8 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Primeiro, limpar todo o conteúdo após br clear="all"
-  cleanContent = cleanContent.split(/<br\s+clear="all">/i)[0];
+  // Primeiro, limpar todo o conteúdo após br clear="all" ou div com gmail_signature
+  cleanContent = cleanContent.split(/<br\s+clear="all">|<div[^>]*class="[^"]*gmail_signature[^"]*"[^>]*>/i)[0];
 
   // Depois, limpar todos os padrões HTML
   const htmlPatterns = [
