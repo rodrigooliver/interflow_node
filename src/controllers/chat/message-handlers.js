@@ -429,7 +429,7 @@ export async function handleIncomingMessage(channel, messageData) {
     } else {
       // Enviar notificações push se for uma mensagem do cliente
       if (!messageData.fromMe) {
-        await sendChatNotifications(updatedChat || chat, customer, message);
+        sendChatNotifications(updatedChat || chat, customer, message);
       }
     }
 

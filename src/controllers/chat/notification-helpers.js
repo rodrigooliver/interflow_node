@@ -35,9 +35,24 @@ export async function sendChatNotifications(chat, customer, message) {
       messageContent = `[${fileType}]`;
     }
 
+    // Buscar informações do canal
+    let channelName = 'Chat';
+    if (chat.channel_id) {
+      const { data: channel, error: channelError } = await supabase
+        .from('chat_channels')
+        .select('name')
+        .eq('id', chat.channel_id)
+        .single();
+
+      if (!channelError && channel) {
+        channelName = channel.name;
+      }
+    }
+
     // Preparar dados da notificação
     const notificationData = {
       heading: customer.name || 'Nova mensagem',
+      subtitle: channelName,
       content: messageContent,
       data: {
         url: `${FRONT_URL}/app/chats/${chat.id}`,
