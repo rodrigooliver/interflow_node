@@ -7,6 +7,7 @@ import { ConnectionPool } from './connection-pool.js';
 import { RateLimiter } from './rate-limiter.js';
 import { createEmailTemplate } from './email-template.js';
 import Sentry from '../lib/sentry.js';
+import { handleIncomingMessage } from '../controllers/chat/message-handlers.js';
 
 // Test email connection
 export async function testEmailConnection(config) {
@@ -548,7 +549,36 @@ async function handleIncomingEmail(channel, email) {
     const chatId = email.headers?.get('x-chat-id') || 
                   email.references?.find(ref => ref.includes('chat-'))?.split('chat-')[1]?.split('@')[0];
 
-    let chat;
+    const fromEmail = email.from?.value?.[0]?.address || 
+                     email.from?.text || 
+                     email.headers?.get('from');
+
+    if (!fromEmail) {
+      // console.error('Email sem remetente válido:', email);
+      return;
+    }
+
+    const fromName = email.from?.value?.[0]?.name || 
+                    fromEmail.split('@')[0] || 
+                    'Unknown';
+
+    // Preparar dados para handleIncomingMessage
+    const messageData = {
+      messageId: email.messageId || `email-${Date.now()}`,
+      timestamp: email.date?.getTime() || Date.now(),
+      externalId: fromEmail,
+      externalName: fromName,
+      externalProfilePicture: null, // Email não tem foto de perfil
+      message: {
+        type: 'text',
+        content: cleanEmailContent(email.text || email.html || email.textAsHtml || 'Empty email content'),
+        raw: email
+      },
+      fromMe: false,
+      event: 'messageReceived'
+    };
+
+    // Se encontrou um chatId, incluir o chat
     if (chatId) {
       const { data: existingChat } = await supabase
         .from('chats')
@@ -557,98 +587,12 @@ async function handleIncomingEmail(channel, email) {
         .single();
 
       if (existingChat) {
-        chat = existingChat;
+        messageData.chat = existingChat;
       }
     }
 
-    if (!chat) {
-      const fromEmail = email.from?.value?.[0]?.address || 
-                       email.from?.text || 
-                       email.headers?.get('from');
-
-      if (!fromEmail) {
-        // console.error('Email sem remetente válido:', email);
-        return;
-      }
-
-      const fromName = email.from?.value?.[0]?.name || 
-                      fromEmail.split('@')[0] || 
-                      'Unknown';
-
-      let { data: customer } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('organization_id', organization.id)
-        .eq('email', fromEmail)
-        .single();
-
-      if (!customer) {
-        const { data: newCustomer, error: customerError } = await supabase
-          .from('customers')
-          .insert({
-            organization_id: organization.id,
-            name: fromName,
-            email: fromEmail
-          })
-          .select()
-          .single();
-
-        if (customerError) throw customerError;
-        customer = newCustomer;
-      }
-
-      chat = await findExistingChat(channel.id, customer.id);
-      
-      if (!chat) {
-        const emailSubject = email.subject?.trim() || 'Sem assunto';
-        
-        const { data: newChat, error: chatError } = await supabase
-          .from('chats')
-          .insert({
-            organization_id: organization.id,
-            customer_id: customer.id,
-            channel_id: channel.id,
-            external_id: customer.email,
-            status: 'pending',
-            title: emailSubject
-          })
-          .select('*, customers(*)')
-          .single();
-
-        if (chatError) throw chatError;
-        chat = newChat;
-      }
-    }
-
-    if (!chat || !chat.id) {
-      throw new Error('Failed to create or retrieve chat');
-    }
-
-    const cleanedContent = cleanEmailContent(email.text || email.html || email.textAsHtml || 'Empty email content');
-
-    const { data: message, error: messageError } = await supabase
-      .from('messages')
-      .insert({
-        chat_id: chat.id,
-        organization_id: organization.id,
-        content: cleanedContent,
-        sender_type: 'customer',
-        sender_customer_id: chat.customer_id,
-        status: 'delivered'
-      })
-      .select()
-      .single();
-
-    if (messageError) throw messageError;
-
-    const { error: updateError } = await supabase
-      .from('chats')
-      .update({ 
-        last_message_id: message.id
-      })
-      .eq('id', chat.id);
-
-    if (updateError) throw updateError;
+    // Chamar handleIncomingMessage
+    await handleIncomingMessage(channel, messageData);
 
   } catch (error) {
     Sentry.captureException(error, {
