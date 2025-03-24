@@ -20,6 +20,7 @@ const client = new OneSignal.Client(ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY);
  * Envia uma notificação push através do OneSignal
  * @param {Object} options - Opções da notificação
  * @param {string} options.heading - Título da notificação
+ * @param {string} options.subtitle - Subtítulo da notificação
  * @param {string} options.content - Conteúdo da notificação
  * @param {string[]} [options.segments] - Segmentos para enviar a notificação (default: ['Subscribed Users'])
  * @param {Array} [options.filters] - Filtros para enviar a notificação para usuários específicos
@@ -30,6 +31,7 @@ const client = new OneSignal.Client(ONESIGNAL_APP_ID, ONESIGNAL_REST_API_KEY);
  */
 export const sendNotification = async ({ 
   heading, 
+  subtitle,
   content, 
   segments, 
   filters, 
@@ -54,6 +56,14 @@ export const sendNotification = async ({
       notification.headings = {
         en: heading,
         pt: heading
+      };
+    }
+
+    // Adicionar subtitle se fornecido
+    if (subtitle) {
+      notification.subtitle = {
+        en: subtitle,
+        pt: subtitle
       };
     }
 

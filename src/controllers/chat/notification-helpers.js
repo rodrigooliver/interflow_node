@@ -37,22 +37,55 @@ export async function sendChatNotifications(chat, customer, message) {
 
     // Buscar informações do canal
     let channelName = 'Chat';
+    let channelEmoji = '💬'; // Emoji padrão para chat
+
     if (chat.channel_id) {
       const { data: channel, error: channelError } = await supabase
         .from('chat_channels')
-        .select('name')
+        .select('name, type')
         .eq('id', chat.channel_id)
         .single();
 
       if (!channelError && channel) {
-        channelName = channel.name;
+        // Definir emoji baseado no tipo do canal
+        if (channel.type) {
+          switch (true) {
+            case channel.type.startsWith('whatsapp_'):
+              channelName = 'WhatsApp';
+              channelEmoji = '📱';
+              break;
+            case channel.type === 'instagram':
+              channelName = 'INSTAGRAM';
+              channelEmoji = '📸';
+              break;
+            case channel.type === 'facebook':
+              channelName = 'FACEBOOK';
+              channelEmoji = '👥';
+              break;
+            case channel.type === 'email':
+              channelName = 'EMAIL';
+              channelEmoji = '📧';
+              break;
+            case channel.type === 'telegram':
+              channelName = 'TELEGRAM';
+              channelEmoji = '✈️';
+              break;
+            default:
+              channelName = channel.type.toUpperCase();
+          }
+        }
+        
+        // Se tiver um nome personalizado, sobrescrever apenas o nome
+        if (channel.name) {
+          channelName = channel.name;
+        }
       }
     }
 
-    // Preparar dados da notificação
+    // Preparar dados da notificação com o nome do canal como subtítulo
     const notificationData = {
       heading: customer.name || 'Nova mensagem',
-      subtitle: channelName,
+      subtitle: `${channelEmoji} via ${channelName}`,
       content: messageContent,
       data: {
         url: `${FRONT_URL}/app/chats/${chat.id}`,
