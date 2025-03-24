@@ -52,23 +52,23 @@ export async function sendChatNotifications(chat, customer, message) {
           switch (true) {
             case channel.type.startsWith('whatsapp_'):
               channelName = 'WhatsApp';
-              channelEmoji = '📱';
+              channelEmoji = '💬';
               break;
             case channel.type === 'instagram':
               channelName = 'INSTAGRAM';
-              channelEmoji = '📸';
+              channelEmoji = '💬';
               break;
             case channel.type === 'facebook':
               channelName = 'FACEBOOK';
-              channelEmoji = '👥';
+              channelEmoji = '💬';
               break;
             case channel.type === 'email':
               channelName = 'EMAIL';
-              channelEmoji = '📧';
+              channelEmoji = '✉️';
               break;
             case channel.type === 'telegram':
               channelName = 'TELEGRAM';
-              channelEmoji = '✈️';
+              channelEmoji = '💬';
               break;
             default:
               channelName = channel.type.toUpperCase();
@@ -85,7 +85,7 @@ export async function sendChatNotifications(chat, customer, message) {
     // Preparar dados da notificação com o nome do canal como subtítulo
     const notificationData = {
       heading: customer.name || 'Nova mensagem',
-      subtitle: `${channelEmoji} via ${channelName}`,
+      subtitle: `${channelEmoji} ${channelName}`,
       content: messageContent,
       data: {
         url: `${FRONT_URL}/app/chats/${chat.id}`,
