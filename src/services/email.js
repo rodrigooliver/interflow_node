@@ -612,7 +612,10 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Primeiro, limpar todos os padrões HTML
+  // Primeiro, limpar todo o conteúdo após br clear="all"
+  cleanContent = cleanContent.split(/<br\s+clear="all">/i)[0];
+
+  // Depois, limpar todos os padrões HTML
   const htmlPatterns = [
     /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
     /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
@@ -651,7 +654,10 @@ function cleanEmailContent(content) {
     'Begin forwarded message:',
     'Início da mensagem encaminhada:',
     'Email interflow.*?escreveu:',
-    '.*?@.*?escreveu:'
+    '.*?@.*?escreveu:',
+    'Atenciosamente,.*?(?:\n|$)',
+    'Atenciosamente,.*?(?:\n|$).*?(?:\n|$)',
+    'Atenciosamente,.*?(?:\n|$).*?(?:\n|$).*?(?:\n|$)'
   ];
 
   const regex = new RegExp(`(${markers.join('|')})`, 'ims');
