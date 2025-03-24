@@ -84,8 +84,8 @@ export async function sendChatNotifications(chat, customer, message) {
 
     // Preparar dados da notificação com o nome do canal como subtítulo
     const notificationData = {
-      heading: customer.name || 'Nova mensagem',
-      subtitle: `${channelEmoji} ${channelName}`,
+      heading: `${channelEmoji} ${channelName}`,
+      subtitle: customer.name || 'Nova mensagem',
       content: messageContent,
       data: {
         url: `${FRONT_URL}/app/chats/${chat.id}`,
