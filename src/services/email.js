@@ -612,25 +612,9 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Primeiro, limpar todo o conteúdo após br clear="all" ou div com gmail_signature
-  cleanContent = cleanContent.split(/<br\s+clear="all">|<div[^>]*class="[^"]*gmail_signature[^"]*"[^>]*>/i)[0];
-
-  // Depois, limpar todos os padrões HTML
-  const htmlPatterns = [
-    /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
-    /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_extra"[\s\S]*?<\/div>/gi,
-    /<div class="yahoo_quoted"[\s\S]*?<\/div>/gi,
-    /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi,
-    /<div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
-    /<div class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi
-  ];
-
-  htmlPatterns.forEach(pattern => {
-    cleanContent = cleanContent.replace(pattern, '');
-  });
+  // Primeiro, limpar todo o conteúdo após qualquer padrão HTML conhecido
+  const htmlSplitPattern = /<br\s+clear="all">|<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>/i;
+  cleanContent = cleanContent.split(htmlSplitPattern)[0];
 
   // Remover todas as tags HTML restantes
   cleanContent = cleanContent.replace(/<[^>]+>/g, '');
