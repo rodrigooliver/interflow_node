@@ -612,9 +612,10 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Primeiro, limpar todo o conteúdo após qualquer padrão HTML conhecido
-  const htmlSplitPattern = /<br\s+clear="all">|<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>/i;
-  cleanContent = cleanContent.split(htmlSplitPattern)[0];
+  // Primeiro, extrair o conteúdo principal da mensagem (tudo antes dos padrões HTML)
+  const mainContentPattern = /^([\s\S]*?)(?:<br\s+clear="all">|<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
+  const matches = cleanContent.match(mainContentPattern);
+  cleanContent = matches ? matches[1] : cleanContent;
 
   // Remover todas as tags HTML restantes
   cleanContent = cleanContent.replace(/<[^>]+>/g, '');
