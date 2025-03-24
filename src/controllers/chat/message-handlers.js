@@ -282,12 +282,21 @@ export async function handleIncomingMessage(channel, messageData) {
         }
 
         try {
+          // Buscar o time padrão da organização
+          const { data: defaultTeam } = await supabase
+            .from('service_teams')
+            .select('id')
+            .eq('organization_id', organization.id)
+            .eq('is_default', true)
+            .single();
+
           chat = await createChat({
             organization_id: organization.id,
             customer_id: customer.id,
             channel_id: channel.id,
             external_id: messageData.externalId,
             status: 'pending',
+            team_id: defaultTeam?.id || null,
             ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
           });
 

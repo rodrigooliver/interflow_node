@@ -100,6 +100,14 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
       .single();
 
     if (instagramContact) {
+      // Buscar o time padrão da organização
+      const { data: defaultTeam } = await supabase
+        .from('service_teams')
+        .select('id')
+        .eq('organization_id', channel.organization_id)
+        .eq('is_default', true)
+        .single();
+
       //Cadastra chat com o customer existente
       let { data: newChat, error: newChatError } = await supabase
         .from('chats')
@@ -108,6 +116,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
           customer_id: instagramContact.customer_id,
           channel_id: channel.id,
           status: 'pending',
+          team_id: defaultTeam?.id || null,
           profile_picture: userInfo?.profile_pic || null,
           profile_updated_at: new Date().toISOString(),
           last_customer_message_at: new Date().toISOString()
@@ -117,6 +126,14 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
       newChat.is_first_message = true;
       return newChat;
     }
+
+    // Buscar o time padrão da organização
+    const { data: defaultTeam } = await supabase
+      .from('service_teams')
+      .select('id')
+      .eq('organization_id', channel.organization_id)
+      .eq('is_default', true)
+      .single();
 
     // Criar novo customer com foto de perfil
     const { data: customer, error: customerError } = await supabase
@@ -148,6 +165,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
         channel_id: channel.id,
         external_id: externalId,
         status: 'pending',
+        team_id: defaultTeam?.id || null,
         profile_picture: userInfo?.profile_pic || null,
         profile_updated_at: new Date().toISOString(),
         last_customer_message_at: new Date().toISOString()
