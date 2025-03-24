@@ -640,7 +640,11 @@ function cleanEmailContent(content) {
     /<div class="gmail_quote"[\s\S]*?<\/div>/gi,
     /<div class="gmail_extra"[\s\S]*?<\/div>/gi,
     /<div class="yahoo_quoted"[\s\S]*?<\/div>/gi,
-    /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi
+    /<div class="(ms-outlook|outlook)"[\s\S]*?<\/div>/gi,
+    /<div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div class="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi,
+    /<div class="gmail_signature" data-smartmail="gmail_signature"[\s\S]*?<\/div>/gi
   ];
 
   htmlPatterns.forEach(pattern => {
