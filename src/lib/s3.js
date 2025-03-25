@@ -12,7 +12,7 @@ export async function getActiveS3Integration(organizationId) {
       .eq('organization_id', organizationId)
       .eq('type', 'aws_s3')
       .eq('status', 'active')
-      .single();
+      .maybeSingle();
 
     if (error) {
       Sentry.captureException(error, {
