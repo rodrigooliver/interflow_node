@@ -235,7 +235,7 @@ export async function handleIncomingMessage(channel, messageData) {
             .order('created_at', { ascending: true })
             .limit(1);
 
-          console.log('customerContact', customerContact, channel.organization.id);
+          // console.log('customerContact', customerContact, channel.organization.id);
 
           if (customerContactError) throw customerContactError;
 
