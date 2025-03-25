@@ -420,7 +420,8 @@ export async function handleIncomingMessage(channel, messageData) {
       .from('chats')
       .update({ 
         last_message_id: message.id,
-        last_message_at: message.created_at
+        last_message_at: message.created_at,
+        unread_count: chat.unread_count ? parseInt(chat.unread_count) + 1 : 1
       })
       .eq('id', chat.id);
 
@@ -1599,6 +1600,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       await supabase
         .from('chats')
         .update({ 
+          unread_count: 0,
           last_message_id: lastMessage.id,
           last_message_at: lastMessage.created_at
         })
