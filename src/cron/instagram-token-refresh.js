@@ -12,6 +12,7 @@ export async function refreshInstagramTokens() {
     .select('*')
     .eq('type', 'instagram')
     .eq('status', 'active')
+    .eq('is_connected', true)
     .lt('credentials->token_expires_at', thirtyDaysFromNow.toISOString());
 
   if (error) {
