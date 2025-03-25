@@ -33,6 +33,7 @@ router.post('/event', handleInstagramWebhook);
 
 // Verificação do webhook (necessário para o Instagram)
 router.get('/event', (req, res) => {
+  console.log('🔍 Webhook recebido check:', req.query);
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];

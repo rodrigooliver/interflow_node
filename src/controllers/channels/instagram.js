@@ -6,17 +6,63 @@ import Sentry from '../../lib/sentry.js';
 
 async function getInstagramUserInfo(userId, accessToken) {
   try {
+    console.log('🔍 Buscando informações do usuário Instagram:', {
+      userId,
+      accessTokenLength: accessToken?.length,
+      url: `https://graph.instagram.com/v21.0/${userId}?fields=name,username,profile_pic,follower_count,is_user_follow_business,is_business_follow_user&access_token=${accessToken}`
+    });
+
     const response = await fetch(
       `https://graph.instagram.com/v21.0/${userId}?fields=name,username,profile_pic,follower_count,is_user_follow_business,is_business_follow_user&access_token=${accessToken}`
     );
 
     if (!response.ok) {
-      throw new Error(`Instagram API error: ${response.status}`);
+      const errorData = await response.json();
+      console.error('❌ Resposta de erro da API Instagram:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData
+      });
+
+      // Tentar alternativa usando a API do Facebook com campos padrão do perfil público
+      console.log('🔄 Tentando alternativa com API do Facebook...');
+      const fbResponse = await fetch(
+        `https://graph.facebook.com/v22.0/${userId}?fields=id,first_name,last_name,middle_name,name,name_format,picture,short_name,email,gender,link,locale,timezone,updated_time,verified&access_token=${accessToken}`
+      );
+
+      if (!fbResponse.ok) {
+        const fbErrorData = await fbResponse.json();
+        console.error('❌ Resposta de erro da API Facebook:', {
+          status: fbResponse.status,
+          statusText: fbResponse.statusText,
+          error: fbErrorData
+        });
+        throw new Error(`Facebook API error: ${fbResponse.status} - ${JSON.stringify(fbErrorData)}`);
+      }
+
+      const fbData = await fbResponse.json();
+      console.log('✅ Informações do usuário obtidas com sucesso via Facebook API:', fbData);
+      
+      // Adaptar os dados do Facebook para o formato esperado pelo Instagram
+      return {
+        id: fbData.id,
+        name: fbData.name,
+        username: fbData.short_name || fbData.name,
+        profile_pic: fbData.picture?.data?.url,
+        follower_count: null, // Não disponível na API do Facebook
+        is_user_follow_business: null, // Não disponível na API do Facebook
+        is_business_follow_user: null // Não disponível na API do Facebook
+      };
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log('✅ Informações do usuário Instagram obtidas com sucesso:', data);
+    return data;
   } catch (error) {
-    console.error('Erro ao buscar informações do usuário Instagram:', error);
+    console.error('❌ Erro ao buscar informações do usuário:', {
+      error: error.message,
+      stack: error.stack
+    });
     Sentry.captureException(error);
     return null;
   }
@@ -197,6 +243,7 @@ export async function handleInstagramWebhook(req, res) {
 
     for (const entry of webhookData.entry) {
       for (const messagingData of entry.messaging) {
+        console.log('🔍 Dados da mensagem:', messagingData);
         if (!messagingData?.recipient?.id || !messagingData?.sender?.id) {
           console.log('⚠️ Dados de mensagem incompletos:', messagingData);
           continue;
@@ -384,7 +431,7 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
       .eq('id', channelId)
       .eq('organization_id', organizationId)
       .eq('type', 'instagram')
-      .eq('status', 'inactive')
+      // .eq('status', 'inactive')
       .eq('is_connected', false)
       .single();
 
