@@ -137,6 +137,7 @@ export async function uploadFile({
     const fileAttachment = {
       id: fileId,
       name: fileName,
+      url: fileUrl,
       public_url: fileUrl,
       key: fileKey,
       type: fileType,
@@ -151,6 +152,7 @@ export async function uploadFile({
       organization_id: organizationId,
       name: fileName,
       size: fileSize || (processedFileData ? processedFileData.length : 0),
+      // url: fileUrl,
       public_url: fileUrl,
       path: fileKey,
       integration_id: s3Integration ? s3Integration.id : null,

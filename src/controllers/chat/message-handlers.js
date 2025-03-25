@@ -1,4 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import FormData from 'form-data';
 
 import { getActiveS3Integration } from '../../lib/s3.js';
 import { supabase } from '../../lib/supabase.js';
@@ -7,6 +9,7 @@ import { createChat } from '../../services/chat.js';
 import { createFlowEngine } from '../../services/flow-engine.js';
 import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 import { sendChatNotifications } from './notification-helpers.js';
+import { decrypt } from '../../utils/crypto.js';
 
 import { handleSenderMessageWApi } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
@@ -349,9 +352,69 @@ export async function handleIncomingMessage(channel, messageData) {
       
       try {
         const mediaResult = await processMessageMedia(messageData, organization.id);
+        
+        // Remover todos os base64 dos metadados
+        if (messageData.message.raw) {
+          const metadataRaw = { ...messageData.message.raw };
+          if (metadataRaw.audio) {
+            delete metadataRaw.audio.audioBase64;
+          }
+          if (metadataRaw.image) {
+            delete metadataRaw.image.imageBase64;
+          }
+          if (metadataRaw.video) {
+            delete metadataRaw.video.videoBase64;
+          }
+          if (metadataRaw.document) {
+            delete metadataRaw.document.documentBase64;
+          }
+          if (metadataRaw.sticker) {
+            delete metadataRaw.sticker.stickerBase64;
+          }
+          messageData.message.raw = metadataRaw;
+        }
+
         if (mediaResult && mediaResult.success) {
           if (mediaResult.attachment) {
             attachments = [mediaResult.attachment];
+
+            // Se for um arquivo de áudio, tentar fazer a transcrição
+            if (mediaResult.attachment.type.startsWith('audio') || 
+                mediaResult.attachment.mime_type === 'audio/ogg; codecs=opus') {
+              try {
+                // Buscar integração OpenAI ativa
+                const openaiIntegration = await getActiveOpenAIIntegration(organization.id);
+                
+                if (openaiIntegration) {
+                  // Fazer a transcrição
+                  const transcription = await transcribeAudio(
+                    mediaResult.attachment.url,
+                    openaiIntegration.api_key
+                  );
+                  
+                  // Adicionar a transcrição aos metadados e remover audioBase64
+                  const metadataRaw = { ...messageData.message.raw };
+                  
+                  // Atualizar o conteúdo da mensagem com a transcrição
+                  messageData.message.content = transcription;
+                  // messageData.message.type = 'text';
+                  
+                  messageData.message.raw = {
+                    ...metadataRaw,
+                    transcription
+                  };
+                }
+              } catch (transcriptionError) {
+                Sentry.captureException(transcriptionError, {
+                  extra: {
+                    organizationId: organization.id,
+                    audioType: mediaResult.attachment.type,
+                    context: 'audio_transcription'
+                  }
+                });
+                // Continuar mesmo se a transcrição falhar
+              }
+            }
           }
           if (mediaResult.fileRecord) {
             fileRecords = [mediaResult.fileRecord];
@@ -391,26 +454,55 @@ export async function handleIncomingMessage(channel, messageData) {
 
     // Registrar arquivos vinculados à mensagem
     if (fileRecords && fileRecords.length > 0) {
-      for (const fileRecord of fileRecords) {
-        if (fileRecord) {
-          fileRecord.message_id = message.id;
+      // Definir se é um canal social
+      const isSocialChannel = [
+        'whatsapp_official', 
+        'whatsapp_wapi', 
+        'whatsapp_zapi', 
+        'whatsapp_evo', 
+        'instagram', 
+        'facebook'
+      ].includes(channel.type);
+
+      // Mapear arquivos para suas respectivas mensagens
+      for (let i = 0; i < fileRecords.length; i++) {
+        // Para canais sociais, cada arquivo tem sua própria mensagem
+        if (isSocialChannel) {
+          fileRecords[i].message_id = message.id;
+        } else {
+          // Para email, todos os arquivos pertencem à mesma mensagem
+          fileRecords[i].message_id = message.id;
         }
       }
-      
-      // Filtrar para remover possíveis valores null
-      const validFileRecords = fileRecords.filter(record => record !== null && record !== undefined);
-      
-      if (validFileRecords.length > 0) {
+
+      // Filtrar registros duplicados baseado no id
+      const uniqueFileRecords = fileRecords.filter((record, index, self) =>
+        index === self.findIndex((r) => r.id === record.id)
+      );
+
+      console.log(`[Arquivos] Tentando inserir ${uniqueFileRecords.length} arquivos únicos`);
+
+      if (uniqueFileRecords.length > 0) {
         const { error: filesError } = await supabase
           .from('files')
-          .insert(validFileRecords);
+          .upsert(uniqueFileRecords, {
+            onConflict: 'id',
+            ignoreDuplicates: true
+          });
 
         if (filesError) {
-          console.error('Erro ao registrar arquivos:', filesError);
           Sentry.captureException(filesError, {
-            extra: { fileRecords: validFileRecords, context: 'registering_message_files' }
+            extra: {
+              chatId: chat.id,
+              organizationId: organization.id,
+              fileRecords: uniqueFileRecords,
+              context: 'inserting_files'
+            }
           });
+          console.error('Erro ao registrar arquivos:', filesError);
           // Não falhar a operação principal se o registro de arquivos falhar
+        } else {
+          console.log(`[Arquivos] ${uniqueFileRecords.length} arquivos registrados com sucesso`);
         }
       }
     }
@@ -1613,28 +1705,42 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       for (let i = 0; i < fileRecords.length; i++) {
         // Para canais sociais, cada arquivo tem sua própria mensagem
         if (isSocialChannel) {
-          fileRecords[i].message_id = messagesData[i].id;
+          fileRecords[i].message_id = message.id;
         } else {
           // Para email, todos os arquivos pertencem à mesma mensagem
-          fileRecords[i].message_id = messagesData[0].id;
+          fileRecords[i].message_id = message.id;
         }
       }
 
-      const { error: filesError } = await supabase
-        .from('files')
-        .insert(fileRecords);
+      // Filtrar registros duplicados baseado no id
+      const uniqueFileRecords = fileRecords.filter((record, index, self) =>
+        index === self.findIndex((r) => r.id === record.id)
+      );
 
-      if (filesError) {
-        Sentry.captureException(filesError, {
-          extra: {
-            chatId,
-            organizationId,
-            fileRecords,
-            context: 'inserting_files'
-          }
-        });
-        console.error('Erro ao registrar arquivos:', filesError);
-        // Não falhar a operação principal se o registro de arquivos falhar
+      console.log(`[Arquivos] Tentando inserir ${uniqueFileRecords.length} arquivos únicos`);
+
+      if (uniqueFileRecords.length > 0) {
+        const { error: filesError } = await supabase
+          .from('files')
+          .upsert(uniqueFileRecords, {
+            onConflict: 'id',
+            ignoreDuplicates: true
+          });
+
+        if (filesError) {
+          Sentry.captureException(filesError, {
+            extra: {
+              chatId,
+              organizationId,
+              fileRecords: uniqueFileRecords,
+              context: 'inserting_files'
+            }
+          });
+          console.error('Erro ao registrar arquivos:', filesError);
+          // Não falhar a operação principal se o registro de arquivos falhar
+        } else {
+          console.log(`[Arquivos] ${uniqueFileRecords.length} arquivos registrados com sucesso`);
+        }
       }
     }
 
@@ -1663,5 +1769,87 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       success: false, 
       error: 'Internal server error' 
     }
+  }
+}
+
+/**
+ * Busca uma integração OpenAI ativa para a organização
+ * @param {string} organizationId - ID da organização
+ * @returns {Promise<{api_key: string} | null>} - Credenciais da integração ou null
+ */
+async function getActiveOpenAIIntegration(organizationId) {
+  try {
+    const { data: integration, error } = await supabase
+      .from('integrations')
+      .select('credentials')
+      .eq('organization_id', organizationId)
+      .eq('type', 'openai')
+      .eq('status', 'active')
+      .single();
+
+    if (error) throw error;
+    if (!integration) return null;
+
+    // Descriptografar a chave API
+    const apiKey = decrypt(integration.credentials.api_key);
+    return { api_key: apiKey };
+  } catch (error) {
+    console.error('Erro ao buscar integração OpenAI:', error);
+    Sentry.captureException(error, {
+      extra: {
+        organizationId,
+        context: 'get_openai_integration'
+      }
+    });
+    return null;
+  }
+}
+
+/**
+ * Faz a transcrição de um arquivo de áudio usando a API da OpenAI
+ * @param {string} audioUrl - URL do arquivo de áudio
+ * @param {string} apiKey - Chave API da OpenAI
+ * @returns {Promise<string>} - Texto transcrito
+ */
+async function transcribeAudio(audioUrl, apiKey) {
+  try {
+    // Baixar o arquivo de áudio
+    const audioBuffer = await downloadFileFromUrl(audioUrl);
+    
+    // Criar um FormData para enviar o arquivo
+    const formData = new FormData();
+    
+    // Adicionar o arquivo e os parâmetros conforme a documentação da OpenAI
+    formData.append('file', audioBuffer, {
+      filename: 'audio.ogg',
+      contentType: 'audio/ogg; codecs=opus'
+    });
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'pt');
+    formData.append('response_format', 'json');
+    formData.append('temperature', 0);
+
+    // Fazer a requisição para a API da OpenAI
+    const response = await axios.post(
+      'https://api.openai.com/v1/audio/transcriptions',
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          ...formData.getHeaders()
+        }
+      }
+    );
+
+    return response.data.text;
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        audioUrl,
+        error: error.response?.data || error.message,
+        context: 'transcribe_audio'
+      }
+    });
+    throw error;
   }
 }
