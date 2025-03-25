@@ -389,7 +389,8 @@ export async function handleIncomingMessage(channel, messageData) {
                   // Fazer a transcrição
                   const transcription = await transcribeAudio(
                     mediaResult.attachment.url,
-                    openaiIntegration.api_key
+                    openaiIntegration.api_key,
+                    mediaResult.attachment.mime_type
                   );
                   
                   // Adicionar a transcrição aos metadados e remover audioBase64
@@ -1809,9 +1810,10 @@ async function getActiveOpenAIIntegration(organizationId) {
  * Faz a transcrição de um arquivo de áudio usando a API da OpenAI
  * @param {string} audioUrl - URL do arquivo de áudio
  * @param {string} apiKey - Chave API da OpenAI
+ * @param {string} mimeType - Tipo MIME do arquivo de áudio
  * @returns {Promise<string>} - Texto transcrito
  */
-async function transcribeAudio(audioUrl, apiKey) {
+async function transcribeAudio(audioUrl, apiKey, mimeType = 'audio/ogg; codecs=opus') {
   try {
     // Baixar o arquivo de áudio
     const audioBuffer = await downloadFileFromUrl(audioUrl);
@@ -1819,13 +1821,23 @@ async function transcribeAudio(audioUrl, apiKey) {
     // Criar um FormData para enviar o arquivo
     const formData = new FormData();
     
+    // Determinar a extensão do arquivo baseado no mime_type
+    let fileExtension = 'ogg';
+    if (mimeType.includes('mp3')) {
+      fileExtension = 'mp3';
+    } else if (mimeType.includes('wav')) {
+      fileExtension = 'wav';
+    } else if (mimeType.includes('m4a')) {
+      fileExtension = 'm4a';
+    }
+    
     // Adicionar o arquivo e os parâmetros conforme a documentação da OpenAI
     formData.append('file', audioBuffer, {
-      filename: 'audio.ogg',
-      contentType: 'audio/ogg; codecs=opus'
+      filename: `audio.${fileExtension}`,
+      contentType: mimeType
     });
     formData.append('model', 'whisper-1');
-    formData.append('language', 'pt');
+    // formData.append('language', 'pt');
     formData.append('response_format', 'json');
     formData.append('temperature', 0);
 
@@ -1846,10 +1858,12 @@ async function transcribeAudio(audioUrl, apiKey) {
     Sentry.captureException(error, {
       extra: {
         audioUrl,
+        mimeType,
         error: error.response?.data || error.message,
         context: 'transcribe_audio'
       }
     });
-    throw error;
+    console.error('Erro ao transcrever áudio:', error.message);
+    return null; // Retorna null em caso de erro para não travar o código
   }
 }
