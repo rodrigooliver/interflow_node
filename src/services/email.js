@@ -547,7 +547,11 @@ async function handleIncomingEmail(channel, email) {
   
   try {
     const chatId = email.headers?.get('x-chat-id') || 
-                  email.references?.find(ref => ref.includes('chat-'))?.split('chat-')[1]?.split('@')[0];
+                  (Array.isArray(email.references) ? 
+                    email.references.find(ref => ref.includes('chat-'))?.split('chat-')[1]?.split('@')[0] :
+                    email.references?.includes('chat-') ? 
+                      email.references.split('chat-')[1]?.split('@')[0] : 
+                      null);
 
     const fromEmail = email.from?.value?.[0]?.address || 
                      email.from?.text || 
@@ -613,7 +617,7 @@ function cleanEmailContent(content) {
   let cleanContent = content;
 
   // Primeiro, extrair o conteúdo principal da mensagem (tudo antes dos padrões HTML)
-  const mainContentPattern = /^([\s\S]*?)(?:<br\s+clear="all">|<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
+  const mainContentPattern = /^([\s\S]*?)(?:<br\s+clear="all">\s*<br\s+clear="all">|<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
   const matches = cleanContent.match(mainContentPattern);
   cleanContent = matches ? matches[1] : cleanContent;
 
