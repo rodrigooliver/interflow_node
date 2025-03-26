@@ -13,7 +13,7 @@ export async function refreshInstagramTokens() {
     .eq('type', 'instagram')
     .eq('status', 'active')
     .eq('is_connected', true)
-    .lt('credentials->token_expires_at', thirtyDaysFromNow.toISOString());
+    .lt('credentials.token_expires_at', thirtyDaysFromNow.toISOString());
 
   if (error) {
     console.error('Erro ao buscar canais para atualização de token:', error);
