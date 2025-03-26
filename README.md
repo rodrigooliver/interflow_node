@@ -34,7 +34,9 @@ Copy `.env.example` to `.env` and configure:
 
 ```env
 # Server
-PORT=3000
+FRONTEND_URL=http://localhost:5173
+API_URL=http://localhost:3002
+PORT=3002
 NODE_ENV=development
 
 # Supabase
@@ -45,16 +47,34 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
 STRIPE_SECRET_KEY=your_stripe_secret_key
 STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
 
-# Storage
-STORAGE_BUCKET=attachments
-MAX_FILE_SIZE=10485760 # 10MB in bytes
+# Sentry
+SENTRY_DSN=your_sentry
+
+# WAPI
+WAPI_ACCOUNT_ID=your_wapi_account_id
+
+# Instagram
+INSTAGRAM_CLIENT_ID=your_instagram_client_id
+INSTAGRAM_CLIENT_SECRET=your_instagram_client_secret
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN=your_instagram_webhook_verify_token
+
+# Facebook/WhatsApp
+FACEBOOK_APP_ID=your_facebook_app_id
+FACEBOOK_APP_SECRET=your_facebook_app_secret
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=your_whatsapp_webhook_verify_token
+FACEBOOK_CONFIG_ID=your_facebook_config_id
+FACEBOOK_BUSINESS_ID=your_facebook_business_id
 
 # Email Configuration
 EMAIL_HOST=smtp.example.com
-EMAIL_PORT=587
+EMAIL_PORT=587  # Use 587 para TLS ou 465 para SSL (não use 993, que é para IMAP)
 EMAIL_USER=your_email_username
 EMAIL_PASSWORD=your_email_password
 EMAIL_FROM=noreply@example.com
+
+# OneSignal
+ONESIGNAL_APP_ID=your_onesignal_app_id
+ONESIGNAL_REST_API_KEY=your_onesignal_rest_api_key
 ```
 
 ## Installation
