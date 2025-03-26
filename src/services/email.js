@@ -575,7 +575,7 @@ async function handleIncomingEmail(channel, email) {
       externalProfilePicture: null, // Email não tem foto de perfil
       message: {
         type: 'text',
-        content: cleanEmailContent(email.text || email.html || email.textAsHtml || 'Empty email content'),
+        content: cleanEmailContent(email.html || email.textAsHtml || email.text || 'Empty email content'),
         raw: email
       },
       fromMe: false,
