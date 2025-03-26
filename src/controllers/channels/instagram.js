@@ -96,7 +96,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
             .from('customers')
             .update({
               name: userInfo.name || customer.name,
-              profile_picture: userInfo.profile_pic || customer.profile_picture
+              ...(userInfo.profile_pic && { profile_picture: userInfo.profile_pic })
             })
             .eq('id', customer.id)
         ]);
@@ -159,13 +159,15 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
       .single();
 
     // Criar novo customer com foto de perfil
+    const customerData = {
+      organization_id: channel.organization_id,
+      name: userInfo?.name || externalId,
+      ...(userInfo?.profile_pic && { profile_picture: userInfo.profile_pic })
+    };
+
     const { data: customer, error: customerError } = await supabase
       .from('customers')
-      .insert({
-        organization_id: channel.organization_id,
-        name: userInfo?.name || externalId,
-        profile_picture: userInfo?.profile_pic || null
-      })
+      .insert(customerData)
       .select()
       .single();
 
