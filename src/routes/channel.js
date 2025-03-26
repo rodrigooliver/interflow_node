@@ -12,6 +12,8 @@ const router = express.Router({ mergeParams: true });
 // Todas as rotas de canal precisam de autenticação
 router.use(verifyAuth);
 
+router.post('/transfer/:channelId', transferChats);
+
 // WhatsApp WApi routes
 router.post('/wapi/test', testWapiConnection);
 router.post('/wapi/interflow', createInterflowChannel);
@@ -21,7 +23,7 @@ router.delete('/wapi/:channelId', deleteWapiChannel);
 router.post('/wapi/:channelId/qr', generateQrCode);
 router.post('/wapi/:channelId/reset', resetWapiConnection);
 router.post('/wapi/:channelId/disconnect', disconnectWapiInstance);
-router.post('/wapi/:channelId/transfer', transferChats);
+// router.post('/wapi/:channelId/transfer', transferChats);
 router.post('/wapi/:channelId/test', testWapiConnection);
 
 // WhatsApp Official API routes
