@@ -1,5 +1,6 @@
 import OneSignal from 'onesignal-node';
 import dotenv from 'dotenv';
+import Sentry from './sentry.js';
 
 dotenv.config();
 
@@ -42,6 +43,10 @@ export const sendNotification = async ({
   try {
     if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
       throw new Error('OneSignal credentials are not configured');
+    }
+
+    if (!content) {
+      return;
     }
 
     const notification = {
@@ -100,6 +105,26 @@ export const sendNotification = async ({
       details: error.body,
       headers: error.headers
     });
+    
+    Sentry.captureException(error, {
+      tags: {
+        service: 'oneSignal',
+        operation: 'sendNotification'
+      },
+      extra: {
+        notification: {
+          heading,
+          subtitle,
+          content,
+          segments,
+          filters,
+          include_aliases,
+          target_channel,
+          data
+        }
+      }
+    });
+    
     throw error;
   }
 };
@@ -119,6 +144,17 @@ export const getNotification = async (notificationId) => {
     return response.body;
   } catch (error) {
     console.error('Error getting OneSignal notification:', error);
+    
+    Sentry.captureException(error, {
+      tags: {
+        service: 'oneSignal',
+        operation: 'getNotification'
+      },
+      extra: {
+        notificationId
+      }
+    });
+    
     throw error;
   }
 };
