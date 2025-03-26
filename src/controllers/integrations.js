@@ -471,3 +471,24 @@ export const getOpenAIModels = async (req, res) => {
     });
   }
 };
+
+export const getOpenAIIntegration = async (organizationId) => {
+  try {
+    const { data, error } = await supabase
+      .from('integrations')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('type', 'openai')
+      .eq('status', 'active');
+
+    if (error) {
+      throw error;
+    }
+
+    // Retorna a primeira integração ativa encontrada
+    return data?.[0] || null;
+  } catch (error) {
+    console.error('Erro ao buscar integração OpenAI:', error);
+    return null;
+  }
+};

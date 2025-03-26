@@ -384,6 +384,11 @@ export const improveTextWithOpenAI = async (req, res) => {
     if (improveOption === 'generate') {
       systemPrompt = prompt.content;
 
+      // Se houver instruções customizadas, incluí-las no prompt do sistema
+      if (customInstructions) {
+        systemPrompt += `\n\n${customInstructions}`;
+      }
+
       // Buscar mensagens do chat para contextualização
       const { data: chatMessages, error: chatError } = await supabase
         .from('messages')
