@@ -616,10 +616,16 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Primeiro, extrair o conteúdo principal da mensagem (tudo antes dos padrões HTML)
-  const mainContentPattern = /^([\s\S]*?)(?:<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
-  const matches = cleanContent.match(mainContentPattern);
-  cleanContent = matches ? matches[1] : cleanContent;
+  // Tentar extrair o conteúdo principal da div com dir="auto"
+  const mainContentMatch = content.match(/<div dir="auto">([^<]+)/i);
+  if (mainContentMatch) {
+    cleanContent = mainContentMatch[1].trim();
+  } else {
+    // Se não encontrar a div, usar o método anterior
+    const mainContentPattern = /^([\s\S]*?)(?:<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
+    const matches = cleanContent.match(mainContentPattern);
+    cleanContent = matches ? matches[1] : cleanContent;
+  }
 
   // Remover todas as tags HTML restantes
   cleanContent = cleanContent.replace(/<[^>]+>/g, '');
@@ -664,16 +670,8 @@ function cleanEmailContent(content) {
     .replace(/\[image:.*?\]/g, '')
     .trim();
 
-  console.log('cleanContent', cleanContent);
-
-  // Se o conteúdo estiver vazio após a limpeza, tentar extrair do HTML original
   if (!cleanContent.trim()) {
-    const htmlContent = content.replace(/<[^>]+>/g, ' ').trim();
-    if (htmlContent) {
-      cleanContent = htmlContent;
-    } else {
-      cleanContent = 'Mensagem vazia';
-    }
+    cleanContent = 'Mensagem vazia';
   }
 
   return cleanContent;
