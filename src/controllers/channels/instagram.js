@@ -344,6 +344,21 @@ export async function handleInstagramWebhook(req, res) {
               })
               .eq('id', chat.id);
 
+            // Processar anexos se houver
+            let attachments = [];
+            if (messagingData.message.attachments) {
+              attachments = messagingData.message.attachments.map(attachment => {
+                if (attachment.type === 'share') {
+                  return {
+                    url: attachment.payload.url,
+                    type: 'image',
+                    name: 'Imagem compartilhada'
+                  };
+                }
+                return null;
+              }).filter(Boolean);
+            }
+
             await handleIncomingMessage(channel, {
               chat,
               from: messagingData.sender.id,
@@ -351,12 +366,13 @@ export async function handleInstagramWebhook(req, res) {
               externalName: chat.customers.name || messagingData.sender.id,
               messageId: messagingData.message.mid,
               timestamp: messagingData.timestamp || Date.now(),
-              type: 'text',
+              type: attachments.length > 0 ? 'image' : 'text',
               message: {
-                type: 'text',
+                type: attachments.length > 0 ? 'image' : 'text',
                 content: messagingData.message.text || '',
                 raw: messagingData
               },
+              attachments,
               event: isEcho ? 'messageSent' : 'messageReceived',
               fromMe: isEcho
             });

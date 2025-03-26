@@ -622,6 +622,36 @@ async function processMessageMedia(messageData, organizationId) {
         mediaBase64 = raw.document.documentBase64;
       }
     }
+
+    // Se for uma URL do Instagram, usar diretamente sem download/upload
+    if (mediaUrl && mediaUrl.includes('instagram.com')) {
+      const fileId = uuidv4();
+      const extension = mimeType ? mimeType.split('/')[1] || '' : '';
+      const generatedFileName = `${fileId}.${extension}`;
+
+      return {
+        success: true,
+        url: mediaUrl,
+        mimeType,
+        fileName: generatedFileName,
+        attachment: {
+          url: mediaUrl,
+          type: mimeType.startsWith('image/') ? 'image' : 
+                mimeType.startsWith('video/') ? 'video' : 
+                mimeType.startsWith('audio/') ? 'audio' : 'document',
+          name: generatedFileName,
+          mime_type: mimeType
+        },
+        fileRecord: {
+          id: fileId,
+          name: generatedFileName,
+          url: mediaUrl,
+          mime_type: mimeType,
+          size: null, // Não temos o tamanho pois não baixamos o arquivo
+          organization_id: organizationId
+        }
+      };
+    }
     
     // Converter URL relativa para absoluta se necessário
     if (mediaUrl) {
