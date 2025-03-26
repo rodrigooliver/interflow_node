@@ -344,11 +344,22 @@ export async function handleInstagramWebhook(req, res) {
               })
               .eq('id', chat.id);
 
-            // Processar anexos se houver
+            // Processar anexos se existirem
             let attachments = [];
             if (messagingData.message.attachments) {
+              console.log('[Instagram] Processando anexos da mensagem:', {
+                attachments: messagingData.message.attachments,
+                messageId: messagingData.message.mid
+              });
+
               attachments = messagingData.message.attachments.map(attachment => {
                 if (attachment.type === 'share') {
+                  console.log('[Instagram] Processando anexo do tipo share:', {
+                    url: attachment.payload.url,
+                    type: attachment.type,
+                    messageId: messagingData.message.mid
+                  });
+
                   return {
                     url: attachment.payload.url,
                     type: 'image',
@@ -357,6 +368,11 @@ export async function handleInstagramWebhook(req, res) {
                 }
                 return null;
               }).filter(Boolean);
+
+              console.log('[Instagram] Anexos processados:', {
+                attachments,
+                messageId: messagingData.message.mid
+              });
             }
 
             await handleIncomingMessage(channel, {

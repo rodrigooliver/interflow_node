@@ -625,11 +625,17 @@ async function processMessageMedia(messageData, organizationId) {
 
     // Se for uma URL do Instagram, usar diretamente sem download/upload
     if (mediaUrl && mediaUrl.includes('instagram.com')) {
+      console.log('[MessageHandlers] Processando URL do Instagram:', {
+        mediaUrl,
+        mimeType,
+        messageId: messageData.messageId
+      });
+
       const fileId = uuidv4();
       const extension = mimeType ? mimeType.split('/')[1] || '' : '';
       const generatedFileName = `${fileId}.${extension}`;
 
-      return {
+      const result = {
         success: true,
         url: mediaUrl,
         mimeType,
@@ -651,10 +657,23 @@ async function processMessageMedia(messageData, organizationId) {
           organization_id: organizationId
         }
       };
+
+      console.log('[MessageHandlers] URL do Instagram processada:', {
+        result,
+        messageId: messageData.messageId
+      });
+
+      return result;
     }
     
     // Converter URL relativa para absoluta se necessário
     if (mediaUrl) {
+      console.log('[MessageHandlers] Processando URL de mídia:', {
+        mediaUrl,
+        mimeType,
+        messageId: messageData.messageId
+      });
+
       // Verifica se a URL é absoluta (começa com http:// ou https://)
       if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
         const apiUrl = process.env.API_URL || process.env.BACKEND_URL || 'http://localhost:3000';
@@ -665,12 +684,17 @@ async function processMessageMedia(messageData, organizationId) {
         const urlPath = mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`;
         
         mediaUrl = `${baseUrl}${urlPath}`;
-        console.log(`URL convertida para absoluta: ${mediaUrl}`);
+        console.log(`[MessageHandlers] URL convertida para absoluta: ${mediaUrl}`);
       }
     }
     
     // Tentar usar o base64 primeiro se disponível
     if (mediaBase64) {
+      console.log('[MessageHandlers] Processando mídia base64:', {
+        mimeType,
+        messageId: messageData.messageId
+      });
+
       try {
         // Usar a função uploadFile diretamente com os dados base64
         const uploadResult = await uploadFile({
@@ -683,6 +707,11 @@ async function processMessageMedia(messageData, organizationId) {
         });
         
         if (uploadResult.success) {
+          console.log('[MessageHandlers] Upload base64 realizado com sucesso:', {
+            uploadResult,
+            messageId: messageData.messageId
+          });
+
           return {
             success: true,
             url: uploadResult.fileUrl,
@@ -693,6 +722,11 @@ async function processMessageMedia(messageData, organizationId) {
             fileRecord: uploadResult.fileRecord
           };
         } else {
+          console.error('[MessageHandlers] Falha no upload base64:', {
+            error: uploadResult.error,
+            messageId: messageData.messageId
+          });
+
           Sentry.captureMessage('Falha ao fazer upload do arquivo base64', {
             level: 'error',
             extra: {
@@ -706,6 +740,11 @@ async function processMessageMedia(messageData, organizationId) {
           throw new Error(`Falha ao fazer upload do arquivo base64: ${uploadResult.error}`);
         }
       } catch (base64Error) {
+        console.error('[MessageHandlers] Erro ao processar mídia base64:', {
+          error: base64Error,
+          messageId: messageData.messageId
+        });
+
         Sentry.captureException(base64Error, {
           extra: {
             organizationId,
@@ -714,7 +753,6 @@ async function processMessageMedia(messageData, organizationId) {
             context: 'processing_base64_media'
           }
         });
-        console.error('Erro ao processar mídia base64:', base64Error);
         // Se falhar, tentaremos outros métodos
       }
     }
