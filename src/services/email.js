@@ -664,8 +664,16 @@ function cleanEmailContent(content) {
     .replace(/\[image:.*?\]/g, '')
     .trim();
 
+  console.log('cleanContent', cleanContent);
+
+  // Se o conteúdo estiver vazio após a limpeza, tentar extrair do HTML original
   if (!cleanContent.trim()) {
-    cleanContent = 'Mensagem vazia';
+    const htmlContent = content.replace(/<[^>]+>/g, ' ').trim();
+    if (htmlContent) {
+      cleanContent = htmlContent;
+    } else {
+      cleanContent = 'Mensagem vazia';
+    }
   }
 
   return cleanContent;
