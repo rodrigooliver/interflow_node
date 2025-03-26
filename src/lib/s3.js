@@ -25,13 +25,6 @@ export async function getActiveS3Integration(organizationId) {
     }
 
     if (!data) {
-      Sentry.captureMessage('Nenhuma integração S3 ativa encontrada', {
-        level: 'warning',
-        tags: {
-          organizationId,
-          type: 's3_integration_not_found'
-        }
-      });
       return null;
     }
 
