@@ -342,8 +342,9 @@ export async function handleIncomingMessage(channel, messageData) {
     let attachments = [];
     let fileRecords = [];
     
-    if (messageData.message.mediaUrl || 
-        (messageData.message.raw && 
+    if (messageData.attachments?.length > 0 || 
+        messageData.message?.mediaUrl || 
+        (messageData.message?.raw && 
          (messageData.message.raw.image || 
           messageData.message.raw.video || 
           messageData.message.raw.audio || 
@@ -351,6 +352,13 @@ export async function handleIncomingMessage(channel, messageData) {
           messageData.message.raw.sticker))) {
       
       try {
+        console.log('[MessageHandlers] Iniciando processamento de mídia:', {
+          hasAttachments: messageData.attachments?.length > 0,
+          hasMediaUrl: !!messageData.message?.mediaUrl,
+          hasRawData: !!messageData.message?.raw,
+          messageId: messageData.messageId
+        });
+
         const mediaResult = await processMessageMedia(messageData, organization.id);
         
         // Remover todos os base64 dos metadados
@@ -580,14 +588,70 @@ export async function handleIncomingMessage(channel, messageData) {
 async function processMessageMedia(messageData, organizationId) {
   try {
     // Extrair dados da mídia
-    const raw = messageData.message.raw || {};
-    let mediaUrl = messageData.message.mediaUrl;
-    let mimeType = messageData.message.mimeType;
-    let fileName = messageData.message.fileName;
-    let caption = messageData.message.content;
-    let mediaBase64 = messageData.message.mediaBase64;
+    const raw = messageData.message?.raw || {};
+    let mediaUrl = messageData.message?.mediaUrl;
+    let mimeType = messageData.message?.mimeType;
+    let fileName = messageData.message?.fileName;
+    let caption = messageData.message?.content;
+    let mediaBase64 = messageData.message?.mediaBase64;
     let mediaKey = null;
     let directPath = null;
+
+    // Verificar se há anexos diretos
+    if (messageData.attachments?.length > 0) {
+      console.log('[MessageHandlers] Processando anexos diretos:', {
+        attachments: messageData.attachments,
+        messageId: messageData.messageId
+      });
+
+      const attachment = messageData.attachments[0];
+      mediaUrl = attachment.url;
+      mimeType = attachment.mime_type || 'image/jpeg';
+      fileName = attachment.name;
+
+      // Se for uma URL do Instagram, usar diretamente sem download/upload //  && mediaUrl.includes('instagram.com')
+      if (mediaUrl) {
+        console.log('[MessageHandlers] Processando URL do Instagram:', {
+          mediaUrl,
+          mimeType,
+          messageId: messageData.messageId
+        });
+
+        const fileId = uuidv4();
+        const extension = mimeType ? mimeType.split('/')[1] || '' : '';
+        const generatedFileName = `${fileId}.${extension}`;
+
+        const result = {
+          success: true,
+          url: mediaUrl,
+          mimeType,
+          fileName: generatedFileName,
+          attachment: {
+            url: mediaUrl,
+            type: mimeType.startsWith('image/') ? 'image' : 
+                  mimeType.startsWith('video/') ? 'video' : 
+                  mimeType.startsWith('audio/') ? 'audio' : 'document',
+            name: generatedFileName,
+            mime_type: mimeType
+          },
+          fileRecord: {
+            id: fileId,
+            name: generatedFileName,
+            url: mediaUrl,
+            mime_type: mimeType,
+            size: null, // Não temos o tamanho pois não baixamos o arquivo
+            organization_id: organizationId
+          }
+        };
+
+        console.log('[MessageHandlers] URL do Instagram processada:', {
+          result,
+          messageId: messageData.messageId
+        });
+
+        return result;
+      }
+    }
     
     // Extrair dados da mídia dos dados brutos se não fornecidos diretamente
     if (!mediaUrl && !mediaBase64) {
