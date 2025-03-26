@@ -125,8 +125,15 @@ app.listen(port, async () => {
   console.log(`Server running on port ${port}`);
   
   // Inicializa as subscriptions após o servidor estar rodando
-  await initializeSubscriptions();
+  if(process.env.NODE_ENV !== 'development') {
+    console.log('Initializing subscriptions');
+    await initializeSubscriptions();
+
+     // Inicializa os canais de email
+    await initializeEmailChannels();
+  } else {
+    console.log('Skipping subscriptions initialization in development mode');
+  }
   
-  // Inicializa os canais de email
-  await initializeEmailChannels();
+ 
 });
