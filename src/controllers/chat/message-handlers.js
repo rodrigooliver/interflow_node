@@ -983,16 +983,6 @@ async function processMessageMedia(messageData, organizationId) {
  */
 export async function handleStatusUpdate(channel, messageData) {
   try {
-    // Start a new transaction for error tracking
-    const transaction = Sentry.startTransaction({
-      name: 'handle-status-update',
-      op: 'message.status',
-      data: {
-        channelType: channel.type,
-        status: messageData.status
-      }
-    });
-
     // Tenta encontrar a mensagem pelo ID exato primeiro
     let { data: message, error: findMessageError } = await supabase
       .from('messages')
@@ -1163,9 +1153,6 @@ export async function handleStatusUpdate(channel, messageData) {
       });
       console.log(`Mensagem não encontrada para o ID: ${messageData.messageId}`);
     }
-
-    // Finish the transaction
-    transaction.finish();
   } catch (error) {
     Sentry.captureException(error, {
       extra: {
@@ -1406,16 +1393,6 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       throw new Error(`Handler not implemented for channel type: ${channel.type}`);
     }
 
-    const transaction = Sentry.startTransaction({
-      name: 'send-system-message',
-      op: 'message.system.send',
-      data: {
-        channelType: channel.type,
-        organizationId: channel.organization_id,
-        attempt: attempt
-      }
-    });
-
     // Usa o handler específico do canal
     const result = await channelConfig.handler(channel, {
       messageId: message.id,
@@ -1449,7 +1426,6 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       throw updateError;
     }
 
-    transaction.finish();
     return result;
     
   } catch (error) {
