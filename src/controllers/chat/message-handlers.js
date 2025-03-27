@@ -175,6 +175,7 @@ const normalizeContactId = (id, channelType) => {
  * @param {string} messageData.message.content - Conteúdo da mensagem
  * @param {Object} messageData.message.raw - Dados brutos originais
  * @param {boolean} messageData.fromMe - Se foi uma mensagem enviada por mim
+ * @param {boolean} messageData.attachments - Uma lista de arquivo com url e type, onde não cadastra no banco de daoos, somente aproveita a url
  */
 export async function handleIncomingMessage(channel, messageData) {
   const { organization } = channel;
