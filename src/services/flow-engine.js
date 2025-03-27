@@ -1284,15 +1284,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       if(flows.length === 0) return null;
       
       for (const flow of flows) {
-        // Encontrar a regra de canal
+        // Encontrar a regra de canal (opcional)
         const channelRule = flow.conditions.rules.find(rule => rule.type === 'channel');
-        if (!channelRule) continue;
         
-        // Verificar se o canal está na lista de canais permitidos
-        const channelList = channelRule.params.channels || [];
-        const isChannelAllowed = channelList.length === 0 || channelList.includes(channel.id);
-        if (!isChannelAllowed) continue;
-
+        // Se existir regra de canal, verificar se o canal está na lista de canais permitidos
+        if (channelRule) {
+          const channelList = channelRule.params.channels || [];
+          const isChannelAllowed = channelList.length === 0 || channelList.includes(channel.id);
+          if (!isChannelAllowed) continue;
+        }
         
         // Encontrar e verificar regra de schedule, se existir
         const scheduleRule = flow.conditions.rules.find(rule => rule.type === 'schedule');
