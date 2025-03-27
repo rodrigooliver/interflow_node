@@ -491,7 +491,7 @@ export async function handleIncomingMessage(channel, messageData) {
 
       console.log(`[Arquivos] Tentando inserir ${uniqueFileRecords.length} arquivos únicos`);
 
-      if (uniqueFileRecords.length > 0) {
+      if (uniqueFileRecords.length > 0 && !messageData.attachments?.length) {
         const { error: filesError } = await supabase
           .from('files')
           .upsert(uniqueFileRecords, {
