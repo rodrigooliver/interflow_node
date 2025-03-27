@@ -10,7 +10,7 @@ import { createFlowEngine } from '../../services/flow-engine.js';
 import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 import { sendChatNotifications } from './notification-helpers.js';
 import { decrypt } from '../../utils/crypto.js';
-import { formatMarkdownForHtml } from '../../utils/chat.js';
+
 import { handleSenderMessageWApi } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
 import { handleSenderMessageInstagram } from '../channels/instagram.js';
@@ -418,7 +418,7 @@ export async function handleIncomingMessage(channel, messageData) {
       .insert({
         chat_id: chat.id,
         organization_id: organization.id,
-        content: formatMarkdownForHtml(messageData.message.content),
+        content: messageData.message.content,
         type: messageData.message.type,
         sender_type: messageData.fromMe ? 'agent' : 'customer',
         status: messageData.fromMe ? 'sent' : 'received',
@@ -1744,12 +1744,6 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         error: 'No content or attachments provided'
       }
     }
-
-    messages.forEach(message => {
-      if(message.content) {
-        message.content = formatMarkdownForHtml(message.content);
-      }
-    });
 
     // Inserir mensagens no banco
     const { data: messagesData, error: messagesError } = await supabase
