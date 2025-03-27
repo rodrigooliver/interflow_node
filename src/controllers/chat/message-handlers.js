@@ -1447,7 +1447,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       const { error: retryUpdateError } = await supabase
         .from('messages')
         .update({ 
-          status: 'retry',
+          status: 'failed',
           error_message: `Tentativa ${attempt}/${MAX_ATTEMPTS} falhou: ${error.message}`
         })
         .eq('id', messageId);
