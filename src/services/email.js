@@ -778,20 +778,37 @@ export async function handleSenderMessageEmail(channel, messageData) {
 
     if (messagesError) throw messagesError;
 
-    const { data: senderData, error: senderError } = await supabase
-      .from(messageData.sender_type === 'customer' ? 'customers' : 'profiles')
-      .select(messageData.sender_type === 'customer' ? 'name' : 'full_name')
-      .eq('id', messageData.sender_type === 'customer' ? messageData.sender_customer_id : messageData.sender_agent_id)
-      .single();
-
-    if (senderError) throw senderError;
-
     const enrichedMessageData = {
       ...messageData,
-      sender_customer: messageData.sender_type === 'customer' ? { name: senderData.name } : null,
-      sender_user: messageData.sender_type === 'customer' ? null : { full_name: senderData.full_name },
       created_at: new Date().toISOString()
     };
+
+    if(messageData.sender_agent_id) {
+      const { data: senderData, error: senderError } = await supabase 
+      .from('profiles')
+      .select('full_name')
+      .eq('id', messageData.sender_agent_id)
+      .single();
+
+      if (senderError) throw senderError;
+
+      enrichedMessageData.sender_user = { name: senderData.full_name };
+    } else {
+      enrichedMessageData.sender_user = { full_name: 'Agent' };
+    }
+    if(messageData.sender_customer_id) {
+        const { data: senderData, error: senderError } = await supabase
+      .from('customers')
+      .select('name')
+      .eq('id', messageData.sender_customer_id)
+      .single();
+
+      if (senderError) throw senderError;
+
+      enrichedMessageData.sender_customer = { name: senderData.name };
+    }  else {
+      enrichedMessageData.sender_customer = { name: 'Customer' };
+    }
 
     const htmlContent = createEmailTemplate(messageData.chat_id, messages, enrichedMessageData);
 
