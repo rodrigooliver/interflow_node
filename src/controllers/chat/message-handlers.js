@@ -19,29 +19,6 @@ import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
 
-/**
- * Formata texto markdown para o formato de formatação do WhatsApp
- * 
- * Converte a sintaxe markdown padrão para a formatação específica do WhatsApp:
- * - **texto** ou __texto__ para *texto* (negrito)
- * - _texto_ para _texto_ (itálico)
- * - ~~texto~~ para ~texto~ (riscado)
- * - [texto](link) para link direto
- * 
- * @param {string} text - Texto em formato markdown
- * @returns {string} - Texto formatado para WhatsApp
- */
-const formatMarkdownForWhatsApp = (text) => {
-  if (!text) return text;
-  
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '*$1*') // **negrito** -> *negrito*
-    .replace(/__(.*?)__/g, '*$1*')     // __negrito__ -> *negrito*
-    .replace(/_(.*?)_/g, '_$1_')       // _itálico_ -> _itálico_
-    .replace(/~~(.*?)~~/g, '~$1~')     // ~~riscado~~ -> ~riscado~
-    .replace(/\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '$1'); // [texto](link) -> link direto
-};
-
 
 /**
  * Configurações e handlers para cada tipo de canal
@@ -61,22 +38,18 @@ const CHANNEL_CONFIG = {
   whatsapp_official: {
     identifier: 'whatsapp',
     handler: handleSenderMessageOfficial,
-    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_wapi: {
     identifier: 'whatsapp',
     handler: handleSenderMessageWApi,
-    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_zapi: {
     identifier: 'whatsapp',
     // handler: handleSenderMessageZApi
-    formatMessage: formatMarkdownForWhatsApp
   },
   whatsapp_evo: {
     identifier: 'whatsapp',
     // handler: handleSenderMessageEvolution
-    formatMessage: formatMarkdownForWhatsApp
   },
   instagram: {
     identifier: 'instagramId',
@@ -1693,7 +1666,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     // Adicionar mensagem de texto
     if (content) {
       // Aplicar formatação específica do canal se disponível
-      const formattedContent = channelConfig.formatMessage ? channelConfig.formatMessage(content) : content;
+      // const formattedContent = channelConfig.formatMessage ? channelConfig.formatMessage(content) : content;
+      const formattedContent = content;
       
       if (isSocialChannel && hasFiles) {
         // Para canais sociais com arquivos, adicionar mensagem de texto separada

@@ -3,6 +3,7 @@ import { validateChannel } from '../webhooks/utils.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
+import { formatMarkdownForWhatsApp, formatWhatsAppToMarkdown } from '../../utils/chat.js';
 
 async function getInstagramUserInfo(userId, accessToken) {
   try {
@@ -387,7 +388,7 @@ export async function handleInstagramWebhook(req, res) {
               type: attachments.length > 0 ? 'image' : 'text',
               message: {
                 type: attachments.length > 0 ? 'image' : 'text',
-                content: messagingData.message.text || '',
+                content: formatWhatsAppToMarkdown(messagingData.message.text || ''),
                 raw: messagingData
               },
               attachments,
@@ -602,7 +603,7 @@ export async function handleSenderMessageInstagram(channel, messageData) {
   try {
     const accessToken = decrypt(channel.credentials.access_token);
     const instagramUserId = channel.credentials.instagram_id;
-
+    messageData.content = formatMarkdownForWhatsApp(messageData.content);
     // Verificar se o cliente enviou mensagem nas últimas 24 horas
     const { data: chatData, error: chatError } = await supabase
       .from('chats')

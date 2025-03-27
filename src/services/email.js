@@ -8,7 +8,7 @@ import { RateLimiter } from './rate-limiter.js';
 import { createEmailTemplate } from './email-template.js';
 import Sentry from '../lib/sentry.js';
 import { handleIncomingMessage } from '../controllers/chat/message-handlers.js';
-
+import { formatMarkdownForHtml } from '../utils/chat.js';
 // Test email connection
 export async function testEmailConnection(config) {
   let imapConnection;
@@ -812,6 +812,7 @@ export async function sendEmailReply(chat, message) {
 
 export async function handleSenderMessageEmail(channel, messageData) {
   try {
+    messageData.content = formatMarkdownForHtml(messageData.content);
     const { data: chat, error: chatError } = await supabase
       .from('chats')
       .select('title')

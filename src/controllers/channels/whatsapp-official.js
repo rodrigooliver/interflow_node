@@ -1,23 +1,4 @@
-/**
- * Controlador para integração com WhatsApp Business API (Meta)
- * 
- * Este módulo gerencia a integração com a API oficial do WhatsApp Business,
- * permitindo enviar e receber mensagens através da plataforma Meta.
- * 
- * Funcionalidades:
- * - Processamento de webhooks do WhatsApp
- * - Autenticação e conexão de canais
- * - Envio de mensagens de texto, mídia e templates
- * - Gerenciamento de chats e clientes
- * 
- * Requisitos:
- * - Conta de desenvolvedor Meta
- * - Aplicativo configurado no Meta for Developers
- * - Número de telefone verificado no WhatsApp Business
- * - Templates aprovados pela Meta (para mensagens de template)
- * 
- * @module whatsapp-official
- */
+
 
 import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
@@ -25,6 +6,7 @@ import { encrypt, decrypt } from '../../utils/crypto.js';
 import Sentry from '../../lib/sentry.js';
 import { supabase } from '../../lib/supabase.js';
 import axios from 'axios';
+import {  formatMarkdownForWhatsApp, formatWhatsAppToMarkdown} from '../../utils/chat.js';
 
 async function getWhatsAppUserInfo(phoneNumber, accessToken) {
   try {
@@ -902,7 +884,7 @@ export async function handleWhatsAppWebhook(req, res) {
                 type: messageType,
                 message: {
                   type: messageType,
-                  content: messageContent,
+                  content: formatWhatsAppToMarkdown(messageContent),
                   mediaUrl,
                   mediaBase64: mediaData?.base64,
                   mimeType: mediaData?.mime_type,
@@ -1061,6 +1043,7 @@ export async function handleSenderMessageOfficial(channel, messageData) {
   try {
     const accessToken = decrypt(channel.credentials.access_token);
     const phoneNumberId = channel.credentials.phone_number_id;
+    messageData.content = formatMarkdownForWhatsApp(messageData.content);
 
     let messageBody;
 

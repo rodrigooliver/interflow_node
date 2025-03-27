@@ -3,6 +3,7 @@ import { validateChannel } from '../webhooks/utils.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
+import { formatMarkdownForWhatsApp, formatWhatsAppToMarkdown } from '../../utils/chat.js';
 
 /**
  * Processa webhooks recebidos do WAPI
@@ -160,7 +161,7 @@ function normalizeWapiMessage(webhookData) {
 
   // Determinar o tipo de mensagem
   let messageType = 'text';
-  let messageContent = webhookData.messageText?.text || '';
+  let messageContent = formatWhatsAppToMarkdown(webhookData.messageText?.text || '');
   let mediaBase64 = null;
   let mediaUrl = null;
   let mimeType = null;
@@ -795,6 +796,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
     const apiHost = credentials.apiHost;
     const apiConnectionKey = credentials.apiConnectionKey ? decrypt(credentials.apiConnectionKey) : null;
     const apiToken = credentials.apiToken ? decrypt(credentials.apiToken) : null;
+    messageData.content = formatMarkdownForWhatsApp(messageData.content);
     
     if (!apiHost || !apiConnectionKey || !apiToken) {
       const error = new Error('Credenciais incompletas ou inválidas');
