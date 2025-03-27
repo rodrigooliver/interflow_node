@@ -272,7 +272,7 @@ class EmailConnectionManager {
             }, 1000);
           });
 
-          connection.imap._sock.setKeepAlive(true, 30000);
+          connection.imap._sock.setKeepAlive(true);
           connection.imap._sock.setTimeout(120000);
         } catch (sockErr) {
           Sentry.captureException(sockErr, {
@@ -575,7 +575,7 @@ async function handleIncomingEmail(channel, email) {
       externalProfilePicture: null, // Email não tem foto de perfil
       message: {
         type: 'text',
-        content: cleanEmailContent(email.html || email.textAsHtml || email.text || 'Empty email content'),
+        content: cleanEmailContent( email.text || email.textAsHtml || email.html ||  'Empty email content'),
         raw: email
       },
       fromMe: false,
@@ -616,22 +616,9 @@ function cleanEmailContent(content) {
 
   let cleanContent = content;
 
-  // Tentar extrair o conteúdo principal da div com dir="auto"
-  const mainContentMatch = content.match(/<div dir="auto">([^<]+)/i);
-  if (mainContentMatch) {
-    cleanContent = mainContentMatch[1].trim();
-  } else {
-    // Se não encontrar a div, usar o método anterior
-    const mainContentPattern = /^([\s\S]*?)(?:<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
-    const matches = cleanContent.match(mainContentPattern);
-    cleanContent = matches ? matches[1] : cleanContent;
-  }
-
-  // Remover todas as tags HTML restantes
-  cleanContent = cleanContent.replace(/<[^>]+>/g, '');
-
   // Depois, aplicar os outros padrões de limpeza
   const markers = [
+    // Português
     'Em .*?(?:às|at) .*?, .*? escreveu:',
     'Em .*?, .*? escreveu:',
     'On .*? at .*?, .*? wrote:',
@@ -652,12 +639,80 @@ function cleanEmailContent(content) {
     '.*?@.*?escreveu:',
     'Atenciosamente,.*?(?:\n|$)',
     'Atenciosamente,.*?(?:\n|$).*?(?:\n|$)',
-    'Atenciosamente,.*?(?:\n|$).*?(?:\n|$).*?(?:\n|$)'
+    'Atenciosamente,.*?(?:\n|$).*?(?:\n|$).*?(?:\n|$)',
+    // Espanhol
+    'El .*?(?:a las|at) .*?, .*? escribió:',
+    'El .*?, .*? escribió:',
+    'En .*?(?:a las|at) .*?, .*? escribió:',
+    'En .*?, .*? escribió:',
+    '_{10,}',
+    '-{10,}',
+    'De: .*?@',
+    'Enviado: .*?\n',
+    '--- Mensaje original ---',
+    'Mensaje reenviado',
+    'Inicio del mensaje reenviado:',
+    'Email interflow.*?escribió:',
+    '.*?@.*?escribió:',
+    'Atentamente,.*?(?:\n|$)',
+    'Saludos,.*?(?:\n|$)',
+    'Cordialmente,.*?(?:\n|$)',
+    'Atentamente,.*?(?:\n|$).*?(?:\n|$)',
+    'Saludos,.*?(?:\n|$).*?(?:\n|$)',
+    'Cordialmente,.*?(?:\n|$).*?(?:\n|$)',
+    'Atentamente,.*?(?:\n|$).*?(?:\n|$)',
+    'Saludos,.*?(?:\n|$).*?(?:\n|$)',
+    'Cordialmente,.*?(?:\n|$).*?(?:\n|$)',
+    // Inglês
+    'On .*?(?:at|on) .*?, .*? wrote:',
+    'On .*?, .*? wrote:',
+    'From: .*?@',
+    'Sent: .*?\n',
+    '--- Original Message ---',
+    'Forwarded message',
+    'Begin forwarded message:',
+    'Email interflow.*?wrote:',
+    '.*?@.*?wrote:',
+    'Best regards,.*?(?:\n|$)',
+    'Best regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Best regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Regards,.*?(?:\n|$)',
+    'Regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Sincerely,.*?(?:\n|$)',
+    'Sincerely,.*?(?:\n|$).*?(?:\n|$)',
+    'Sincerely,.*?(?:\n|$).*?(?:\n|$)',
+    'Cheers,.*?(?:\n|$)',
+    'Cheers,.*?(?:\n|$).*?(?:\n|$)',
+    'Cheers,.*?(?:\n|$).*?(?:\n|$)',
+    'Kind regards,.*?(?:\n|$)',
+    'Kind regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Kind regards,.*?(?:\n|$).*?(?:\n|$)',
+    'Thanks,.*?(?:\n|$)',
+    'Thanks,.*?(?:\n|$).*?(?:\n|$)',
+    'Thanks,.*?(?:\n|$).*?(?:\n|$)',
+    'Thank you,.*?(?:\n|$)',
+    'Thank you,.*?(?:\n|$).*?(?:\n|$)',
+    'Thank you,.*?(?:\n|$).*?(?:\n|$)'
   ];
 
   const regex = new RegExp(`(${markers.join('|')})`, 'ims');
   const parts = cleanContent.split(regex);
   cleanContent = parts[0];
+
+  // Tentar extrair o conteúdo principal da div com dir="auto"
+  const mainContentMatch = cleanContent.match(/<div dir="auto">([^<]+)/i);
+  if (mainContentMatch) {
+    cleanContent = mainContentMatch[1].trim();
+  } else {
+    // Se não encontrar a div, usar o método anterior
+    const mainContentPattern = /^([\s\S]*?)(?:<div[^>]*class="[^"]*(?:gmail_signature|gmail_quote|gmail_extra|yahoo_quoted|ms-outlook|outlook)[^"]*"[^>]*>|<blockquote[^>]*>|<div[^>]*class="gmail_attr"[^>]*>)/i;
+    const matches = cleanContent.match(mainContentPattern);
+    cleanContent = matches ? matches[1] : cleanContent;
+  }
+
+  // Remover todas as tags HTML restantes
+  cleanContent = cleanContent.replace(/<[^>]+>/g, '');
 
   // Limpeza final
   cleanContent = cleanContent
