@@ -1341,6 +1341,14 @@ export async function deleteWapiChannel(req, res) {
       }
     }
 
+    // Excluir os chats associados ao canal
+    const { error: deleteChatsError } = await supabase
+      .from('chats')
+      .delete()
+      .eq('channel_id', channelId);
+
+    if (deleteChatsError) throw deleteChatsError;
+
     // Excluir o canal do banco de dados
     const { error: deleteError } = await supabase
       .from('chat_channels')
