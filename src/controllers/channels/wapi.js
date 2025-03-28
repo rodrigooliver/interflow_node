@@ -202,7 +202,8 @@ function normalizeWapiMessage(webhookData) {
   } else if (webhookData.listResponseMessage) {
     messageType = 'text';
     // Prioriza o selectedRowId se existir, caso contrário usa o title
-    messageContent = webhookData.listResponseMessage.selectedRowId || webhookData.listResponseMessage.title || '';
+    // messageContent = webhookData.listResponseMessage.selectedRowId || webhookData.listResponseMessage.title || '';
+    messageContent = webhookData.listResponseMessage.title || '';
   }
 
   return {

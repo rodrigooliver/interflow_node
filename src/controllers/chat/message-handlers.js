@@ -510,7 +510,8 @@ export async function handleIncomingMessage(channel, messageData) {
     }
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      isFirstMessage: true,
+      // isFirstMessage: true,
+      isFirstMessage,
       lastMessage: message
     });
 
