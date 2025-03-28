@@ -199,6 +199,10 @@ function normalizeWapiMessage(webhookData) {
     mediaBase64 = webhookData.sticker.stickerBase64;
     mediaUrl = webhookData.sticker.url;
     mimeType = webhookData.sticker.mimetype || 'image/webp';
+  } else if (webhookData.listResponseMessage) {
+    messageType = 'text';
+    // Prioriza o selectedRowId se existir, caso contrário usa o title
+    messageContent = webhookData.listResponseMessage.selectedRowId || webhookData.listResponseMessage.title || '';
   }
 
   return {
@@ -919,6 +923,31 @@ export async function handleSenderMessageWApi(channel, messageData) {
         body: JSON.stringify(body)
       });
 
+    } else if (messageData.list) {
+      // Enviar mensagem com listas
+      response = await fetch(`${baseUrl}/message/send-option-list?connectionKey=${apiConnectionKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiToken}`
+        },
+        body: JSON.stringify({
+          phoneNumber: messageData.to,
+          delayMessage: 1000,
+          title: messageData.list.title,
+          description: messageData.list.description || '',
+          buttonText: messageData.list.buttonText || 'Selecione uma opção',
+          footerText: messageData.list.footerText || '',
+          sections: messageData.list.sections.map(section => ({
+            title: section.title,
+            rows: section.rows.map(row => ({
+              id: row.id,
+              title: row.title,
+              description: row.description
+            }))
+          }))
+        })
+      });
     } else if (messageData.content) {
       response = await fetch(`${baseUrl}/message/send-text?connectionKey=${apiConnectionKey}`, {
         method: 'POST',

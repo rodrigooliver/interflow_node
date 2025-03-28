@@ -154,15 +154,6 @@ export async function handleIncomingMessage(channel, messageData) {
   const { organization } = channel;
   
   try {
-    const transaction = Sentry.startTransaction({
-      name: 'handle-incoming-message',
-      op: 'message.incoming',
-      data: {
-        channelType: channel.type,
-        organizationId: organization.id
-      }
-    });
-
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
       throw new Error(`Unsupported channel type: ${channel.type}`);
@@ -519,8 +510,7 @@ export async function handleIncomingMessage(channel, messageData) {
     }
 
     const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      // isFirstMessage: true,
-      isFirstMessage,
+      isFirstMessage: true,
       lastMessage: message
     });
 
@@ -530,7 +520,6 @@ export async function handleIncomingMessage(channel, messageData) {
       metadata: messageData.message.raw
     });
 
-    transaction.finish();
   } catch (error) {
     Sentry.captureException(error, {
       extra: {
@@ -1376,7 +1365,8 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       to: chat.external_id,
       chat_id: message.chat_id,
       sender_customer_id: message.sender_customer_id,
-      sender_agent_id: message.sender_agent_id
+      sender_agent_id: message.sender_agent_id,
+      list: message.metadata?.list ?? null
     });
 
     // Atualiza status da mensagem e external_id
@@ -1526,7 +1516,7 @@ export async function createMessageRoute(req, res) {
   }
 }
 
-export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId) {
+export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata) {
   try {
     // Validar se o chat pertence à organização e obter informações do canal
     const { data: chatData, error: chatError } = await supabase
@@ -1681,7 +1671,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           response_message_id: replyToMessageId ?? null,
           attachments: [],
           status: 'pending',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          metadata: metadata ?? null
         });
       } else if (!isSocialChannel && hasFiles) {
         // Para email com arquivos, uma única mensagem com todos os anexos
@@ -1695,7 +1686,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           response_message_id: replyToMessageId ?? null,
           attachments: attachments,
           status: 'pending',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          metadata: metadata ?? null
         });
       } else {
         // Apenas texto para qualquer tipo de canal
@@ -1709,7 +1701,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           response_message_id: replyToMessageId ?? null,
           attachments: [],
           status: 'pending',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          metadata: metadata ?? null
         });
       }
     } else if (!hasFiles) {
@@ -1732,7 +1725,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         response_message_id: replyToMessageId ?? null,
         attachments: attachments,
         status: 'pending',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        metadata: metadata ?? null
       });
     }
 
@@ -1828,7 +1822,6 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       }
     }
 
-    // Não iniciamos mais a cadeia de envio aqui, isso será feito na função sendMessage
     sendSystemMessage(lastMessage.id);
     
     return {

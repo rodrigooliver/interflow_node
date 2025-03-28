@@ -31,7 +31,6 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           activeFlow = await startFlow(flow);
         }
       }
-      // console.log('activeFlow',activeFlow);
 
       // console.log('Active Flow:', activeFlow);
 
@@ -169,7 +168,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const startFlow = async (flow) => {
     // Encontrar o nó inicial (geralmente do tipo 'start')
-    const startNode = flow.nodes.find(node => node.id === 'start-node');
+    const startNode = flow.nodes.find(node => node.id === 'start-node' || node.id === 'start');
     // console.log('startNode', startNode);
     if (!startNode) return null;
 
@@ -294,17 +293,24 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             .filter(paragraph => paragraph.trim().length > 0);
           
           // Enviar cada parágrafo como uma mensagem separada
-          for (const paragraph of paragraphs) {
-            await sendMessage(paragraph, null, updatedSession.id);
+          for (let i = 0; i < paragraphs.length; i++) {
+            const paragraph = paragraphs[i];
+            const isLastParagraph = i === paragraphs.length - 1;
+            
+            // Adicionar metadata.list apenas na última mensagem se houver opções de lista
+            const metadata = isLastParagraph && node.data.listOptions ? { list: node.data.listOptions } : null;
+            
+            await sendMessage(paragraph, null, updatedSession.id, metadata);
             
             // Adicionar um pequeno delay entre as mensagens para evitar throttling
-            if (paragraphs.length > 1) {
+            if (paragraphs.length > 1 && !isLastParagraph) {
               await processDelay(0.5); // 500ms de delay entre mensagens
             }
           }
         } else {
           // Comportamento padrão: enviar todo o texto como uma única mensagem
-          await sendMessage(processedText, null, updatedSession.id);
+          const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
+          await sendMessage(processedText, null, updatedSession.id, metadata);
         }
         break;
 
@@ -738,10 +744,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @param {Object} files - Arquivos anexados
    * @param {string} sessionId - ID da sessão
    */
-  const sendMessage = async (content, files, sessionId) => {
+  const sendMessage = async (content, files, sessionId, metadata) => {
     try {
       if(content || files) {
-        const result = await createMessageToSend(chatId, organization.id, content, null, files, null);
+        const result = await createMessageToSend(chatId, organization.id, content, null, files, null, metadata);
         if (result.status !== 201) {
           const error = new Error(result.error);
           Sentry.captureException(error);
@@ -1277,7 +1283,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       .eq('is_active', true)
       .eq('flows.organization_id', organization.id)
       // .eq('flows.is_active', true)
-      .eq('flows.is_published', true);
+      .eq('flows.is_published', true)
+      .not('flow', 'is', null);
 
       
       if(flowsError) throw flowsError;
