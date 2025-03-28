@@ -349,11 +349,13 @@ export async function testWapiConnection(req, res) {
     });
 
     if (!response.ok) {
-      const error = new Error('Failed to connect to WApi server');
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to connect to WApi server');
       Sentry.captureException(error, {
         extra: {
           apiHost,
-          channelId: req.params.channelId
+          channelId: req.params.channelId,
+          errorData
         }
       });
       throw error;
@@ -495,6 +497,18 @@ export async function generateQrCode(req, res) {
       }
     });
 
+    if (!response.ok) {
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to generate QR code');
+      Sentry.captureException(error, {
+        extra: {
+          channelId,
+          errorData
+        }
+      });
+      throw error;
+    }
+
     res.json({
       success: true
     });
@@ -524,10 +538,12 @@ export async function updateWebhook(channel) {
     });
 
     if (!responseV3.ok) {
-      const error = new Error('Failed to activate webhook V3');
+      const errorData = await responseV3.json();
+      const error = new Error(errorData.message || 'Failed to activate webhook V3');
       Sentry.captureException(error, {
         extra: {
-          channelId: channel.id
+          channelId: channel.id,
+          errorData
         }
       });
       throw error;
@@ -592,10 +608,12 @@ export async function updateWebhook(channel) {
     });
 
     if (!response.ok) {
-      const error = new Error('Failed to update webhook');
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to update webhook');
       Sentry.captureException(error, {
         extra: {
-          channelId: channel.id
+          channelId: channel.id,
+          errorData
         }
       });
       throw error;
@@ -658,10 +676,12 @@ export async function resetWapiConnection(req, res) {
     });
 
     if (!response.ok) {
-      const error = new Error('Failed to reset WApi instance');
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to reset WApi instance');
       Sentry.captureException(error, {
         extra: {
-          channelId: channel.id
+          channelId: channel.id,
+          errorData
         }
       });
       throw error;
@@ -735,11 +755,26 @@ export async function disconnectWapiInstance(req, res) {
       });
 
       if (!response.ok) {
-        console.error('Failed to disconnect WApi instance, marking as disconnected anyway');
+        const errorData = await response.json();
+        const error = new Error(errorData.message || 'Failed to disconnect WApi instance');
+        Sentry.captureException(error, {
+          extra: {
+            channelId,
+            errorData
+          }
+        });
+        console.error('Falha ao desconectar instância na W-API:', error);
       } else {
         const data = await response.json();
         if (data.error) {
-          console.error('WApi error:', data.message);
+          const error = new Error(data.message || 'Erro retornado pela W-API');
+          Sentry.captureException(error, {
+            extra: {
+              channelId,
+              data
+            }
+          });
+          console.error('WApi error:', error);
         }
       }
     } catch (apiError) {
@@ -1287,6 +1322,31 @@ export async function deleteWapiChannel(req, res) {
         const accountId = decrypt(channel.settings.interflowData.accountId);
         
         try {
+          // Primeiro desconecta a instância
+          const disconnectResponse = await fetch(
+            `https://api-painel.w-api.app/instance/disconnect?connectionKey=${credentials.apiConnectionKey}`,
+            {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          if (!disconnectResponse.ok) {
+            const disconnectData = await disconnectResponse.json();
+            const error = new Error(disconnectData.message || 'Falha ao desconectar instância na W-API');
+            Sentry.captureException(error, {
+              extra: {
+                channelId,
+                organizationId,
+                disconnectData
+              }
+            });
+            console.error('Falha ao desconectar instância na W-API:', error);
+          }
+
+          // Depois exclui a conexão
           const wapiResponse = await fetch(
             `https://api-painel.w-api.app/deleteConnection?connectionKey=${credentials.apiConnectionKey}&id=${accountId}`,
             {
@@ -1298,19 +1358,8 @@ export async function deleteWapiChannel(req, res) {
           );
 
           if (!wapiResponse.ok) {
-            const error = new Error('Falha ao excluir conexão na W-API');
-            Sentry.captureException(error, {
-              extra: {
-                channelId,
-                organizationId
-              }
-            });
-            throw error;
-          }
-
-          const wapiData = await wapiResponse.json();
-          if (wapiData.error) {
-            const error = new Error(wapiData.message || 'Erro retornado pela W-API');
+            const wapiData = await wapiResponse.json();
+            const error = new Error(wapiData.message || 'Falha ao excluir conexão na W-API');
             Sentry.captureException(error, {
               extra: {
                 channelId,
@@ -1318,10 +1367,29 @@ export async function deleteWapiChannel(req, res) {
                 wapiData
               }
             });
-            throw error;
+            console.error('Falha ao excluir conexão na W-API:', error);
+          } else {
+            const wapiData = await wapiResponse.json();
+            if (wapiData.error) {
+              const error = new Error(wapiData.message || 'Erro retornado pela W-API');
+              Sentry.captureException(error, {
+                extra: {
+                  channelId,
+                  organizationId,
+                  wapiData
+                }
+              });
+              console.error('Erro retornado pela W-API:', error);
+            }
           }
         } catch (wapiError) {
           console.error('Erro ao excluir conexão W-API:', wapiError);
+          Sentry.captureException(wapiError, {
+            extra: {
+              channelId,
+              organizationId
+            }
+          });
           // Continua com a exclusão local mesmo se falhar na API
         }
       } else if (channel.is_connected) {
