@@ -8,6 +8,21 @@ dotenv.config();
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY;
 
+// Limite máximo de caracteres compatível com iOS e Android
+const MAX_MESSAGE_LENGTH = 150;
+
+/**
+ * Trunca o conteúdo da mensagem para respeitar o limite máximo
+ * @param {string} content - Conteúdo original da mensagem
+ * @returns {string} - Conteúdo truncado se necessário
+ */
+const truncateContent = (content) => {
+  if (!content) return '';
+  return content.length > MAX_MESSAGE_LENGTH 
+    ? content.substring(0, MAX_MESSAGE_LENGTH - 3) + '...' 
+    : content;
+};
+
 // Adicionar logs para debug
 console.log('OneSignal Config:', {
   appId: ONESIGNAL_APP_ID ? 'Configurado' : 'Não configurado',
@@ -49,26 +64,29 @@ export const sendNotification = async ({
       return;
     }
 
+    // Truncar o conteúdo para respeitar o limite máximo
+    const truncatedContent = truncateContent(content);
+
     const notification = {
       contents: {
-        en: content,
-        pt: content
+        en: truncatedContent,
+        pt: truncatedContent
       }
     };
 
     // Adicionar headings se fornecidos
     if (heading) {
       notification.headings = {
-        en: heading,
-        pt: heading
+        en: truncateContent(heading),
+        pt: truncateContent(heading)
       };
     }
 
     // Adicionar subtitle se fornecido
     if (subtitle) {
       notification.subtitle = {
-        en: subtitle,
-        pt: subtitle
+        en: truncateContent(subtitle),
+        pt: truncateContent(subtitle)
       };
     }
 
