@@ -1483,8 +1483,7 @@ export async function transferChats(req, res) {
     const { data: channels, error: channelsError } = await supabase
       .from('chat_channels')
       .select('*')
-      .in('id', [channelId, targetChannelId])
-      .eq('type', 'whatsapp_wapi');
+      .in('id', [channelId, targetChannelId]);
 
     if (channelsError) throw channelsError;
     if (!channels || channels.length !== 2) {
