@@ -20,15 +20,24 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   /**
    * Processa cada mensagem recebida, gerenciando o fluxo ativo e o sistema de debounce
    * @param {Object} message - Mensagem a ser processada
+   * @param {Object} flow - Somente caso seja um fluxo específico a ser processado / Não necessário informar para iniciar um novo fluxo
    */
-  const processMessage = async (message) => {
+  const processMessage = async (message, flow = null) => {
     try {
-      let activeFlow = await getActiveFlow();
-      
-      if (!activeFlow) {
-        const flow = await findMatchingFlow(message);
-        if (flow) {
-          activeFlow = await startFlow(flow);
+      let activeFlow;
+      if(flow) {
+        // Se for um fluxo específico, inicia o fluxo
+        activeFlow = await startFlow(flow);
+      } else {
+        // Verifica se já existe um fluxo ativo
+        activeFlow = await getActiveFlow();
+        if (!activeFlow) {
+          // Se não existir, encontra um fluxo adequado
+          flow = await findMatchingFlow(message);
+          if (flow) {
+            // Se encontrar, inicia o fluxo
+            activeFlow = await startFlow(flow);
+          }
         }
       }
 
@@ -48,11 +57,14 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         if (activeFlow.debounce_timestamp && 
             now.getTime() - new Date(activeFlow.debounce_timestamp).getTime() < debounceTime) {
               // Adicionar mensagem ao histórico temporário
-              await updateMessageHistory(activeFlow.id, {
-                content: message.content,
-                type: message.type,
-                timestamp: now
-              });
+              if(message.content) {
+                await updateMessageHistory(activeFlow.id, {
+                  content: message.content,
+                  type: message.type,
+                  timestamp: now
+                });
+              }
+              
               return; // Aguardar próxima mensagem
             }
 
@@ -111,8 +123,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           }
         }, debounceTime);
         
-        return; // Não prossegue para continueFlow imediatamente
+        return activeFlow; // Não prossegue para continueFlow imediatamente
       }
+      return null;
     } catch (error) {
       Sentry.captureException(error);
       throw error;

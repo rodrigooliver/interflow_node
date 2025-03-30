@@ -1332,6 +1332,44 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     const chat = message.chat;
     const channel = chat.channel;
     
+    // Verifica se o canal está desconectado
+    if (!channel.is_connected) {
+      const errorMessage = 'Canal desconectado. Não é possível enviar mensagens.';
+      
+      // Atualiza status da mensagem para erro
+      const { error: updateError } = await supabase
+        .from('messages')
+        .update({ 
+          status: 'failed',
+          error_message: errorMessage
+        })
+        .eq('id', messageId);
+
+      if (updateError) {
+        Sentry.captureException(updateError, {
+          extra: {
+            messageId,
+            context: 'updating_message_status_disconnected_channel'
+          }
+        });
+      }
+
+      Sentry.captureMessage('Tentativa de envio em canal desconectado', {
+        level: 'warning',
+        extra: {
+          messageId,
+          channelId: channel.id,
+          channelType: channel.type
+        }
+      });
+
+      return {
+        error: errorMessage,
+        status: 'failed',
+        messageId
+      };
+    }
+    
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
       Sentry.captureMessage('Handler não encontrado para tipo de canal', {
@@ -1427,11 +1465,14 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       }
       
       // Espera antes de tentar novamente
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         setTimeout(() => {
           sendSystemMessage(messageId, attempt + 1)
             .then(resolve)
-            .catch(reject);
+            .catch((retryError) => {
+              // Em caso de erro na retry, resolve com o erro ao invés de rejeitar
+              resolve({ error: retryError });
+            });
         }, RETRY_DELAY);
       });
     }
@@ -1485,7 +1526,12 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       }
     }
     
-    throw error;
+    // Retorna objeto com erro ao invés de lançar exceção
+    return {
+      error: error.message,
+      status: 'failed',
+      messageId
+    };
   }
 }
 

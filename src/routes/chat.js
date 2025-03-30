@@ -5,6 +5,7 @@ import { createMessageRoute } from '../controllers/chat/message-handlers.js';
 import { sendWhatsAppTemplateRoute } from '../controllers/channels/whatsapp-official.js';
 import { transferChatRoute } from '../controllers/chat/transfer-handlers.js';
 import { resolveChatRoute } from '../controllers/chat/resolve-handlers.js';
+import { startFlowRoute } from '../controllers/chat/flow-handlers.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -15,5 +16,6 @@ router.post('/transfer', transferChatRoute);
 router.post('/:chatId/message', createMessageRoute);
 router.post('/:chatId/send-template', sendWhatsAppTemplateRoute);
 router.post('/:chatId/generate-summary', resolveChatRoute);
+router.post('/:chatId/start-flow', startFlowRoute);
 
 export default router;

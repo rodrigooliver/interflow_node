@@ -976,6 +976,47 @@ export async function handleSenderMessageWApi(channel, messageData) {
       const errorText = await response.text();
       try {
         const errorData = JSON.parse(errorText);
+        
+        // Verifica se é erro de connectionKey inválida
+        if (errorData.message === 'connectionKey inválida') {
+          // Marca o canal como desconectado
+          const { error: updateError } = await supabase
+            .from('chat_channels')
+            .update({
+              is_connected: false,
+              is_tested: false,
+              status: 'inactive',
+              credentials: {
+                ...channel.credentials,
+                connectedPhone: null,
+                numberPhone: null,
+                qrCode: null,
+                qrExpiresAt: null
+              },
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', channel.id);
+
+          if (updateError) {
+            Sentry.captureException(updateError, {
+              extra: {
+                channelId: channel.id,
+                context: 'updating_channel_status_after_invalid_key'
+              }
+            });
+          }
+
+          Sentry.captureMessage('Canal WAPI desconectado devido a connectionKey inválida', {
+            level: 'warning',
+            extra: {
+              channelId: channel.id,
+              errorData
+            }
+          });
+
+          throw new Error('Canal desconectado: connectionKey inválida');
+        }
+
         const error = new Error(errorData.message || 'Erro ao enviar mensagem');
         Sentry.captureException(error, {
           extra: {
