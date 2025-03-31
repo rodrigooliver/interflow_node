@@ -218,8 +218,19 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         )
       `)
       .single();
-
+        
       if (error) throw error;
+
+      // Atualiza o chat com o ID da sessão do fluxo
+      const { data: chatsUpdate, error: chatsUpdateError } = await supabase
+      .from('chats')
+      .update({
+        flow_session_id: session.id
+      })
+      .eq('id', chatId);
+
+      if (chatsUpdateError) throw chatsUpdateError;
+
       return session;
     } catch (error) {
       Sentry.captureException(error);
