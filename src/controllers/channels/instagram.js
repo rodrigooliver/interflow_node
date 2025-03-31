@@ -708,3 +708,45 @@ export async function handleSenderMessageInstagram(channel, messageData) {
     throw error;
   }
 }
+
+export async function handleDeleteMessageInstagram(channel, messageData) {
+  try {
+    const accessToken = decrypt(channel.credentials.access_token);
+    const instagramUserId = channel.credentials.instagram_id;
+
+    // console.log('🔍 Iniciando deleção de mensagem no Instagram:', {
+    //   messageId: messageData.externalId,
+    //   accessToken: accessToken ? 'Token presente' : 'Token ausente'
+    // });
+
+    const response = await fetch(
+      `https://graph.instagram.com/v21.0/${messageData.externalId}?access_token=${accessToken}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    // console.log('📡 Resposta da API do Instagram:', {
+    //   status: response.status,
+    //   ok: response.ok,
+    //   statusText: response.statusText
+    // });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('❌ Erro na API do Instagram:', errorData);
+      throw new Error(`Instagram API error: ${JSON.stringify(errorData)}`);
+    }
+
+    console.log('✅ Mensagem deletada com sucesso no Instagram');
+
+    return true;
+  } catch (error) {
+    console.error('Erro ao deletar mensagem Instagram:', error);
+    Sentry.captureException(error);
+    throw error;
+  }
+}

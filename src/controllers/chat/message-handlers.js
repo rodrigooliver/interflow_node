@@ -11,9 +11,9 @@ import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 import { sendChatNotifications } from './notification-helpers.js';
 import { decrypt } from '../../utils/crypto.js';
 
-import { handleSenderMessageWApi } from '../channels/wapi.js';
+import { handleSenderMessageWApi, handleDeleteMessageWapiChannel } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
-import { handleSenderMessageInstagram } from '../channels/instagram.js';
+import { handleSenderMessageInstagram, handleDeleteMessageInstagram } from '../channels/instagram.js';
 import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
@@ -42,6 +42,7 @@ const CHANNEL_CONFIG = {
   whatsapp_wapi: {
     identifier: 'whatsapp',
     handler: handleSenderMessageWApi,
+    deleteHandler: handleDeleteMessageWapiChannel
   },
   whatsapp_zapi: {
     identifier: 'whatsapp',
@@ -53,7 +54,8 @@ const CHANNEL_CONFIG = {
   },
   instagram: {
     identifier: 'instagramId',
-    handler: handleSenderMessageInstagram
+    handler: handleSenderMessageInstagram,
+    // deleteHandler: handleDeleteMessageInstagram
   },
   facebook: {
     identifier: 'facebookId',
@@ -1988,5 +1990,133 @@ async function transcribeAudio(audioUrl, apiKey, mimeType = 'audio/ogg; codecs=o
     });
     console.error('Erro ao transcrever áudio:', error.message);
     return null; // Retorna null em caso de erro para não travar o código
+  }
+}
+
+export async function deleteMessageRoute(req, res) {
+  try {
+    const { chatId, messageId } = req.params;
+    const { user } = req;
+
+    if (!messageId) {
+      return res.status(400).json({ error: 'messageId é obrigatório' });
+    }
+
+    const { data: message, error: messageError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        chat:chats!messages_chat_id_fkey (
+          external_id,
+          channel:chat_channels!chats_channel_id_fkey (*)
+        )
+      `)
+      .eq('id', messageId)
+      .eq('chat_id', chatId)
+      .single();
+
+    if (messageError) {
+      throw messageError;
+    }
+
+    if (!message) {
+      return res.status(404).json({ error: 'Mensagem não encontrada' });
+    }
+
+    // Marca a mensagem como deletada
+    const { error: updateError } = await supabase
+      .from('messages')
+      .update({ status: 'deleted' })
+      .eq('id', messageId);
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    // // Se a mensagem deletada for a última mensagem do chat
+    // if (chat.last_message_id === messageId) {
+    //   // Busca a mensagem anterior não deletada
+    //   const { data: previousMessage, error: previousError } = await supabase
+    //     .from('messages')
+    //     .select('id, created_at')
+    //     .eq('chat_id', chatId)
+    //     .neq('status', 'deleted')
+    //     .order('created_at', { ascending: false })
+    //     .limit(1)
+    //     .single();
+
+    //   if (previousError && previousError.code !== 'PGRST116') {
+    //     throw previousError;
+    //   }
+
+    //   // Atualiza o last_message_id do chat
+    //   const { error: chatUpdateError } = await supabase
+    //     .from('chats')
+    //     .update({ 
+    //       last_message_id: previousMessage?.id || null,
+    //       last_message_at: previousMessage?.created_at || null
+    //     })
+    //     .eq('id', chatId);
+
+    //   if (chatUpdateError) {
+    //     throw chatUpdateError;
+    //   }
+    // }
+
+    // Se a mensagem tiver um external_id e o canal suportar deleção de mensagens
+    if (message.external_id && message.chat?.channel) {
+      try {
+        await handleChannelDeletion(message.chat.channel, {
+          id: message.id,
+          externalId: message.external_id,
+          to: message.chat.external_id
+        });
+      } catch (deleteError) {
+        console.error('Erro ao deletar mensagem no canal:', deleteError);
+        // Não falha a operação se a deleção no canal falhar
+        // Apenas registra o erro no Sentry
+        Sentry.captureException(deleteError, {
+          extra: {
+            messageId: message.id,
+            externalId: message.external_id,
+            channelId: message.chat.channel.id,
+            context: 'deleting_message_in_channel'
+          }
+        });
+      }
+    }
+
+    return res.status(200).json({ message: 'Mensagem deletada com sucesso' });
+  } catch (error) {
+    Sentry.captureException(error);
+    return res.status(500).json({ error: 'Erro ao deletar mensagem' });
+  }
+}
+
+/**
+ * Verifica e executa o handler de exclusão do canal se existir
+ * @param {Object} channel - Canal a ser excluído
+ * @param {Object} messageData - Dados da mensagem (id, externalId, to)
+ * @returns {Promise<boolean>} - True se o handler foi executado, false caso contrário
+ */
+export async function handleChannelDeletion(channel, messageData) {
+  const channelConfig = CHANNEL_CONFIG[channel.type];
+  // console.log(channelConfig?.deleteHandler)
+  
+  if (!channelConfig?.deleteHandler) {
+    return true;
+  }
+
+  try {
+    await channelConfig.deleteHandler(channel, messageData);
+    return true;
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        channelType: channel.type
+      }
+    });
+    throw error;
   }
 }

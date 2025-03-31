@@ -1561,3 +1561,46 @@ export async function transferChats(req, res) {
     });
   }
 }
+
+export async function handleDeleteMessageWapiChannel(channel, messageData) {
+  try {
+    const { data: channelData, error: channelError } = await supabase
+      .from('chat_channels')
+      .select('credentials')
+      .eq('id', channel.id)
+      .single();
+
+    if (channelError) throw channelError;
+
+    const credentials = channelData.credentials;
+    const apiUrl = credentials.api_url;
+    const apiKey = decrypt(credentials.api_key);
+
+    const response = await fetch(`${apiUrl}/message/delete?connectionKey=${credentials.apiConnectionKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': apiKey
+      },
+      body: JSON.stringify({
+        phoneNumber: messageData.to,
+        messageKey: {
+          remoteJid: `${messageData.to}@s.whatsapp.net`,
+          fromMe: true,
+          id: messageData.externalId
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`WAPI error: ${JSON.stringify(errorData)}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Erro ao deletar mensagem WAPI:', error);
+    Sentry.captureException(error);
+    throw error;
+  }
+}
