@@ -444,7 +444,7 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
       .eq('organization_id', organizationId)
       .eq('type', 'instagram')
       // .eq('status', 'inactive')
-      .eq('is_connected', false)
+      // .eq('is_connected', false)
       .single();
 
     if (channelError || !channel) {
