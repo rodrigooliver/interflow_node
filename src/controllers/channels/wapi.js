@@ -751,7 +751,7 @@ export async function disconnectWapiInstance(req, res) {
 
     const channel = channels[0];
   
-    const decryptedCredentials = decryptCredentials(channel.credentials);
+    const decryptedCredentials = decryptCredentials(channel.credentials); 
 
     try {
       // Fazer requisição para desconectar a instância na WApi
