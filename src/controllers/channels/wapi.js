@@ -671,12 +671,14 @@ export async function resetWapiConnection(req, res) {
 
     const channel = channels[0];
 
+    const decryptedCredentials = decryptCredentials(channel.credentials);
+
     // Fazer requisição para resetar a instância na WApi
-    const response = await fetch(`https://${channel.credentials.apiHost}/instance/restart?connectionKey=${channel.credentials.apiConnectionKey}`, {
+    const response = await fetch(`https://${channel.credentials.apiHost}/instance/restart?connectionKey=${decryptedCredentials.apiConnectionKey}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${channel.credentials.apiToken}`
+        'Authorization': `Bearer ${decryptedCredentials.apiToken}`
       }
     });
 
@@ -748,14 +750,16 @@ export async function disconnectWapiInstance(req, res) {
     }
 
     const channel = channels[0];
+  
+    const decryptedCredentials = decryptCredentials(channel.credentials);
 
     try {
       // Fazer requisição para desconectar a instância na WApi
-      const response = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${channel.credentials.apiConnectionKey}`, {
+      const response = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${decryptedCredentials.apiConnectionKey}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${channel.credentials.apiToken}`
+          'Authorization': `Bearer ${decryptedCredentials.apiToken}`
         }
       });
 
