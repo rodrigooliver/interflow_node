@@ -15,6 +15,8 @@ import whatsappRoutes from './routes/whatsapp.js';
 import integrationRoutes from './routes/integrations.js';
 import promptRoutes from './routes/prompts.js';
 import memberRoutes from './routes/member.js';
+import financialRoutes from './routes/financial.js';
+import agentIARoutes from './routes/agent-ia.js';
 import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
 import { testEmailConnection } from './controllers/member.js';
@@ -74,7 +76,10 @@ app.use('/api/:organizationId/flow', flowRoutes);
 app.use('/api/:organizationId/integrations', integrationRoutes);
 app.use('/api/:organizationId/prompts', promptRoutes);
 app.use('/api/:organizationId/member', memberRoutes);
+app.use('/api/:organizationId/financial', financialRoutes);
+app.use('/api/:organizationId/agent-ia', agentIARoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/agent-ia', agentIARoutes);
 app.post('/api/test-email-connection', testEmailConnection);
 
 // The error handler must be before any other error middleware and after all controllers

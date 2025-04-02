@@ -3,6 +3,7 @@ import { OpenAI } from 'openai';
 import { decrypt } from '../utils/crypto.js';
 import Sentry from '../lib/sentry.js';
 import crypto from 'crypto';
+import { generateSystemTools, handleSystemToolCall } from './agent-ia-actions.js';
 
 /**
  * @fileoverview Implementação do nó AgentIA para o flow-engine.
@@ -123,12 +124,43 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
     // Preparar mensagens do contexto
     const messages = await prepareContextMessages(prompt, session);
 
+    // Determinar quais ferramentas do sistema utilizar com base nas actions configuradas no prompt
+    let systemToolTypes = [];
+    if (prompt.actions && Array.isArray(prompt.actions)) {
+      systemToolTypes = prompt.actions
+        .filter(action => action && action.type)
+        .map(action => action.type);
+      
+      console.log(`[processAgentIA] Tipos de ferramentas do sistema detectadas:`, systemToolTypes);
+    }
+
+    // Gerar ferramentas do sistema
+    let systemTools = [];
+    if (systemToolTypes.length > 0) {
+      // Buscar a organização da sessão
+      const { data: chat } = await supabase
+        .from('chats')
+        .select('organization_id')
+        .eq('id', session.chat_id)
+        .single();
+      
+      if (chat && chat.organization_id) {
+        systemTools = await generateSystemTools(chat.organization_id, prompt.actions);
+        console.log(`[processAgentIA] Ferramentas do sistema geradas: ${systemTools.length}`);
+      }
+    }
+
+    // Combinar ferramentas personalizadas e do sistema
+    const customTools = prompt.tools || [];
+    const combinedTools = [...customTools, ...systemTools];
+
     // Preparar ferramentas se existirem
-    const tools = prompt.tools ? prepareTools(prompt.tools) : [];
+    const tools = combinedTools.length > 0 ? prepareTools(combinedTools) : [];
 
     console.log(`[AgentIA] Iniciando chamada para modelo ${prompt.model} com temperatura ${prompt.temperature}`);
+    console.log(`[AgentIA] Usando ${tools.length} ferramentas (${customTools.length} personalizadas, ${systemTools.length} do sistema)`);
 
-    // console.log('messages', messages);
+    // console.log(`[AgentIA] Ferramentas do sistema: ${JSON.stringify(systemTools)}`);
 
     // Fazer chamada para o OpenAI
     const completion = await openai.chat.completions.create({
@@ -139,16 +171,31 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? "auto" : undefined
     });
+    
 
     // Processar resposta
     const choice = completion.choices[0];
     
     // Se houver chamadas de ferramentas
     if (choice.message.tool_calls) {
+      console.log(`[processAgentIA] Ferramentas encontradas: ${choice.message.tool_calls.length}`);
       let toolResults = [];
       
       for (const toolCall of choice.message.tool_calls) {
-        const tool = prompt.tools.find(t => t.name === toolCall.function.name);
+        // Primeiro, tentar encontrar a ferramenta entre as ferramentas personalizadas
+        let tool = customTools.find(t => t.name === toolCall.function.name);
+        console.log(`[processAgentIA] Ferramenta personalizada encontrada: ${tool ? tool.name : 'Não encontrada'}`);
+        
+        // Se não encontrar nas ferramentas personalizadas, procurar nas ferramentas do sistema
+        if (!tool) {
+          tool = systemTools.find(t => t.name === toolCall.function.name);
+          
+          // Se encontrou em ferramentas do sistema, marcar para processamento especial
+          if (tool) {
+            console.log(`[processAgentIA] Ferramenta do sistema encontrada: ${tool.name}`);
+          }
+        }
+        
         if (tool) {
           // Extrair argumentos da chamada
           const args = JSON.parse(toolCall.function.arguments);
@@ -173,11 +220,27 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
             }
           }
           
-          // Processar ações da ferramenta se houver destinations configuradas
+          // Processar ações da ferramenta baseado no tipo de ferramenta
           let result = null;
-          if (prompt.destinations && prompt.destinations[tool.name]) {
+          
+          // Para ferramentas personalizadas, usar a configuração de destinations
+          if (customTools.includes(tool) && prompt.destinations && prompt.destinations[tool.name]) {
             const actions = prompt.destinations[tool.name];
             result = await handleToolActions(actions, args, session, tool);
+          } 
+          // Para ferramentas do sistema, usar handlers específicos
+          else if (systemTools.includes(tool)) {
+            result = await handleSystemToolCall(
+              tool, 
+              args, 
+              prompt.actions,
+              session, 
+              {
+                processUpdateCustomerAction,
+                processUpdateChatAction,
+                processStartFlowAction
+              }
+            );
           }
 
           // Atualizar variáveis com os argumentos
@@ -264,11 +327,7 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
         
         // Obter a resposta contextualizada
         const contextualizedResponse = followUpCompletion.choices[0].message.content;
-        
-        // // Enviar resposta contextualizada para o usuário
-        // if (contextualizedResponse) {
-        //   await sendMessage(contextualizedResponse, null, session.id);
-        // }
+
         
         // Se tiver especificado um nome de variável para salvar a resposta
         if (node.data.agenteia.variableName) {
@@ -341,11 +400,6 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
         variables
       };
     }
-    
-    // // Se não for para salvar em variável, envia como mensagem
-    // if (responseText) {
-    //   await sendMessage(responseText, null, session.id);
-    // }
     
     return session;
   } catch (error) {
