@@ -328,7 +328,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             
             // Adicionar um pequeno delay entre as mensagens para evitar throttling
             if (paragraphs.length > 1 && !isLastParagraph) {
-              await processDelay(1500); // 1500ms de delay entre mensagens
+              await processDelay(2); // 2000ms de delay entre mensagens
             }
           }
         } else {
