@@ -860,6 +860,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
     // Se tiver anexos, envia como mídia
     if (messageData.attachments && messageData.attachments.length > 0) {
       const attachment = messageData.attachments[0];
+      console.log('WAPI - attachment', attachment);
       
       let endpoint = '';
       let body = {};
@@ -872,7 +873,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
           image: attachment.url,
           caption: messageData.content || ''
         };
-        // console.log('WAPI - attachment.url', attachment.url);
+        console.log('WAPI - attachment.url', attachment.url);
       } else if (attachment.type.startsWith('video/') || (attachment.mime_type && attachment.mime_type.startsWith('video/')) || attachment.type == 'video') {
         endpoint = '/message/send-video';
         body = {
