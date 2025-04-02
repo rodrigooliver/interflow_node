@@ -865,27 +865,28 @@ export async function handleSenderMessageWApi(channel, messageData) {
       let body = {};
 
       // Determina o endpoint e corpo da requisição com base no tipo de mídia
-      if (attachment.type.startsWith('image/') || (attachment.mime_type && attachment.mime_type.startsWith('image/'))) {
+      if (attachment.type.startsWith('image/') || (attachment.mime_type && attachment.mime_type.startsWith('image/')) || attachment.type == 'image') {
         endpoint = '/message/send-image';
         body = {
           phoneNumber: messageData.to,
           image: attachment.url,
           caption: messageData.content || ''
         };
-      } else if (attachment.type.startsWith('video/') || (attachment.mime_type && attachment.mime_type.startsWith('video/'))) {
+        // console.log('WAPI - attachment.url', attachment.url);
+      } else if (attachment.type.startsWith('video/') || (attachment.mime_type && attachment.mime_type.startsWith('video/')) || attachment.type == 'video') {
         endpoint = '/message/send-video';
         body = {
           phoneNumber: messageData.to,
           video: attachment.url,
           caption: messageData.content || ''
         };
-      } else if (attachment.type.startsWith('audio/') || (attachment.mime_type && attachment.mime_type.startsWith('audio/'))) {
+      } else if (attachment.type.startsWith('audio/') || (attachment.mime_type && attachment.mime_type.startsWith('audio/')) || attachment.type == 'audio') {
         endpoint = '/message/send-audio';
         body = {
           phoneNumber: messageData.to,
           audio: attachment.url
         };
-      } else if (attachment.type === 'sticker' || attachment.mime_type === 'image/webp') {
+      } else if (attachment.type === 'sticker' || attachment.mime_type === 'image/webp' || attachment.type == 'sticker') {
         endpoint = '/message/send-sticker';
         body = {
           phoneNumber: messageData.to,

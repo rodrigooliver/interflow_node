@@ -308,31 +308,149 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     switch (node.type) {
       case 'text':
         const processedText = replaceVariables(node.data.text, updatedSession.variables);
+        // console.log('processedText', processedText);
         
-        // Verificar se a opção splitParagraphs está ativada
-        if (node.data.splitParagraphs) {
-          // Dividir o texto em parágrafos (separados por linhas em branco)
+        // Função para identificar o tipo de mídia baseado na URL
+        const identifyMediaType = (url) => {
+          const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+          const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.aac'];
+          const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv'];
+          const documentExtensions = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.xls', '.xlsx', '.ppt', '.pptx'];
+          
+          // Remove parâmetros da URL (tudo após ?)
+          const urlWithoutParams = url.split('?')[0];
+          
+          // Procura por extensões no meio da URL
+          const extensionMatch = urlWithoutParams.match(/\.(jpg|jpeg|png|gif|webp|svg|bmp|mp3|wav|ogg|m4a|aac|mp4|webm|mov|avi|mkv|pdf|doc|docx|txt|rtf|xls|xlsx|ppt|pptx)/i);
+          
+          if (extensionMatch) {
+            const extension = '.' + extensionMatch[1].toLowerCase();
+            
+            if (imageExtensions.includes(extension)) return 'image';
+            if (audioExtensions.includes(extension)) return 'audio';
+            if (videoExtensions.includes(extension)) return 'video';
+            if (documentExtensions.includes(extension)) return 'document';
+          }
+          
+          return null;
+        };
+
+        // Função para extrair links do texto
+        const extractLinks = (text) => {
+          // Regex para identificar tanto links normais quanto imagens
+          const linkRegex = /!?\[([^\]]+)\]\(([^)]+)\)/g;
+          const parts = [];
+          let lastIndex = 0;
+          let match;
+
+          while ((match = linkRegex.exec(text)) !== null) {
+            // Adiciona o texto antes do link
+            if (match.index > lastIndex) {
+              parts.push({
+                type: 'text',
+                content: text.slice(lastIndex, match.index)
+              });
+            }
+            
+            // Adiciona o link
+            parts.push({
+              type: 'link',
+              content: match[1], // texto do link
+              url: match[2],     // URL do link
+              mediaType: identifyMediaType(match[2])
+            });
+            
+            // Atualiza o lastIndex considerando qualquer pontuação após o link
+            const afterLink = text.slice(match.index + match[0].length);
+            const punctuationMatch = afterLink.match(/^[.,!?;:]/);
+            if (punctuationMatch) {
+              lastIndex = match.index + match[0].length + punctuationMatch[0].length;
+            } else {
+              lastIndex = match.index + match[0].length;
+            }
+          }
+          
+          // Adiciona o texto restante após o último link
+          if (lastIndex < text.length) {
+            parts.push({
+              type: 'text',
+              content: text.slice(lastIndex)
+            });
+          }
+          
+          return parts;
+        };
+
+        // Função para processar e enviar as partes do texto
+        const processAndSendParts = async (parts, metadata) => {
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const isLastPart = i === parts.length - 1;
+            
+            if (part.type === 'text') {
+              // Se for texto, processa normalmente
+              if (node.data.splitParagraphs) {
+                const paragraphs = part.content
+                  .split('\n\n')
+                  .filter(paragraph => paragraph.trim().length > 0);
+                
+                for (let j = 0; j < paragraphs.length; j++) {
+                  const paragraph = paragraphs[j];
+                  const isLastParagraph = j === paragraphs.length - 1;
+                  
+                  const currentMetadata = isLastParagraph && isLastPart ? metadata : null;
+                  await sendMessage(paragraph, null, updatedSession.id, currentMetadata);
+                  
+                  if (paragraphs.length > 1 && !isLastParagraph) {
+                    await processDelay(2);
+                  }
+                }
+              } else {
+                const currentMetadata = isLastPart ? metadata : null;
+                await sendMessage(part.content, null, updatedSession.id, currentMetadata);
+              }
+            } else if (part.type === 'link' && part.mediaType) {
+              // Se for um link de mídia, envia como anexo
+              await sendMessage(null, {
+                attachments: [{
+                  url: part.url,
+                  type: part.mediaType,
+                  content: part.content
+                }]
+              }, updatedSession.id);
+            }
+            
+            // Adiciona delay entre partes se não for a última
+            if (!isLastPart) {
+              await processDelay(2);
+            }
+          }
+        };
+
+        // Processa o texto com ou sem extração de links
+        if (node.data.extractLinks) {
+          const parts = extractLinks(processedText);
+          const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
+          await processAndSendParts(parts, metadata);
+        } else if (node.data.splitParagraphs) {
+          // Comportamento existente para splitParagraphs
           const paragraphs = processedText
             .split('\n\n')
             .filter(paragraph => paragraph.trim().length > 0);
           
-          // Enviar cada parágrafo como uma mensagem separada
           for (let i = 0; i < paragraphs.length; i++) {
             const paragraph = paragraphs[i];
             const isLastParagraph = i === paragraphs.length - 1;
             
-            // Adicionar metadata.list apenas na última mensagem se houver opções de lista
             const metadata = isLastParagraph && node.data.listOptions ? { list: node.data.listOptions } : null;
-            
             await sendMessage(paragraph, null, updatedSession.id, metadata);
             
-            // Adicionar um pequeno delay entre as mensagens para evitar throttling
             if (paragraphs.length > 1 && !isLastParagraph) {
-              await processDelay(2); // 2000ms de delay entre mensagens
+              await processDelay(2);
             }
           }
         } else {
-          // Comportamento padrão: enviar todo o texto como uma única mensagem
+          // Comportamento padrão
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await sendMessage(processedText, null, updatedSession.id, metadata);
         }
@@ -636,8 +754,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       for (const condition of currentNode.data.conditions || []) {
         const { logicOperator, subConditions } = condition;
-        console.log('logicOperator', logicOperator);
-        console.log('subConditions', subConditions);
+        // console.log('logicOperator', logicOperator);
+        // console.log('subConditions', subConditions);
 
         // Avaliar cada subcondição
         const results = await Promise.all(
@@ -770,6 +888,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const sendMessage = async (content, files, sessionId, metadata) => {
     try {
+      // console.log('sendMessage', content, files, sessionId, metadata);
       if(content || files) {
         const result = await createMessageToSend(chatId, organization.id, content, null, files, null, metadata);
         if (result.status !== 201) {
