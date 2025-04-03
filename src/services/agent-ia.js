@@ -473,6 +473,25 @@ const prepareContextMessages = async (prompt, session) => {
         contextInfo += `\nChannel type: ${chat.channel_details.type}`;
       }
     }
+
+    // Verificar se o prompt tem mídia disponível
+    if (prompt.media && Array.isArray(prompt.media) && prompt.media.length > 0) {
+      contextInfo += `\n\nAVAILABLE MEDIA FILES: You have access to ${prompt.media.length} media files that you can share with the customer when they ask for them or when appropriate to enhance the conversation. When the customer requests any document, image, video, or other media, or when it would be helpful to share one of these files, provide the corresponding link.`;
+      
+      // Listar os arquivos de mídia disponíveis
+      contextInfo += `\n\nMedia files:`;
+      prompt.media.forEach((media, index) => {
+        const fileType = media.type || 'document';
+        contextInfo += `\n${index + 1}. ${fileType.toUpperCase()}: "${media.description || media.name || 'No description'}" - URL: ${media.url}`;
+      });
+      
+      // Instruções adicionais
+      contextInfo += `\n\nWhen sharing media files with the customer:
+1. Select the most appropriate file based on the customer's request.
+2. Share the complete URL as is.
+3. Add a brief description of what the file contains.
+4. Avoid modifying or shortening the URLs.`;
+    }
     
     contextInfo += `\nPlease use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.]`;
     

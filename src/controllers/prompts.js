@@ -2,6 +2,9 @@ import { supabase } from '../lib/supabase.js';
 import { decrypt } from '../utils/crypto.js';
 import axios from 'axios';
 import Sentry from '../lib/sentry.js';
+import { v4 as uuidv4 } from 'uuid';
+import { uploadFile, deleteFile } from '../utils/file-upload.js';
+import { getActiveS3Integration } from '../lib/s3.js';
 
 /**
  * Busca todos os prompts de uma organização
@@ -541,5 +544,179 @@ export const improveTextWithOpenAI = async (req, res) => {
       success: false,
       error: errorMessage
     });
+  }
+};
+
+export async function uploadImage(req, res) {
+  try {
+    const { organizationId, id: promptId } = req.params;
+    const file = req.files?.file;
+    const description = req.body?.description || '';
+
+    if (!file) {
+      return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    }
+
+    if (!promptId) {
+      return res.status(400).json({ error: 'ID do prompt não fornecido' });
+    }
+
+    // Validar tipo de arquivo
+    const allowedTypes = [
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'video/mp4', 'video/quicktime', 'video/x-msvideo',
+      'audio/mpeg', 'audio/wav', 'audio/ogg',
+      'application/pdf',
+      'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain'
+    ];
+
+    if (!allowedTypes.includes(file.mimetype)) {
+      return res.status(400).json({ error: 'Tipo de arquivo não suportado' });
+    }
+
+    // Validar tamanho do arquivo (10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB em bytes
+    if (file.size > maxSize) {
+      return res.status(400).json({ error: 'Arquivo muito grande. Tamanho máximo: 10MB' });
+    }
+
+    // Determinar o tipo de mídia baseado no mimetype
+    let mediaType;
+    if (file.mimetype.startsWith('image/')) {
+      mediaType = 'image';
+    } else if (file.mimetype.startsWith('video/')) {
+      mediaType = 'video';
+    } else if (file.mimetype.startsWith('audio/')) {
+      mediaType = 'audio';
+    } else if (file.mimetype === 'application/pdf') {
+      mediaType = 'pdf';
+    } else {
+      mediaType = 'document';
+    }
+
+    // Gerar nome único para o arquivo
+    const fileExtension = file.name.split('.').pop();
+    const uniqueFileName = `${uuidv4()}.${fileExtension}`;
+
+    // Upload do arquivo usando a função uploadFile
+    const uploadResult = await uploadFile({
+      fileData: file.data,
+      fileName: uniqueFileName,
+      contentType: file.mimetype,
+      fileSize: file.size,
+      organizationId,
+      customFolder: 'prompts'
+    });
+
+    if (!uploadResult.success) {
+      throw new Error(uploadResult.error || 'Erro ao fazer upload do arquivo');
+    }
+
+    // Buscar o prompt atual
+    const { data: prompt, error: promptError } = await supabase
+      .from('prompts')
+      .select('media')
+      .eq('id', promptId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (promptError) {
+      throw promptError;
+    }
+
+    if (!prompt) {
+      return res.status(404).json({ error: 'Prompt não encontrado' });
+    }
+
+    // Preparar o novo item de mídia
+    const newMediaItem = {
+      id: uploadResult.fileId,
+      url: uploadResult.fileUrl,
+      name: file.name,
+      type: mediaType,
+      description: description
+    };
+
+    // Atualizar o array de mídia do prompt
+    const updatedMedia = [...(prompt.media || []), newMediaItem];
+    
+    const { error: updateError } = await supabase
+      .from('prompts')
+      .update({ media: updatedMedia })
+      .eq('id', promptId)
+      .eq('organization_id', organizationId);
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    return res.json({
+      success: true,
+      fileId: uploadResult.fileId,
+      url: uploadResult.fileUrl,
+      name: file.name,
+      type: mediaType,
+      description: description
+    });
+  } catch (error) {
+    Sentry.captureException(error);
+    return res.status(500).json({ error: 'Erro ao fazer upload de mídia' });
+  }
+}
+
+export const deleteMedia = async (req, res) => {
+  try {
+    const { organizationId, id: promptId, mediaId } = req.params;
+
+    // Busca o prompt para verificar se existe e pertence à organização
+    const { data: prompt, error: promptError } = await supabase
+      .from('prompts')
+      .select('*')
+      .eq('id', promptId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (promptError || !prompt) {
+      return res.status(404).json({ success: false, error: 'Prompt não encontrado' });
+    }
+
+    // Busca a mídia para verificar se existe e pertence ao prompt
+    const mediaItem = prompt.media.find(item => item.id === mediaId);
+    if (!mediaItem) {
+      return res.status(404).json({ success: false, error: 'Mídia não encontrada' });
+    }
+
+    // Exclui o arquivo usando a função deleteFile
+    const deleteResult = await deleteFile({
+      fileId: mediaId,
+      organizationId
+    });
+
+    if (!deleteResult.success) {
+      console.error('Erro ao excluir arquivo:', deleteResult.error);
+      return res.status(500).json({ success: false, error: deleteResult.error || 'Erro ao excluir arquivo' });
+    }
+
+    // Remove a mídia do array
+    const updatedMedia = prompt.media.filter(item => item.id !== mediaId);
+
+    // Atualiza o prompt com o novo array de mídia
+    const { error: updateError } = await supabase
+      .from('prompts')
+      .update({ media: updatedMedia })
+      .eq('id', promptId)
+      .eq('organization_id', organizationId);
+
+    if (updateError) {
+      console.error('Erro ao atualizar prompt:', updateError);
+      return res.status(500).json({ success: false, error: 'Erro ao excluir mídia' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao excluir mídia:', error);
+    Sentry.captureException(error);
+    res.status(500).json({ success: false, error: 'Erro ao excluir mídia' });
   }
 }; 
