@@ -422,6 +422,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
               // Adiciona um delay maior após enviar arquivos de mídia
               // para garantir que o arquivo seja enviado completamente
               await processDelay(5);
+            } else if (part.type === 'link') {
+              await sendMessage(`${part.url}`, null, updatedSession.id);
+              
+              // Adiciona um delay maior para links também
+              await processDelay(3);
             }
             
             // Adiciona delay entre partes se não for a última
