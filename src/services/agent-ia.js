@@ -322,7 +322,7 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
           model: prompt.model || 'gpt-4o',
           messages: followUpMessages,
           temperature: prompt.temperature || 0.7,
-          max_tokens: prompt.max_tokens || 150
+          // max_tokens: prompt.max_tokens || 150
         });
         
         // Obter a resposta contextualizada
