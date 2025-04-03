@@ -381,159 +381,6 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           return parts;
         };
 
-        // Função para extrair listas formatadas do texto
-        const extractFormattedList = (text) => {
-          // Verifica se o texto contém marcadores de lista
-          if (!text.includes('**') && !text.includes('-') && !text.match(/\d+\.\s*\*\*/)) {
-            return null;
-          }
-
-          // Tenta extrair seções e itens
-          const sections = [];
-          let currentSection = null;
-          let title = "";
-          let description = "";
-          
-          // Extrai o título e descrição (primeiras linhas antes das seções)
-          const lines = text.split('\n');
-          let i = 0;
-          
-          // Pula linhas vazias iniciais
-          while (i < lines.length && lines[i].trim() === '') i++;
-          
-          // Título pode ser a primeira linha não vazia
-          if (i < lines.length) {
-            // Verificamos se a primeira linha não é já um item de lista
-            if (!lines[i].match(/^(\d+\.\s*\*\*|\-\s*\*\*|\*\*)/)) {
-              title = lines[i].replace(/[*#]/g, '').trim();
-              i++;
-            }
-          }
-          
-          // Descrição pode ser as próximas linhas até encontrar uma seção ou item numerado
-          let descLines = [];
-          while (i < lines.length && 
-                !lines[i].match(/^\*\*[^*]+\*\*:?$/) && 
-                !lines[i].startsWith('**') && 
-                !lines[i].match(/^\d+\.\s*\*\*/)) {
-            if (lines[i].trim() !== '') {
-              descLines.push(lines[i].trim());
-            }
-            i++;
-          }
-          description = descLines.join(' ').trim();
-          
-          // Se não encontramos título ou seções explícitas,
-          // vamos criar uma seção única para os itens numerados
-          let hasNumberedItems = false;
-          currentSection = {
-            title: "Serviços",
-            rows: []
-          };
-          sections.push(currentSection);
-          
-          // Processa o resto do texto para encontrar seções e itens
-          for (; i < lines.length; i++) {
-            const line = lines[i].trim();
-            
-            // Ignora linhas vazias
-            if (line === '') continue;
-            
-            // Verifica se é um título de seção
-            const sectionMatch = line.match(/^\*\*([^*]+)\*\*:?$/); // Ex: **Doces:**
-            if (sectionMatch || (line.startsWith('**') && line.endsWith('**:')) ||
-                line.endsWith('**')) {
-              let sectionTitle = line.replace(/^\*\*|\*\*:?$/g, '').trim();
-              
-              // Cria nova seção
-              currentSection = {
-                title: sectionTitle,
-                rows: []
-              };
-              sections.push(currentSection);
-              continue;
-            }
-            
-            // Verifica se é um item de lista com marcador (-)
-            const bulletItemMatch = line.match(/^-\s*\*\*([^*]+)\*\*:?(.*)$/); // Ex: - **Bombom de Morango:** R$ 12,00
-            if (bulletItemMatch && currentSection) {
-              let itemTitle = bulletItemMatch[1].trim();
-              let itemDescription = bulletItemMatch[2].trim();
-              
-              currentSection.rows.push({
-                title: itemTitle,
-                description: itemDescription,
-                rowId: ""
-              });
-              continue;
-            }
-            
-            // Verifica se é um item de lista numerada
-            const numberedItemMatch = line.match(/^\d+\.\s*\*\*([^*]+)\*\*:?(.*)$/); // Ex: 1. **Urgências**: Atendidas...
-            if (numberedItemMatch) {
-              hasNumberedItems = true;
-              let itemTitle = numberedItemMatch[1].trim();
-              let itemDescription = numberedItemMatch[2].trim();
-              
-              // Se a descrição continua nas próximas linhas (sem ser item ou seção)
-              let j = i + 1;
-              while (j < lines.length && 
-                     lines[j].trim() !== '' && 
-                     !lines[j].match(/^\d+\.\s*\*\*/) && 
-                     !lines[j].match(/^-\s*\*\*/) &&
-                     !lines[j].match(/^\*\*[^*]+\*\*:?$/)) {
-                itemDescription += " " + lines[j].trim();
-                j++;
-              }
-              
-              // Avançamos o índice se processamos linhas adicionais
-              if (j > i + 1) {
-                i = j - 1;
-              }
-              
-              currentSection.rows.push({
-                title: itemTitle,
-                description: itemDescription,
-                rowId: ""
-              });
-              continue;
-            }
-          }
-          
-          // Se encontrou seções ou itens numerados, retorna objeto formatado
-          if (sections.length > 1 || (sections.length === 1 && currentSection.rows.length > 0)) {
-            // Remover a primeira seção genérica se não tiver itens
-            if (sections.length > 1 && sections[0].rows.length === 0) {
-              sections.shift();
-            }
-            
-            // Detecta o idioma pelo conteúdo para determinar o texto do botão
-            let buttonText = "📋";
-            if (title.toLowerCase().includes("cardápio") || 
-                title.toLowerCase().includes("menu") || 
-                description.toLowerCase().includes("cardápio")) {
-              buttonText = "Ver cardápio 📋";
-            } else if (title.toLowerCase().includes("serviço") || 
-                description.toLowerCase().includes("serviço") ||
-                title.toLowerCase().includes("atendimento")) {
-              buttonText = "Ver serviços 📋";
-            } else if (title.toLowerCase().includes("lista") || 
-                description.toLowerCase().includes("lista")) {
-              buttonText = "Ver lista 📋";
-            }
-            
-            return {
-              title: title || "",
-              description: description || "👇", 
-              buttonText: buttonText,
-              footerText: "",
-              sections: sections
-            };
-          }
-          
-          return null;
-        };
-
         // Função para processar e enviar as partes do texto
         const processAndSendParts = async (parts, metadata) => {
           for (let i = 0; i < parts.length; i++) {
@@ -541,14 +388,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             const isLastPart = i === parts.length - 1;
             
             if (part.type === 'text') {
-              // Verifica se o texto contém uma lista formatada e se a opção está ativada
-              const formattedList = node.data.extractList ? extractFormattedList(part.content) : null;
-              
-              if (formattedList) {
-                // Se encontrou uma lista formatada, envia com o metadata de lista
-                await sendMessage(part.content, null, updatedSession.id, { list: formattedList });
-              } else if (node.data.splitParagraphs) {
-                // Se não encontrou lista, segue com o comportamento normal de splitParagraphs
+              if (node.data.splitParagraphs) {
+                // Se for texto com parágrafos, segue com o comportamento normal de splitParagraphs
                 const paragraphs = part.content
                   .split('\n\n')
                   .filter(paragraph => paragraph.trim().length > 0);
@@ -569,6 +410,13 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                 const currentMetadata = isLastPart ? metadata : null;
                 await sendMessage(part.content, null, updatedSession.id, currentMetadata);
               }
+            } else if (part.type === 'list') {
+              // console.log('Enviando lista', part.content);
+              // Envia a lista diretamente
+              await sendMessage(`${part.content ?? 'Lista'} \n\n ${part.metadata?.description ?? ''}`, null, updatedSession.id, { list: part.content });
+              
+              // Adiciona um delay maior após enviar lista
+              await processDelay(3);
             } else if (part.type === 'link' && part.mediaType) {
               // Se for um link de mídia, envia como anexo
               await sendMessage(null, {
@@ -596,20 +444,27 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           }
         };
 
-        // Processa o texto com ou sem extração de links
-        if (node.data.extractLinks) {
+        // Processa o texto com prioridade: extractJsonList -> extractLinks -> splitParagraphs
+        
+        // 1. Primeiro verifica se o texto contém blocos de código JSON
+        const jsonParts = extractJsonList(processedText);
+        
+        if (jsonParts.length > 1 || (jsonParts.length === 1 && jsonParts[0].type === 'list')) {
+          // Se encontrou blocos JSON, processa cada parte
+          // console.log('Processando texto com blocos JSON');
+          await processAndSendParts(jsonParts, null);
+        } 
+        // 2. Se não tem JSON, verifica se deve extrair links
+        else if (node.data.extractLinks) {
+          console.log('Processando texto com extração de links');
           const parts = extractLinks(processedText);
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await processAndSendParts(parts, metadata);
-        } else {
-          // Verifica se o texto contém uma lista formatada e se a opção está ativada
-          const formattedList = node.data.extractList ? extractFormattedList(processedText) : null;
-          
-          if (formattedList) {
-            // Se encontrou uma lista formatada, envia com o metadata de lista
-            await sendMessage(processedText, null, updatedSession.id, { list: formattedList });
-          } else if (node.data.splitParagraphs) {
-            // Comportamento existente para splitParagraphs
+        } 
+        // 3. Se não tem JSON nem links, verifica se deve separar por parágrafos
+        else if (node.data.splitParagraphs) {
+          // Comportamento existente para splitParagraphs
+          console.log('Processando parágrafos separados');
           const paragraphs = processedText
             .split('\n\n')
             .filter(paragraph => paragraph.trim().length > 0);
@@ -622,14 +477,16 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             await sendMessage(paragraph, null, updatedSession.id, metadata);
             
             if (paragraphs.length > 1 && !isLastParagraph) {
-                await processDelay(2);
+              await processDelay(2);
             }
           }
-        } else {
-            // Comportamento padrão
+        } 
+        // 4. Caso contrário, envia o texto completo sem processamento
+        else {
+          // Comportamento padrão
+          console.log('Enviando texto completo sem processamento');
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await sendMessage(processedText, null, updatedSession.id, metadata);
-          }
         }
         break;
 
@@ -1763,6 +1620,61 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       Sentry.captureException(error);
       console.error(`Erro ao processar timeout da sessão ${session.id}:`, error);
     }
+  };
+
+  // Função para extrair listas de blocos de código JSON no texto
+  const extractJsonList = (text) => {
+    // console.log('Verificando blocos JSON no texto');
+    // Regex para encontrar blocos de código JSON
+    const jsonBlockRegex = /```(?:json)?\s*\n([\s\S]+?)\n```/g;
+    
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = jsonBlockRegex.exec(text)) !== null) {
+      // console.log('Encontrou bloco JSON em:', match.index);
+      // Adiciona o texto antes do bloco JSON
+      if (match.index > lastIndex) {
+        parts.push({
+          type: 'text',
+          content: text.slice(lastIndex, match.index).trim()
+        });
+      }
+      
+      // Tenta analisar o JSON
+      try {
+        const jsonContent = match[1].trim();
+        // console.log('Conteúdo JSON:', jsonContent.substring(0, 100) + '...');
+        const listData = JSON.parse(jsonContent);
+        
+        parts.push({
+          type: 'list',
+          content: listData
+        });
+      } catch (e) {
+        console.log('Erro ao analisar JSON:', e);
+        // Se falhar, adiciona como texto normal
+        parts.push({
+          type: 'text',
+          content: match[0]
+        });
+      }
+      
+      lastIndex = match.index + match[0].length;
+    }
+    
+    // Adiciona o texto restante após o último bloco JSON
+    if (lastIndex < text.length) {
+      parts.push({
+        type: 'text',
+        content: text.slice(lastIndex).trim()
+      });
+    }
+    
+    // console.log('Partes extraídas:', parts.length, 'Tipos:', parts.map(p => p.type).join(', '));
+    return parts;
+    // return parts.filter(part => part.content && part.content.length > 0);
   };
 
   return {
