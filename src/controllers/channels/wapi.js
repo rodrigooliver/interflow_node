@@ -354,22 +354,50 @@ export async function testWapiConnection(req, res) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      const error = new Error(errorData.message || 'Failed to connect to WApi server');
+      const errorText = await response.text();
+      let errorData;
+      
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (parseError) {
+        errorData = { raw: errorText };
+      }
+      
+      const errorMessage = errorData.message || 'Falha ao conectar ao servidor WAPI';
+      
+      const error = new Error(errorMessage);
       Sentry.captureException(error, {
         extra: {
           apiHost,
           channelId: req.params.channelId,
-          errorData
+          errorData,
+          status: response.status,
+          statusText: response.statusText
         }
       });
-      throw error;
+      
+      console.error('Erro detalhado da API WAPI (testConnection):', {
+        status: response.status,
+        statusText: response.statusText,
+        data: errorData
+      });
+      
+      return res.status(response.status).json({
+        success: false,
+        error: errorMessage,
+        details: {
+          status: response.status,
+          data: errorData
+        }
+      });
     }
 
     const data = await response.json();
 
     if (data.error) {
-      const error = new Error(data.error || 'Invalid WApi credentials');
+      const errorMessage = data.message || 'Credenciais WAPI inválidas';
+      
+      const error = new Error(errorMessage);
       Sentry.captureException(error, {
         extra: {
           apiHost,
@@ -377,7 +405,14 @@ export async function testWapiConnection(req, res) {
           data
         }
       });
-      throw error;
+      
+      console.error('Erro retornado pela API WAPI:', data);
+      
+      return res.status(400).json({
+        success: false,
+        error: errorMessage,
+        details: data
+      });
     }
 
     // Se temos channelId nos parâmetros, atualizar o canal no banco
@@ -434,16 +469,28 @@ export async function testWapiConnection(req, res) {
     });
     
   } catch (error) {
+    let errorMessage = error.message;
+    
+    // Verificar se o erro contém informações da API
+    if (error.responseData && error.responseData.message) {
+      errorMessage = error.responseData.message;
+    }
+    
     Sentry.captureException(error, {
       extra: { 
         channelId: req.params.channelId,
         apiHost 
       }
     });
-    console.error('Erro ao testar conexão WApi:', error);
+    
+    console.error('Erro ao testar conexão WAPI:', error);
+    
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errorMessage,
+      details: {
+        stack: error.stack
+      }
     });
   }
 }
@@ -683,28 +730,63 @@ export async function resetWapiConnection(req, res) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      const error = new Error(errorData.message || 'Failed to reset WApi instance');
+      const errorText = await response.text();
+      let errorData;
+      
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (parseError) {
+        errorData = { raw: errorText };
+      }
+      
+      const errorMessage = errorData.message || `Falha ao reiniciar instância WAPI: ${response.statusText}`;
+      
+      const error = new Error(errorMessage);
       Sentry.captureException(error, {
         extra: {
           channelId: channel.id,
-          errorData
+          errorData,
+          status: response.status,
+          statusText: response.statusText
         }
       });
-      throw error;
+      
+      console.error('Erro detalhado da API WAPI (resetConnection):', {
+        status: response.status,
+        statusText: response.statusText,
+        data: errorData
+      });
+      
+      return res.status(response.status).json({
+        success: false,
+        error: errorMessage,
+        details: {
+          status: response.status,
+          data: errorData
+        }
+      });
     }
 
     const data = await response.json();
 
     if (data.error) {
-      const error = new Error(data.message || 'Failed to reset WApi instance');
+      const errorMessage = data.message || 'Falha ao reiniciar instância WAPI';
+      
+      const error = new Error(errorMessage);
       Sentry.captureException(error, {
         extra: {
           channelId: channel.id,
           data
         }
       });
-      throw error;
+      
+      console.error('Erro retornado pela API WAPI (reset):', data);
+      
+      return res.status(400).json({
+        success: false,
+        error: errorMessage,
+        details: data
+      });
     }
 
     // Atualizar status no banco de dados
@@ -719,13 +801,25 @@ export async function resetWapiConnection(req, res) {
 
     res.json({ success: true });
   } catch (error) {
+    let errorMessage = error.message;
+    
+    // Verificar se o erro contém informações da API
+    if (error.responseData && error.responseData.message) {
+      errorMessage = error.responseData.message;
+    }
+    
     Sentry.captureException(error, {
       extra: { channelId }
     });
-    console.error('Error resetting WApi connection:', error);
+    
+    console.error('Erro ao reiniciar conexão WAPI:', error);
+    
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errorMessage,
+      details: {
+        stack: error.stack
+      }
     });
   }
 }
@@ -1258,6 +1352,7 @@ export async function createInterflowChannel(req, res) {
 
     // Criar nova conexão na W-API
     try {
+      console.log('Criando nova conexão na W-API', process.env.WAPI_ACCOUNT_ID);
       const wapiResponse = await fetch(`https://api-painel.w-api.app/createNewConnection?id=${process.env.WAPI_ACCOUNT_ID}`, {
         method: 'POST',
         headers: {
@@ -1266,20 +1361,51 @@ export async function createInterflowChannel(req, res) {
       });
 
       if (!wapiResponse.ok) {
-        const error = new Error('Falha ao criar conexão na W-API');
+        // Capturar detalhes completos da resposta de erro
+        const errorText = await wapiResponse.text();
+        let errorData;
+        
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (parseError) {
+          errorData = { raw: errorText };
+        }
+        
+        const errorMessage = errorData.message || `Status ${wapiResponse.status} - ${wapiResponse.statusText}`;
+        const error = new Error(`Falha ao criar conexão na W-API: ${errorMessage}`);
+        
         Sentry.captureException(error, {
           extra: {
             organizationId,
-            name
+            name,
+            status: wapiResponse.status,
+            statusText: wapiResponse.statusText,
+            responseData: errorData
           }
         });
-        throw error;
+        
+        console.error('Erro detalhado da API WAPI:', {
+          status: wapiResponse.status,
+          statusText: wapiResponse.statusText,
+          data: errorData
+        });
+        
+        return res.status(500).json({
+          success: false,
+          error: errorMessage,
+          details: {
+            status: wapiResponse.status,
+            data: errorData
+          }
+        });
       }
 
       const wapiData = await wapiResponse.json();
 
       if (wapiData.error) {
-        const error = new Error(wapiData.message || 'Erro retornado pela W-API');
+        const errorMessage = wapiData.message || 'Erro retornado pela W-API';
+        const error = new Error(errorMessage);
+        
         Sentry.captureException(error, {
           extra: {
             organizationId,
@@ -1287,7 +1413,14 @@ export async function createInterflowChannel(req, res) {
             wapiData
           }
         });
-        throw error;
+        
+        console.error('Erro retornado pela W-API:', wapiData);
+        
+        return res.status(500).json({
+          success: false,
+          error: errorMessage,
+          details: wapiData
+        });
       }
 
       // Criar credenciais com os dados retornados
@@ -1347,28 +1480,62 @@ export async function createInterflowChannel(req, res) {
       });
 
     } catch (wapiError) {
-      const error = new Error(`Erro ao criar conexão W-API: ${wapiError.message}`);
+      // Verificar se o erro tem uma propriedade de resposta da API
+      let errorMessage = wapiError.message;
+      
+      // Tentar extrair mensagem de erro específica da API
+      if (wapiError.responseData && wapiError.responseData.message) {
+        errorMessage = wapiError.responseData.message;
+      }
+      
+      const error = new Error(`Erro ao criar conexão W-API: ${errorMessage}`);
+      
       Sentry.captureException(error, {
         extra: {
           organizationId,
           name,
-          wapiError
+          wapiError: {
+            message: wapiError.message,
+            stack: wapiError.stack
+          }
         }
       });
-      throw error;
+      
+      console.error('Erro completo ao criar conexão W-API:', wapiError);
+      
+      return res.status(500).json({
+        success: false,
+        error: errorMessage,
+        details: {
+          stack: wapiError.stack
+        }
+      });
     }
 
   } catch (error) {
+    // Verificar se o erro tem uma mensagem específica da API
+    let errorMessage = error.message;
+    
+    // Tentar extrair mensagem de erro específica
+    if (error.responseData && error.responseData.message) {
+      errorMessage = error.responseData.message;
+    }
+    
     Sentry.captureException(error, {
       extra: {
         organizationId,
         name
       }
     });
+    
     console.error('Error creating Interflow channel:', error);
+    
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errorMessage,
+      details: {
+        stack: error.stack
+      }
     });
   }
 }

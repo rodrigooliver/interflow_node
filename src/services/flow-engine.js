@@ -383,6 +383,18 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
         // Função para processar e enviar as partes do texto
         const processAndSendParts = async (parts, metadata) => {
+          // Função auxiliar para enviar uma mensagem e aguardar antes de prosseguir
+          const sendWithDelay = async (content, files, sessionId, meta, delaySeconds) => {
+            // Envia a mensagem e espera a conclusão completa
+            const result = await sendMessage(content, files, sessionId, meta);
+            
+            // Aguarda tempo adicional após o envio para garantir que a mensagem seja processada
+            await processDelay(delaySeconds || 2);
+            
+            return result;
+          };
+          
+          // Processa as partes sequencialmente
           for (let i = 0; i < parts.length; i++) {
             const part = parts[i];
             const isLastPart = i === parts.length - 1;
@@ -399,47 +411,50 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                   const isLastParagraph = j === paragraphs.length - 1;
                   
                   const currentMetadata = isLastParagraph && isLastPart ? metadata : null;
-                  await sendMessage(paragraph, null, updatedSession.id, currentMetadata);
-                  
-                  if (paragraphs.length > 1 && !isLastParagraph) {
-                    await processDelay(2);
-                  }
+                  await sendWithDelay(paragraph, null, updatedSession.id, currentMetadata, 2);
                 }
               } else {
                 // Comportamento padrão para texto
                 const currentMetadata = isLastPart ? metadata : null;
-                await sendMessage(part.content, null, updatedSession.id, currentMetadata);
+                await sendWithDelay(part.content, null, updatedSession.id, currentMetadata, 2);
               }
             } else if (part.type === 'list') {
-              // console.log('Enviando lista', part.content);
-              // Envia a lista diretamente
-              await sendMessage(`${part.content ?? 'Lista'} \n\n ${part.metadata?.description ?? ''}`, null, updatedSession.id, { list: part.content });
-              
-              // Adiciona um delay maior após enviar lista
-              await processDelay(3);
+              // Envia a lista com delay maior
+              await sendWithDelay(
+                `${part.content ?? 'Lista'} \n\n ${part.metadata?.description ?? ''}`,
+                null, 
+                updatedSession.id, 
+                { list: part.content },
+                3
+              );
             } else if (part.type === 'link' && part.mediaType) {
               // Se for um link de mídia, envia como anexo
-              await sendMessage(null, {
-                attachments: [{
-                  url: part.url,
-                  type: part.mediaType,
-                  content: part.content
-                }]
-              }, updatedSession.id);
-              
-              // Adiciona um delay maior após enviar arquivos de mídia
-              // para garantir que o arquivo seja enviado completamente
-              await processDelay(5);
+              await sendWithDelay(
+                null, 
+                {
+                  attachments: [{
+                    url: part.url,
+                    type: part.mediaType,
+                    content: part.content
+                  }]
+                }, 
+                updatedSession.id,
+                null,
+                5
+              );
             } else if (part.type === 'link') {
-              await sendMessage(`${part.url}`, null, updatedSession.id);
-              
-              // Adiciona um delay maior para links também
-              await processDelay(3);
+              await sendWithDelay(
+                `${part.url}`, 
+                null, 
+                updatedSession.id,
+                null,
+                3
+              );
             }
             
-            // Adiciona delay entre partes se não for a última
+            // Sempre espera um tempo entre diferentes partes para garantir a ordem
             if (!isLastPart) {
-              await processDelay(2);
+              await processDelay(1);
             }
           }
         };
