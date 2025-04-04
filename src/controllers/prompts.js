@@ -474,10 +474,10 @@ export const improveTextWithOpenAI = async (req, res) => {
       }
       
       // Combinar o prompt base com o conteúdo do prompt personalizado
-      systemPrompt = `${prompt.content}\n\n${basePrompt}`;
+      systemPrompt = prompt.content;
 
-      // Adicionar a mensagem do usuário com o texto a ser melhorado
-      messages = [{ role: 'user', content: text }];
+      // Adicionar a mensagem do usuário com o texto a ser melhorado e incluir o basePrompt
+      messages = [{ role: 'user', content: `${basePrompt}\n\n${text}` }];
     }
 
     // Adicionar instrução para responder no idioma selecionado
