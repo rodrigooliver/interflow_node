@@ -40,6 +40,7 @@ export async function handleWapiWebhook(req, res) {
     switch (webhookData.event) {
       case 'messageReceived':
       case 'messageSent':
+        // console.log('messageReceived', webhookData);
         const normalizedMessage = normalizeWapiMessage(webhookData);
         normalizedMessage.event = webhookData.event;
         await handleIncomingMessage(channel, normalizedMessage);

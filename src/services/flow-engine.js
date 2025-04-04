@@ -389,7 +389,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             const result = await sendMessage(content, files, sessionId, meta);
             
             // Aguarda tempo adicional após o envio para garantir que a mensagem seja processada
-            await processDelay(delaySeconds || 2);
+            await processDelay(delaySeconds || 3);
             
             return result;
           };
@@ -411,7 +411,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                   const isLastParagraph = j === paragraphs.length - 1;
                   
                   const currentMetadata = isLastParagraph && isLastPart ? metadata : null;
-                  await sendWithDelay(paragraph, null, updatedSession.id, currentMetadata, 2);
+                  await sendWithDelay(paragraph, null, updatedSession.id, currentMetadata, 3);
                 }
               } else {
                 // Comportamento padrão para texto
@@ -425,7 +425,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                 null, 
                 updatedSession.id, 
                 { list: part.content },
-                3
+                4
               );
             } else if (part.type === 'link' && part.mediaType) {
               // Se for um link de mídia, envia como anexo
@@ -448,7 +448,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                 null, 
                 updatedSession.id,
                 null,
-                3
+                5
               );
             }
             

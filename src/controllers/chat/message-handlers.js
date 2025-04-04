@@ -332,12 +332,12 @@ export async function handleIncomingMessage(channel, messageData) {
           messageData.message.raw.sticker))) {
       
       try {
-        console.log('[MessageHandlers] Iniciando processamento de mídia:', {
-          hasAttachments: messageData.attachments?.length > 0,
-          hasMediaUrl: !!messageData.message?.mediaUrl,
-          hasRawData: !!messageData.message?.raw,
-          messageId: messageData.messageId
-        });
+        // console.log('[MessageHandlers] Iniciando processamento de mídia:', {
+        //   hasAttachments: messageData.attachments?.length > 0,
+        //   hasMediaUrl: !!messageData.message?.mediaUrl,
+        //   hasRawData: !!messageData.message?.raw,
+        //   messageId: messageData.messageId
+        // });
 
         const mediaResult = await processMessageMedia(messageData, organization.id);
         
@@ -711,11 +711,11 @@ async function processMessageMedia(messageData, organizationId) {
     
     // Converter URL relativa para absoluta se necessário
     if (mediaUrl) {
-      console.log('[MessageHandlers] Processando URL de mídia:', {
-        mediaUrl,
-        mimeType,
-        messageId: messageData.messageId
-      });
+      // console.log('[MessageHandlers] Processando URL de mídia:', {
+      //   mediaUrl,
+      //   mimeType,
+      //   messageId: messageData.messageId
+      // });
 
       // Verifica se a URL é absoluta (começa com http:// ou https://)
       if (!mediaUrl.startsWith('http://') && !mediaUrl.startsWith('https://')) {
@@ -733,10 +733,10 @@ async function processMessageMedia(messageData, organizationId) {
     
     // Tentar usar o base64 primeiro se disponível
     if (mediaBase64) {
-      console.log('[MessageHandlers] Processando mídia base64:', {
-        mimeType,
-        messageId: messageData.messageId
-      });
+      // console.log('[MessageHandlers] Processando mídia base64:', {
+      //   mimeType,
+      //   messageId: messageData.messageId
+      // });
 
       try {
         // Usar a função uploadFile diretamente com os dados base64
@@ -750,10 +750,10 @@ async function processMessageMedia(messageData, organizationId) {
         });
         
         if (uploadResult.success) {
-          console.log('[MessageHandlers] Upload base64 realizado com sucesso:', {
-            uploadResult,
-            messageId: messageData.messageId
-          });
+          // console.log('[MessageHandlers] Upload base64 realizado com sucesso:', {
+          //   uploadResult,
+          //   messageId: messageData.messageId
+          // });
 
           return {
             success: true,
