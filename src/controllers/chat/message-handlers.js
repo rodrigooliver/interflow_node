@@ -185,13 +185,13 @@ export async function handleIncomingMessage(channel, messageData) {
         customer = chat.customers;
         if(messageData.externalProfilePicture) {
           //Atualizar o profile_picture do chat
-          const { error: updateError } = await supabase
+          supabase
             .from('chats')
             .update({ profile_picture: messageData.externalProfilePicture })
             .eq('id', chat.id);
 
           //Atualizar o profile_picture do customer
-          const { error: updateCustomerError } = await supabase
+          supabase
             .from('customers')
             .update({ profile_picture: messageData.externalProfilePicture })
             .eq('id', customer.id);
