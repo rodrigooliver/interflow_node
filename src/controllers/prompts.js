@@ -491,17 +491,20 @@ export const improveTextWithOpenAI = async (req, res) => {
 
     // Chamar a API da OpenAI
     try {
-      const response = await axios.post(
-        'https://api.openai.com/v1/chat/completions',
-        {
-          model,
-          messages: [
+      const apiRequestBody = {
+        model,
+        messages: improveOption === 'generate' ?
+          [
             { role: 'system', content: systemPrompt },
             ...messages
-          ],
-          temperature,
-          max_tokens: 2000
-        },
+          ] : [...messages],
+        temperature,
+        max_tokens: 2000
+      };
+
+      const response = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        apiRequestBody,
         {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
