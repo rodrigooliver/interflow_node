@@ -297,6 +297,8 @@ async function handleConnectedInstance(channel, webhookData) {
       .from('chat_channels')
       .update({
         is_connected: true,
+        is_tested: true,
+        status: 'active',
         credentials: {
           ...channel.credentials,
           connectedPhone: webhookData.connectedPhone,
