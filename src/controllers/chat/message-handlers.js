@@ -183,6 +183,19 @@ export async function handleIncomingMessage(channel, messageData) {
       
       if (chat) {
         customer = chat.customers;
+        if(messageData.externalProfilePicture) {
+          //Atualizar o profile_picture do chat
+          const { error: updateError } = await supabase
+            .from('chats')
+            .update({ profile_picture: messageData.externalProfilePicture })
+            .eq('id', chat.id);
+
+          //Atualizar o profile_picture do customer
+          const { error: updateCustomerError } = await supabase
+            .from('customers')
+            .update({ profile_picture: messageData.externalProfilePicture })
+            .eq('id', customer.id);
+        }
       } else {
         isFirstMessage = true;
 
