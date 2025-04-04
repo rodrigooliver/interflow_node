@@ -185,16 +185,16 @@ export async function handleIncomingMessage(channel, messageData) {
         customer = chat.customers;
         if(messageData.externalProfilePicture) {
           //Atualizar o profile_picture do chat
-          supabase
-            .from('chats')
-            .update({ profile_picture: messageData.externalProfilePicture })
-            .eq('id', chat.id);
+          // supabase
+          //   .from('chats')
+          //   .update({ profile_picture: messageData.externalProfilePicture })
+          //   .eq('id', chat.id);
 
-          //Atualizar o profile_picture do customer
-          supabase
-            .from('customers')
-            .update({ profile_picture: messageData.externalProfilePicture })
-            .eq('id', customer.id);
+          // //Atualizar o profile_picture do customer
+          // supabase
+          //   .from('customers')
+          //   .update({ profile_picture: messageData.externalProfilePicture })
+          //   .eq('id', customer.id);
         }
       } else {
         isFirstMessage = true;

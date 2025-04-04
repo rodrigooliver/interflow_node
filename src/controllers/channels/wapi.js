@@ -25,7 +25,7 @@ export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
 
-  // console.log(webhookData)
+  console.log(webhookData)
 
   try {
     // Get channel details
