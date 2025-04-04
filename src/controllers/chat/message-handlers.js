@@ -1576,7 +1576,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         channel_id,
         channel_details:channel_id (
           id,
-          type
+          type,
+          settings
         )
       `)
       .eq('id', chatId)
@@ -1626,8 +1627,45 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       'facebook'
     ].includes(channelType);
 
-    // Verificar se existe integração ativa de S3
-    const s3Integration = await getActiveS3Integration(organizationId);
+    
+    // Se houver userId e uma assinatura de mensagem configurada no canal, processar a assinatura
+    let processedContent = content;
+    if (userId && chatData.channel_details?.settings?.messageSignature && content) {
+      try {
+        // Buscar os dados do perfil do usuário
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('nickname')
+          .eq('id', userId)
+          .single();
+        
+        if (!profileError && profile && profile.nickname) {
+          const signature = chatData.channel_details.settings.messageSignature;
+          
+          // Substituir {{nickname}} pelo nickname do agente
+          let formattedSignature = signature.replace(/{{nickname}}/g, profile.nickname);
+          
+          // Verificar se a assinatura contém {{contentMessage}}
+          if (formattedSignature.includes('{{contentMessage}}')) {
+            // Substituir {{contentMessage}} pelo conteúdo original
+            processedContent = formattedSignature.replace(/{{contentMessage}}/g, content);
+          } else {
+            // Adicionar a assinatura após o conteúdo
+            processedContent = content + '\n\n' + formattedSignature;
+          }
+        }
+      } catch (signatureError) {
+        Sentry.captureException(signatureError, {
+          extra: {
+            userId,
+            channelId: chatData.channel_id,
+            context: 'processing_message_signature'
+          }
+        });
+        console.error('Erro ao processar assinatura da mensagem:', signatureError);
+        // Em caso de erro, usa o conteúdo original
+      }
+    }
     
     // Preparar anexos
     const attachments = [];
@@ -1703,10 +1741,10 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     }
 
     // Adicionar mensagem de texto
-    if (content) {
+    if (processedContent) {
       // Aplicar formatação específica do canal se disponível
       // const formattedContent = channelConfig.formatMessage ? channelConfig.formatMessage(content) : content;
-      const formattedContent = content;
+      const formattedContent = processedContent;
       
       if (isSocialChannel && hasFiles) {
         // Para canais sociais com arquivos, adicionar mensagem de texto separada
@@ -1762,7 +1800,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         error: 'No content or attachments provided'
       }
 
-    } else if (!isSocialChannel && !content && hasFiles) {
+    } else if (!isSocialChannel && !processedContent && hasFiles) {
       // Para email sem texto, mas com anexos
       messages.push({
         chat_id: chatId,

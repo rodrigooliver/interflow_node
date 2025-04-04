@@ -168,7 +168,7 @@ const roleTranslations = {
 export const updateMember = async (req, res) => {
   try {
   const { id } = req.params;
-    const { fullName, email, avatarUrl, whatsapp } = req.body;
+    const { fullName, email, avatarUrl, whatsapp, nickname } = req.body;
     // console.log(req.params)
 
     // 1. Primeiro, buscar o perfil atual para verificar se o email mudou
@@ -201,6 +201,7 @@ export const updateMember = async (req, res) => {
         full_name: fullName,
         email: email,
         avatar_url: avatarUrl,
+        nickname: nickname,
         whatsapp: whatsapp
       })
       .eq('id', id)

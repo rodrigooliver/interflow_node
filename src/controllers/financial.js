@@ -416,7 +416,11 @@ export const addAllFinancialDefaults = async (req, res) => {
   }
 };
 
-// Função para regenerar transações futuras para uma série específica
+/**
+ * Regenera transações futuras para uma série recorrente
+ * @param {Object} req - Objeto de requisição Express
+ * @param {Object} res - Objeto de resposta Express
+ */
 export const regenerateRecurringSeries = async (req, res) => {
   try {
     const { organizationId, transactionId } = req.params;
@@ -591,6 +595,106 @@ export const regenerateRecurringSeries = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Erro ao regenerar série recorrente',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Atualiza o status de uma transação financeira
+ * @param {Object} req - Objeto de requisição Express
+ * @param {Object} res - Objeto de resposta Express
+ */
+export const updateTransactionStatus = async (req, res) => {
+  try {
+    const { organizationId, transactionId } = req.params;
+    const { status, payment_date } = req.body;
+    
+    if (!organizationId || !transactionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'IDs da organização e transação são obrigatórios'
+      });
+    }
+    
+    if (!status || !['paid', 'received', 'pending', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status inválido. Valores permitidos: paid, received, pending, cancelled'
+      });
+    }
+    
+    // Verificar se a transação existe e pertence à organização
+    const { data: transaction, error: transactionError } = await supabase
+      .from('financial_transactions')
+      .select('id, transaction_type')
+      .eq('id', transactionId)
+      .eq('organization_id', organizationId)
+      .single();
+    
+    if (transactionError || !transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transação não encontrada ou não pertence à organização'
+      });
+    }
+    
+    // Verificar se o status é válido para o tipo de transação
+    if (transaction.transaction_type === 'income' && status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Transações de receita devem usar o status "received", não "paid"'
+      });
+    }
+    
+    if (transaction.transaction_type === 'expense' && status === 'received') {
+      return res.status(400).json({
+        success: false,
+        message: 'Transações de despesa devem usar o status "paid", não "received"'
+      });
+    }
+    
+    // Preparar dados para atualização
+    const updateData = {
+      status,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Adicionar data de pagamento se for necessário
+    if ((status === 'paid' || status === 'received') && payment_date) {
+      updateData.payment_date = payment_date;
+    } else if (status === 'pending' || status === 'cancelled') {
+      updateData.payment_date = null;
+    }
+    
+    // Atualizar a transação
+    const { error: updateError } = await supabase
+      .from('financial_transactions')
+      .update(updateData)
+      .eq('id', transactionId)
+      .eq('organization_id', organizationId);
+    
+    if (updateError) {
+      console.error('Erro ao atualizar status da transação:', updateError);
+      return res.status(500).json({
+        success: false,
+        message: 'Erro ao atualizar status da transação',
+        error: updateError.message
+      });
+    }
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Status da transação atualizado com sucesso',
+      data: { transaction_id: transactionId, status, payment_date: updateData.payment_date }
+    });
+  } catch (error) {
+    console.error('Erro ao processar atualização de status:', error);
+    Sentry.captureException(error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Erro interno ao processar atualização de status',
       error: error.message
     });
   }

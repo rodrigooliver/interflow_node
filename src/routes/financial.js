@@ -6,7 +6,8 @@ import {
   addDefaultFinancialCategories,
   addDefaultPaymentMethods,
   addAllFinancialDefaults,
-  regenerateRecurringSeries
+  regenerateRecurringSeries,
+  updateTransactionStatus
 } from '../controllers/financial.js';
 
 const router = express.Router();
@@ -59,5 +60,12 @@ router.post('/defaults/all', addAllFinancialDefaults);
  * @access Private
  */
 router.post('/transactions/:transactionId/regenerate-series', regenerateRecurringSeries);
+
+/**
+ * @route POST /api/:organizationId/financial/transactions/:transactionId/status
+ * @desc Atualiza o status de uma transação financeira
+ * @access Private
+ */
+router.post('/transactions/:transactionId/status', updateTransactionStatus);
 
 export default router; 
