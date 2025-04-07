@@ -268,10 +268,9 @@ export const inviteMember = async (req, res) => {
 
     // Se o usuário já existe, verificar se já está vinculado à organização
     if (existingUser) {
-     
       const { data: existingMember, error: memberError } = await supabase
         .from('organization_members')
-        .select('id')
+        .select('id, status')
         .eq('organization_id', organizationId)
         .eq('user_id', existingUser.id)
         .maybeSingle();
@@ -280,13 +279,12 @@ export const inviteMember = async (req, res) => {
         throw memberError;
       }
 
-      // Se o usuário já está vinculado à organização, retornar erro
-      if (existingMember) {
-        return res.status(400).json({ error: 'Usuário já é membro desta organização' });
+      // Se o usuário já está ativo na organização, retornar erro
+      if (existingMember?.status === 'active') {
+        return res.status(400).json({ error: 'Usuário já é membro ativo desta organização' });
       }
 
-      // Se o usuário existe mas não está vinculado à organização, criar um token seguro
-      // para vincular o usuário à organização
+      // Criar um token seguro para vincular o usuário à organização
       const token = Buffer.from(JSON.stringify({
         userId: existingUser.id,
         organizationId,
@@ -323,21 +321,35 @@ export const inviteMember = async (req, res) => {
         throw new Error('Falha ao enviar email de convite');
       }
 
-      // Adicionar à organização
-      const { error: addMemberError } = await supabase
-        .from('organization_members')
-        .insert([
-          {
-            organization_id: organizationId,
-            user_id: existingUser.id,
-            profile_id: existingUser.id,
-            role: role,
-            status: 'pending'
-          },
-        ]);
+      if (existingMember?.status === 'pending') {
+        // Se já existe um convite pendente, apenas atualizar o role se necessário
+        if (existingMember.role !== role) {
+          const { error: updateError } = await supabase
+            .from('organization_members')
+            .update({ role })
+            .eq('id', existingMember.id);
 
-      if (addMemberError) {
-        throw addMemberError;
+          if (updateError) {
+            throw updateError;
+          }
+        }
+      } else {
+        // Se não existe membro ou está inativo, criar novo registro
+        const { error: addMemberError } = await supabase
+          .from('organization_members')
+          .insert([
+            {
+              organization_id: organizationId,
+              user_id: existingUser.id,
+              profile_id: existingUser.id,
+              role: role,
+              status: 'pending'
+            },
+          ]);
+
+        if (addMemberError) {
+          throw addMemberError;
+        }
       }
 
       return res.status(201).json({ success: true, user: existingUser });
