@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
 import FormData from 'form-data';
+import Queue from 'queue';
 
 import { getActiveS3Integration } from '../../lib/s3.js';
 import { supabase } from '../../lib/supabase.js';
@@ -1558,10 +1559,21 @@ export async function createMessageRoute(req, res) {
     // Em requisições multipart/form-data, os campos de texto estão em req.body
     const content = req.body.content || null;
     const replyToMessageId = req.body.replyToMessageId || null;
+    
+    // Extrair o campo metadata se existir
+    let metadata = null;
+    if (req.body.metadata) {
+      try {
+        metadata = JSON.parse(req.body.metadata);
+        // console.log('Metadata recebido na mensagem:', metadata);
+      } catch (e) {
+        console.error('Erro ao fazer parse do metadata:', e);
+      }
+    }
 
     const files = req.files;
     const userId = req.profileId;
-    const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId);
+    const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata);
     return res.status(result.status).json(result);
   } catch (error) {
     Sentry.captureException(error, {
@@ -1571,9 +1583,10 @@ export async function createMessageRoute(req, res) {
         context: 'create_message_route'
       }
     });
+    console.error('Error creating message:', error);
     return res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: error.message
     });
   }
 }
@@ -1877,6 +1890,19 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         .eq('id', chatId);
     }
 
+    // Preparar resposta para o cliente
+    const responseData = {
+      success: true,
+      messages: messagesData
+    };
+
+    // Se temos um tempId no metadata, incluí-lo na resposta para ajudar o cliente
+    // a mapear as mensagens otimistas para as mensagens reais
+    if (metadata && metadata.tempId) {
+      responseData.tempId = metadata.tempId;
+      // console.log(`Mensagem criada com tempId ${metadata.tempId} - ID real: ${lastMessage.id}`);
+    }
+
     // Inserir registros de arquivos na tabela files
     if (fileRecords.length > 0) {
       // Mapear arquivos para suas respectivas mensagens
@@ -1926,9 +1952,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     
     return {
       status: 201,
-      success: true,
-      messages: messagesData
-    }
+      ...responseData
+    };
   } catch (error) {
     Sentry.captureException(error, {
       extra: {
