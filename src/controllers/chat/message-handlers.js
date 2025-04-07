@@ -1853,31 +1853,95 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     }
 
     // Inserir mensagens no banco
-    const { data: messagesData, error: messagesError } = await supabase
-      .from('messages')
-      .insert(messages)
-      .select('*');
+    const messagesData = [];
+    
+    // Cadastrar e enviar mensagens uma por uma
+    for (const message of messages) {
+      try {
+        const { data: messageData, error: messageError } = await supabase
+          .from('messages')
+          .insert(message)
+          .select('*')
+          .single();
 
-    if (messagesError) {
-      Sentry.captureException(messagesError, {
-        extra: {
-          chatId,
-          organizationId,
-          messages,
-          context: 'inserting_messages'
+        if (messageError) {
+          Sentry.captureException(messageError, {
+            extra: {
+              chatId,
+              organizationId,
+              message,
+              context: 'inserting_single_message'
+            }
+          });
+          console.error('Erro ao criar mensagem:', messageError);
+          continue;
         }
-      });
-      console.error('Erro ao criar mensagens:', messagesError);
+
+        messagesData.push(messageData);
+
+        // Se a mensagem tem anexos, registrar os arquivos
+        if (message.attachments && message.attachments.length > 0 && fileRecords.length > 0) {
+          // Encontrar os fileRecords correspondentes a esta mensagem
+          const messageFileRecords = fileRecords.filter(record => {
+            const attachment = message.attachments.find(att => att.name === record.name);
+            return attachment !== undefined;
+          });
+
+          if (messageFileRecords.length > 0) {
+            // Atualizar o message_id dos arquivos
+            const updatedFileRecords = messageFileRecords.map(record => ({
+              ...record,
+              message_id: messageData.id
+            }));
+
+            // Inserir os registros de arquivo
+            const { error: filesError } = await supabase
+              .from('files')
+              .upsert(updatedFileRecords, {
+                onConflict: 'id',
+                ignoreDuplicates: true
+              });
+
+            if (filesError) {
+              Sentry.captureException(filesError, {
+                extra: {
+                  messageId: messageData.id,
+                  fileRecords: updatedFileRecords,
+                  context: 'inserting_message_files'
+                }
+              });
+              console.error('Erro ao registrar arquivos da mensagem:', filesError);
+            } else {
+              console.log(`[Arquivos] ${updatedFileRecords.length} arquivos registrados para a mensagem ${messageData.id}`);
+            }
+          }
+        }
+
+        // Envia a mensagem imediatamente após cadastro
+        await sendSystemMessage(messageData.id);
+      } catch (error) {
+        Sentry.captureException(error, {
+          extra: {
+            chatId,
+            organizationId,
+            message,
+            context: 'processing_single_message'
+          }
+        });
+        console.error('Erro ao processar mensagem:', error);
+      }
+    }
+
+    if (messagesData.length === 0) {
       return {
         status: 500,
-        success: false, 
-        error: 'Error creating messages' 
+        success: false,
+        error: 'Error creating messages'
       };
     }
 
-    // Atualizar a referência da última mensagem
-    // Garantir que pegamos a última mensagem mesmo quando há apenas uma
-    const lastMessage = messagesData.length > 0 ? messagesData[messagesData.length - 1] : null;
+    // Atualiza o last_message_id do chat
+    const lastMessage = messagesData[messagesData.length - 1];
     
     if (lastMessage) {
       await supabase
@@ -1890,69 +1954,10 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         .eq('id', chatId);
     }
 
-    // Preparar resposta para o cliente
-    const responseData = {
-      success: true,
-      messages: messagesData
-    };
-
-    // Se temos um tempId no metadata, incluí-lo na resposta para ajudar o cliente
-    // a mapear as mensagens otimistas para as mensagens reais
-    if (metadata && metadata.tempId) {
-      responseData.tempId = metadata.tempId;
-      // console.log(`Mensagem criada com tempId ${metadata.tempId} - ID real: ${lastMessage.id}`);
-    }
-
-    // Inserir registros de arquivos na tabela files
-    if (fileRecords.length > 0) {
-      // Mapear arquivos para suas respectivas mensagens
-      for (let i = 0; i < fileRecords.length; i++) {
-        // Para canais sociais, cada arquivo tem sua própria mensagem
-        if (isSocialChannel) {
-          fileRecords[i].message_id = message.id;
-        } else {
-          // Para email, todos os arquivos pertencem à mesma mensagem
-          fileRecords[i].message_id = message.id;
-        }
-      }
-
-      // Filtrar registros duplicados baseado no id
-      const uniqueFileRecords = fileRecords.filter((record, index, self) =>
-        index === self.findIndex((r) => r.id === record.id)
-      );
-
-      console.log(`[Arquivos] Tentando inserir ${uniqueFileRecords.length} arquivos únicos`);
-
-      if (uniqueFileRecords.length > 0) {
-        const { error: filesError } = await supabase
-          .from('files')
-          .upsert(uniqueFileRecords, {
-            onConflict: 'id',
-            ignoreDuplicates: true
-          });
-
-        if (filesError) {
-          Sentry.captureException(filesError, {
-            extra: {
-              chatId,
-              organizationId,
-              fileRecords: uniqueFileRecords,
-              context: 'inserting_files'
-            }
-          });
-          console.error('Erro ao registrar arquivos:', filesError);
-          // Não falhar a operação principal se o registro de arquivos falhar
-        } else {
-          console.log(`[Arquivos] ${uniqueFileRecords.length} arquivos registrados com sucesso`);
-        }
-      }
-    }
-
-    sendSystemMessage(lastMessage.id);
-    
     return {
       status: 201,
-      ...responseData
+      success: true,
+      messages: messagesData
     };
   } catch (error) {
     Sentry.captureException(error, {
