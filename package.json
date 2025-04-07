@@ -26,6 +26,7 @@
     "nodemailer": "^6.9.10",
     "onesignal-node": "^3.4.0",
     "openai": "^4.85.2",
+    "queue": "^7.0.0",
     "stripe": "^14.17.0"
   },
   "devDependencies": {
