@@ -1130,7 +1130,7 @@ export async function handleStatusUpdate(channel, messageData) {
           newStatusUpdate
         ]
       };
-      
+
       // Verifica se há algo para atualizar
       if (Object.keys(updateData).length > 1 || shouldUpdateStatus) { // Sempre tem pelo menos error_message
         // Atualiza a mensagem no banco de dados
@@ -1148,6 +1148,22 @@ export async function handleStatusUpdate(channel, messageData) {
             }
           });
           console.error(`Erro ao atualizar status da mensagem: ${updateError.message}`);
+        }
+
+        const { error: updateChatError } = await supabase
+          .from('chats')
+          .update({
+            last_message_at: new Date().toISOString()
+          })
+          .eq('id', message.chat_id);  
+
+        if (updateChatError) {
+          Sentry.captureException(updateChatError, {
+            extra: {
+              chatId: message.chat_id,  
+              context: 'updating_chat_last_message_at'
+            }
+          });
         }
       }
     } else {
