@@ -1781,7 +1781,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       const uploadPromises = Array.isArray(files.attachments) 
         ? files.attachments 
         : [files.attachments]; 
-      console.log('uploadPromises', uploadPromises);
+      // console.log('uploadPromises', uploadPromises);
 
       for (const file of uploadPromises) {
         let uploadResult;
@@ -1830,7 +1830,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
             response_message_id: replyToMessageId ?? null,
             attachments: [uploadResult.attachment],
             status: 'pending',
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            metadata: metadata ?? null
           });
         } else {
           // Para email, adicionar à lista de anexos
