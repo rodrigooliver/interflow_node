@@ -65,6 +65,8 @@ export async function handleWapiWebhook(req, res) {
               .from('messages')
               .select(`
                 id,
+                organization_id,
+                chat_id,
                 chat:chat_id (
                   channel_id
                 )
@@ -88,7 +90,33 @@ export async function handleWapiWebhook(req, res) {
                 .update({ status: 'delivered' })
                 .eq('id', message.id);
 
-              if (updateError) throw updateError;
+              if (updateError) {
+                Sentry.captureException(updateError, {
+                  extra: {
+                    messageId: message.id,
+                    context: 'updating_message_status'
+                  }
+                });
+              }
+
+              // console.log('chat', message.chat_id, message.organization_id);
+
+              const { data: chat, error: updateChatError } = await supabase
+                .from('chats')
+                .update({
+                  last_message_at: new Date().toISOString(),
+                })
+                .eq('id', message.chat_id)
+              // console.log('data', chat);
+              // console.log('updateChatError', updateChatError);
+              if (updateChatError) {
+                Sentry.captureException(updateChatError, {
+                  extra: {
+                    chatId: channel.id,
+                    context: 'updating_chat_last_message_at'
+                  }
+                });
+              }
             }
           };
 
@@ -1089,7 +1117,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
           }
         } : {})
       }
-      console.log('WAPI - body', body);
+      // console.log('WAPI - body', body);
       response = await fetch(`${baseUrl}/message/send-text?connectionKey=${apiConnectionKey}`, {
         method: 'POST',
         headers: {
