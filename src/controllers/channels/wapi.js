@@ -41,9 +41,19 @@ export async function handleWapiWebhook(req, res) {
       case 'messageReceived':
       case 'messageSent':
       case 'forwardedMessage':
+      case 'repliedMessage':
         // console.log('messageReceived', webhookData);
         const normalizedMessage = normalizeWapiMessage(webhookData);
         normalizedMessage.event = webhookData.event;
+        
+        // Log para depuração quando for uma mensagem de resposta
+        if (webhookData.event === 'repliedMessage') {
+          console.log('Mensagem de resposta recebida:', {
+            messageId: webhookData.messageId,
+            referencedMessageId: webhookData.referencedMessage?.messageId
+          });
+        }
+        
         await handleIncomingMessage(channel, normalizedMessage);
         break;
       case 'messageDelivered':
@@ -161,6 +171,12 @@ function normalizeWapiMessage(webhookData) {
         externalProfilePicture: webhookData.sender.profilePicture
       };
 
+  // Verificar se é mensagem de resposta
+  let responseExternalId = null;
+  if (webhookData.referencedMessage && webhookData.referencedMessage.messageId) {
+    responseExternalId = webhookData.referencedMessage.messageId;
+  }
+
   // Determinar o tipo de mensagem
   let messageType = 'text';
   let messageContent = formatWhatsAppToMarkdown(webhookData.messageText?.text || '');
@@ -231,7 +247,8 @@ function normalizeWapiMessage(webhookData) {
       raw: webhookData          // Dados brutos completos
     },
     isGroup: webhookData.isGroup,
-    fromMe: webhookData.fromMe
+    fromMe: webhookData.fromMe,
+    responseExternalId: responseExternalId // Adiciona o ID da mensagem de referência quando for resposta
   };
 }
 

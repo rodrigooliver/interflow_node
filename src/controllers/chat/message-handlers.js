@@ -419,6 +419,33 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
+    // Verificar se é uma resposta a outra mensagem
+    let responseMessageId = null;
+    if (messageData.responseExternalId) {
+      try {
+        // Buscar a mensagem original pelo external_id
+        const { data: originalMessage, error: findError } = await supabase
+          .from('messages')
+          .select('id')
+          .eq('external_id', messageData.responseExternalId)
+          .eq('chat_id', chat.id)
+          .single();
+
+        if (!findError && originalMessage) {
+          responseMessageId = originalMessage.id;
+        }
+      } catch (responseError) {
+        Sentry.captureException(responseError, {
+          extra: {
+            chatId: chat.id,
+            responseExternalId: messageData.responseExternalId,
+            context: 'finding_original_message'
+          }
+        });
+        // Continuar mesmo se não conseguir encontrar a mensagem original
+      }
+    }
+
     // Cadastra a mensagem recebida
     const { data: message, error: messageError } = await supabase
       .from('messages')
@@ -434,6 +461,7 @@ export async function handleIncomingMessage(channel, messageData) {
           ? {}
           : { sender_customer_id: customer.id }
         ),
+        ...(responseMessageId ? { response_message_id: responseMessageId } : {}),
         metadata: messageData.message.raw,
         attachments: attachments.length > 0 ? attachments : undefined
       })
@@ -1565,13 +1593,54 @@ export async function createMessageRoute(req, res) {
     if (req.body.metadata) {
       try {
         metadata = JSON.parse(req.body.metadata);
-        // console.log('Metadata recebido na mensagem:', metadata);
       } catch (e) {
         console.error('Erro ao fazer parse do metadata:', e);
       }
     }
 
-    const files = req.files;
+    // Processar anexos de URL se existirem
+    let urlAttachments = [];
+    if (req.body.url_attachments) {
+      // Pode haver múltiplos anexos URL
+      const urlAttachmentsData = Array.isArray(req.body.url_attachments)
+        ? req.body.url_attachments
+        : [req.body.url_attachments];
+      
+      // Processar cada JSON de anexo URL
+      for (const urlAttachmentJson of urlAttachmentsData) {
+        try {
+          const urlAttachment = JSON.parse(urlAttachmentJson);
+          if (urlAttachment && urlAttachment.url) {
+            urlAttachments.push({
+              url: urlAttachment.url,
+              type: urlAttachment.type || 'document',
+              name: urlAttachment.name || 'attachment',
+              mimetype: urlAttachment.type || null,
+              size: null
+            });
+          }
+        } catch (e) {
+          console.error('Erro ao fazer parse de um url_attachment:', e);
+        }
+      }
+    }
+
+    const files = req.files || {};
+    
+    // Se houver anexos URL, adicioná-los como "arquivos"
+    if (urlAttachments.length > 0) {
+      if (!files.attachments) {
+        files.attachments = [];
+      } else if (!Array.isArray(files.attachments)) {
+        files.attachments = [files.attachments];
+      }
+      
+      // Adicionar cada anexo URL à lista de arquivos
+      for (const urlAttachment of urlAttachments) {
+        files.attachments.push(urlAttachment);
+      }
+    }
+
     const userId = req.profileId;
     const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata);
     return res.status(result.status).json(result);
@@ -1702,15 +1771,18 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     const hasFiles = files && files.attachments;
 
     // Processar uploads de arquivos
+    console.log('hasFiles', hasFiles);
     if (hasFiles) {
       const uploadPromises = Array.isArray(files.attachments) 
         ? files.attachments 
         : [files.attachments]; 
+      console.log('uploadPromises', uploadPromises);
 
       for (const file of uploadPromises) {
         let uploadResult;
         // Usar a função uploadFile para processar o arquivo
         if(file.url) {
+          console.log('file', file);
           uploadResult = {
             attachment: {
               url: file.url,
