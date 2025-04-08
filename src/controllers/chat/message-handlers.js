@@ -1357,6 +1357,10 @@ export async function sendSystemMessage(messageId, attempt = 1) {
             *,
             organization:organizations(*)
           )
+        ),
+        response_to:response_message_id(
+          id,
+          external_id
         )
       `)
       .eq('id', messageId)
@@ -1443,6 +1447,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     const result = await channelConfig.handler(channel, {
       messageId: message.id,
       content: channelConfig.formatMessage ? channelConfig.formatMessage(message.content) : message.content,
+      responseMessageId: message.response_to?.external_id ?? null,
       type: message.type,
       attachments: message.attachments,
       to: chat.external_id,
@@ -1771,7 +1776,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     const hasFiles = files && files.attachments;
 
     // Processar uploads de arquivos
-    console.log('hasFiles', hasFiles);
+    // console.log('hasFiles', hasFiles);
     if (hasFiles) {
       const uploadPromises = Array.isArray(files.attachments) 
         ? files.attachments 

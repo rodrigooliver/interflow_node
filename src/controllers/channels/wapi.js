@@ -1034,7 +1034,13 @@ export async function handleSenderMessageWApi(channel, messageData) {
         body = {
           phoneNumber: messageData.to,
           document: attachment.url,
-          fileName: fileName
+          fileName: fileName,
+          ...(messageData.responseMessageId ? {
+            messageId: messageData.responseMessageId,
+            message: {
+              text: messageData.content
+            }
+          } : {})
         };
       }
       
@@ -1073,16 +1079,24 @@ export async function handleSenderMessageWApi(channel, messageData) {
         })
       });
     } else if (messageData.content) {
+      const body = {
+        phoneNumber: messageData.to,
+        text: messageData.content,
+        ...(messageData.responseMessageId ? {
+          messageId: messageData.responseMessageId,
+          message: {
+            text: messageData.content
+          }
+        } : {})
+      }
+      console.log('WAPI - body', body);
       response = await fetch(`${baseUrl}/message/send-text?connectionKey=${apiConnectionKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiToken}`
         },
-        body: JSON.stringify({
-          phoneNumber: messageData.to,
-          text: messageData.content
-        })
+        body: JSON.stringify(body)
       });
     } else {
       const error = new Error('Nenhum conteúdo ou anexo fornecido para envio');
