@@ -20,7 +20,7 @@ import agentIARoutes from './routes/agent-ia.js';
 import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
 import { testEmailConnection } from './controllers/member.js';
-
+import userRoutes from './routes/user.js';
 // Load environment variables
 dotenv.config();
 
@@ -66,6 +66,7 @@ app.get('/', (req, res) => {
 });
 
 // Routes
+app.use('/api/user', userRoutes);
 app.use('/api/webhook/instagram', instagramRoutes);
 app.use('/api/webhook/whatsapp', whatsappRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
