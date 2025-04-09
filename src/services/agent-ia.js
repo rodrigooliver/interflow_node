@@ -230,6 +230,7 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
           } 
           // Para ferramentas do sistema, usar handlers específicos
           else if (systemTools.includes(tool)) {
+            // console.log(`[processAgentIA] Actions do sistema:`, prompt.actions);
             result = await handleSystemToolCall(
               tool, 
               args, 
@@ -420,13 +421,6 @@ const prepareContextMessages = async (prompt, session) => {
 
   // Adicionar informações contextuais sobre data e cliente
   try {
-    // Buscar informações do cliente
-    const { data: customer } = await supabase
-      .from('customers')
-      .select('name')
-      .eq('id', session.customer_id)
-      .single();
-    
     // Obter timezone da configuração do prompt ou usar padrão
     const timezone = prompt.config?.timezone || 'America/Sao_Paulo';
     
@@ -451,32 +445,138 @@ const prepareContextMessages = async (prompt, session) => {
       timeZone: timezone
     });
     
-    // Obter informações do chat
-    const { data: chat } = await supabase
-      .from('chats')
-      .select('title, channel_details')
-      .eq('id', session.chat_id)
-      .single();
-    
-    let contextInfo = `[SYSTEM CONTEXT INFO: Today is ${currentDate} (${weekday}), current time is ${currentTime} (${timezone} timezone).`;
-    
-    if (customer && customer.name) {
-      contextInfo += `\nCustomer name: "${customer.name}" (automatically retrieved from our system)`;
+    let contextInfo = `[### SYSTEM CONTEXT INFO: \nToday is ${currentDate} (${weekday}), current time is ${currentTime} (${timezone} timezone).`;
+
+    // Verificar se há um customer_id na sessão
+    if (session.customer_id) {
+      try {
+        // Buscar informações completas do cliente
+        const { data: customer, error } = await supabase
+          .from('customers')
+          .select(`
+            *,
+            contacts:customer_contacts(*),
+            field_values:customer_field_values(
+              id,
+              field_definition_id,
+              value,
+              updated_at,
+              field_definition:custom_fields_definition(id, name, type, options)
+            ),
+            tags:customer_tags(
+              tag_id,
+              tags:tags(id, name, color)
+            )
+          `)
+          .eq('id', session.customer_id)
+          .single();
+        
+        if (error) {
+          console.error('[prepareContextMessages] Erro ao buscar dados do cliente:', error);
+          throw error;
+        }
+        
+        if (customer) {
+          // Informações básicas do cliente
+          contextInfo += `\n\n--- \n\n**Customer info:**`;
+          if (customer.name) {
+            contextInfo += `\n- Name: ${customer.name}`;
+          }
+          
+          // Adicionar contatos do cliente
+          if (customer.contacts && customer.contacts.length > 0) {
+            contextInfo += `\n- Contacts:`;
+            customer.contacts.forEach(contact => {
+              contextInfo += `\n  - ${contact.type}: ${contact.value}`;
+            });
+          }
+          
+          // Adicionar tags do cliente
+          if (customer.tags && customer.tags.length > 0) {
+            const tagNames = customer.tags
+              .filter(tag => tag.tags)
+              .map(tag => tag.tags.name)
+              .join(', ');
+            
+            if (tagNames) {
+              contextInfo += `\n- Tags: ${tagNames}`;
+            }
+          }
+          
+          // Adicionar campos customizados
+          if (customer.field_values && customer.field_values.length > 0) {
+            // contextInfo += `\n- Custom fields:`;
+            customer.field_values.forEach(field => {
+              if (field.field_definition && field.value) {
+                contextInfo += `\n- ${field.field_definition.name}: ${field.value}`;
+              }
+            });
+          }
+        }
+      } catch (customerError) {
+        console.error('[prepareContextMessages] Erro ao processar dados do cliente:', customerError);
+        Sentry.captureException(customerError);
+        // Continuar sem os dados do cliente
+      }
     }
     
-    if (chat) {
-      if (chat.title) {
-        contextInfo += `\nConversation title: "${chat.title}"`;
+    // Obter informações do chat
+    try {
+      if (session.chat_id) {
+        // Buscar o chat atual e os últimos 5 chats com título em uma única consulta
+        const { data: chats, error } = await supabase
+          .from('chats')
+          .select('id, title, channel_details:chat_channels(type), created_at')
+          .eq('customer_id', session.customer_id)
+          .not('title', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(5);
+        
+        if (error) {
+          console.error('[prepareContextMessages] Erro ao buscar dados dos chats:', error);
+          throw error;
+        }
+        
+        if (chats && chats.length > 0) {
+          // Identificar o chat atual
+          const currentChat = chats.find(chat => chat.id === session.chat_id);
+          const previousChats = chats.filter(chat => chat.id !== session.chat_id);
+          
+          // Adicionar informações do chat atual
+          if (currentChat && currentChat.title) {
+            contextInfo += `\n\n--- \n\n **Current conversation:** "${currentChat.title}"`;
+            
+            if (currentChat.channel_details && currentChat.channel_details.type) {
+              contextInfo += `\n\n **Channel type:** ${currentChat.channel_details.type}`;
+            }
+          }
+          
+          // Adicionar informações dos chats anteriores
+          if (previousChats.length > 0) {
+            contextInfo += `\n\n--- \n\n**Resume of previous conversations:**`;
+            previousChats.forEach(chat => {
+              if (chat.title) {
+                const chatDate = new Date(chat.created_at).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                  timeZone: timezone
+                });
+                contextInfo += `\n- "${chat.title}" (${chatDate})`;
+              }
+            });
+          }
+        }
       }
-      
-      if (chat.channel_details && chat.channel_details.type) {
-        contextInfo += `\nChannel type: ${chat.channel_details.type}`;
-      }
+    } catch (chatError) {
+      console.error('[prepareContextMessages] Erro ao processar dados dos chats:', chatError);
+      Sentry.captureException(chatError);
+      // Continuar sem os dados do chat
     }
 
     // Verificar se o prompt tem mídia disponível
     if (prompt.media && Array.isArray(prompt.media) && prompt.media.length > 0) {
-      contextInfo += `\n\nAVAILABLE MEDIA FILES: You have access to ${prompt.media.length} media files that you can share with the customer when they ask for them or when appropriate to enhance the conversation. When the customer requests any document, image, video, or other media, or when it would be helpful to share one of these files, provide the corresponding link.`;
+      contextInfo += `\n\n--- \n\n**AVAILABLE MEDIA FILES:** You have access to ${prompt.media.length} media files that you can share with the customer when they ask for them or when appropriate to enhance the conversation. When the customer requests any document, image, video, or other media, or when it would be helpful to share one of these files, provide the corresponding link.`;
       
       // Listar os arquivos de mídia disponíveis
       contextInfo += `\n\nMedia files:`;
@@ -493,23 +593,37 @@ const prepareContextMessages = async (prompt, session) => {
 4. Avoid modifying or shortening the URLs.`;
     }
     
-    contextInfo += `\nPlease use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.]`;
+    contextInfo += `\n\n--- \n\n**Please use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.** ]`;
     
-    // Adicionar prompt do sistema com informações do contexto
+    // Adicionar prompt do sistema (instruções gerais sem o contexto)
     if (prompt.content) {
       // Substituir variáveis no prompt
       const processedContent = replaceVariables(prompt.content, session.variables);
       messages.push({
         role: 'system',
-        content: processedContent + '\n\n' + contextInfo
+        content: processedContent
       });
-    } else {
-      // Se não houver prompt, apenas adicionar o contexto
+      
+      // Adicionar informações de contexto como primeira mensagem do usuário para aproveitar o cache
       messages.push({
-        role: 'system',
+        role: 'user',
         content: contextInfo
       });
+      
+      // Adicionar resposta simulada do assistente para completar o padrão de conversa
+      messages.push({
+        role: 'assistant',
+        content: 'Entendido.'
+      });
+    } else {
+      // Se não houver prompt, apenas adicionar o contexto como primeira mensagem do usuário
+      messages.push({
+        role: 'user',
+        content: contextInfo
+      });
+      
     }
+    // console.log('[prepareContextMessages] contextInfo', contextInfo)
   } catch (error) {
     console.error('[prepareContextMessages] Error adding context info:', error);
     Sentry.captureException(error);

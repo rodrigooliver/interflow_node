@@ -167,15 +167,18 @@ export const generateSystemTools = async (organizationId, systemActions = []) =>
         case 'schedule':
           tool = await generateScheduleTool(organizationId, action);
           break;
-        case 'update_customer':
-          tool = generateUpdateCustomerTool(action);
+        case 'updateCustomerCustomData':
+          tool = await generateUpdateCustomerCustomDataTool(organizationId, action);
           break;
-        case 'update_chat':
-          tool = generateUpdateChatTool(action);
-          break;
-        case 'start_flow':
-          tool = await generateStartFlowTool(organizationId, action);
-          break;
+        // case 'update_customer':
+        //   tool = generateUpdateCustomerTool(action);
+        //   break;
+        // case 'update_chat':
+        //   tool = generateUpdateChatTool(action);
+        //   break;
+        // case 'start_flow':
+        //   tool = await generateStartFlowTool(organizationId, action);
+        //   break;
         default:
           console.log(`[generateSystemTools] Tipo de ação desconhecido: ${actionType}`);
           continue;
@@ -536,6 +539,13 @@ export const handleSystemToolCall = async (
     console.log(`[handleSystemToolCall] Ferramenta encontrada: ${JSON.stringify(action)}`);
     console.log(`[handleSystemToolCall] Ferramenta config: ${JSON.stringify(action.config)}`);
 
+    if(!action.type) {
+      return {
+        status: "error",
+        message: "No action type found for this tool."
+      };
+    }
+
     switch (action.type) {
       case 'schedule': {
         if (!action.config.schedule) {
@@ -679,6 +689,214 @@ export const handleSystemToolCall = async (
         
         // Processar a ação
         return await processCheckScheduleAction(actionReturn, args, session);
+      }
+      
+      case 'updateCustomerCustomData': {
+        if (!action.config.customFields || action.config.customFields.length === 0) {
+          return {
+            status: "error",
+            message: "No custom fields configured for this action."
+          };
+        }
+        
+        // Buscar os campos personalizados configurados
+        const customFieldIds = action.config.customFields.map(field => field.id);
+        
+        const { data: customFields, error } = await supabase
+          .from('custom_fields_definition')
+          .select('id, name, type, options, mask_type, custom_mask, description, slug')
+          .eq('organization_id', session.organization_id)
+          .in('id', customFieldIds);
+        
+        if (error) {
+          console.error(`[handleSystemToolCall] Erro ao buscar campos personalizados:`, error);
+          return {
+            status: "error",
+            message: "Error fetching custom fields."
+          };
+        }
+        
+        if (!customFields || customFields.length === 0) {
+          return {
+            status: "error",
+            message: "No custom fields found for this action."
+          };
+        }
+        
+        // Verificar se o cliente existe
+        if (!session.customer_id) {
+          return {
+            status: "error",
+            message: "No customer found in this session."
+          };
+        }
+        
+        // Criar um mapeamento de slug para id
+        const slugToIdMap = {};
+        for (const field of customFields) {
+          const slug = field.slug || field.id;
+          slugToIdMap[slug] = field.id;
+        }
+
+        // Preparar o objeto de atualização para inserção/atualização de valores
+        const updateValues = [];
+        const errors = [];
+        
+        // Validar e processar cada campo personalizado
+        for (const field of customFields) {
+          const fieldId = field.id;
+          const fieldSlug = field.slug || field.id;
+          
+          // Se o campo estiver presente nos argumentos
+          if (args[fieldSlug] !== undefined) {
+            const value = args[fieldSlug];
+            
+            // Validar o valor com base no tipo
+            let isValid = true;
+            let processedValue = value;
+            
+            switch (field.type) {
+              case 'number':
+                // Verificar se é um número válido
+                if (isNaN(Number(value))) {
+                  errors.push(`Invalid number format for field "${field.name}"`);
+                  isValid = false;
+                }
+                processedValue = Number(value);
+                break;
+              case 'date':
+                // Verificar formato de data YYYY-MM-DD
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                  errors.push(`Invalid date format for field "${field.name}". Expected format: YYYY-MM-DD`);
+                  isValid = false;
+                }
+                break;
+              case 'datetime':
+                // Verificar formato de data e hora YYYY-MM-DD HH:MM
+                if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) {
+                  errors.push(`Invalid datetime format for field "${field.name}". Expected format: YYYY-MM-DD HH:MM`);
+                  isValid = false;
+                }
+                break;
+              case 'select':
+                // Verificar se o valor está na lista de opções
+                if (field.options && !field.options.includes(value)) {
+                  errors.push(`Invalid option for field "${field.name}". Valid options: ${field.options.join(", ")}`);
+                  isValid = false;
+                }
+                break;
+              case 'text':
+                // Verificar máscaras específicas
+                if (field.mask_type) {
+                  switch (field.mask_type) {
+                    case 'cpf':
+                      if (!/^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(value)) {
+                        errors.push(`Invalid CPF format for field "${field.name}". Expected format: 123.456.789-01`);
+                        isValid = false;
+                      }
+                      break;
+                    case 'cnpj':
+                      if (!/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(value)) {
+                        errors.push(`Invalid CNPJ format for field "${field.name}". Expected format: 12.345.678/0001-90`);
+                        isValid = false;
+                      }
+                      break;
+                    case 'phone':
+                      if (!/^\(\d{2}\) \d{5}-\d{4}$/.test(value)) {
+                        errors.push(`Invalid phone format for field "${field.name}". Expected format: (00) 00000-0000`);
+                        isValid = false;
+                      }
+                      break;
+                    case 'cep':
+                      if (!/^\d{5}-\d{3}$/.test(value)) {
+                        errors.push(`Invalid CEP format for field "${field.name}". Expected format: 00000-000`);
+                        isValid = false;
+                      }
+                      break;
+                    case 'rg':
+                      if (!/^\d{2}\.\d{3}\.\d{3}-\d{1}$/.test(value)) {
+                        errors.push(`Invalid RG format for field "${field.name}". Expected format: 00.000.000-0`);
+                        isValid = false;
+                      }
+                      break;
+                  }
+                }
+                break;
+            }
+            
+            // Se o valor for válido, adicioná-lo aos valores de atualização
+            if (isValid) {
+              updateValues.push({
+                customer_id: session.customer_id,
+                field_definition_id: fieldId,
+                value: String(processedValue)
+              });
+            }
+          } else {
+            errors.push(`Field "${field.name}" is required but was not provided`);
+          }
+        }
+        
+        // Se houver erros, retornar mensagem de erro
+        if (errors.length > 0) {
+          return {
+            status: "error",
+            message: `Validation errors: ${errors.join("; ")}`
+          };
+        }
+        
+        // Inserir/atualizar valores dos campos personalizados
+        for (const value of updateValues) {
+          // Verificar se já existe um valor para este campo
+          const { data: existingValue, error: fetchError } = await supabase
+            .from('customer_field_values')
+            .select('id')
+            .eq('customer_id', session.customer_id)
+            .eq('field_definition_id', value.field_definition_id)
+            .single();
+          
+          if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = Not found
+            console.error(`[handleSystemToolCall] Erro ao verificar valor existente:`, fetchError);
+            continue;
+          }
+          
+          let result;
+          
+          if (existingValue) {
+            // Atualizar valor existente
+            result = await supabase
+              .from('customer_field_values')
+              .update({ value: value.value, updated_at: new Date() })
+              .eq('id', existingValue.id);
+          } else {
+            // Inserir novo valor
+            result = await supabase
+              .from('customer_field_values')
+              .insert([{
+                customer_id: value.customer_id,
+                field_definition_id: value.field_definition_id,
+                value: value.value
+              }]);
+          }
+          
+          if (result.error) {
+            console.error(`[handleSystemToolCall] Erro ao salvar valor de campo personalizado:`, result.error);
+            errors.push(`Error saving field ${value.field_definition_id}`);
+          }
+        }
+        
+        if (errors.length > 0) {
+          return {
+            status: "partial",
+            message: `Some fields could not be updated: ${errors.join("; ")}`
+          };
+        }
+        
+        return {
+          status: "success",
+          message: `Customer fields updated successfully.`,
+          fields_updated: updateValues.length
+        };
       }
       
       case 'update_customer': {
@@ -1556,6 +1774,139 @@ const minutesToTime = (minutes) => {
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+};
+
+/**
+ * Gera a ferramenta para atualizar campos personalizados do cliente
+ * @param {string} organizationId - ID da organização
+ * @param {Object} action - Ação associada à ferramenta
+ * @returns {Promise<Object>} - Ferramenta de atualização de campos personalizados
+ */
+const generateUpdateCustomerCustomDataTool = async (organizationId, action) => {
+  try {
+    // Verificar se há campos personalizados configurados
+    if (!action.config.customFields || action.config.customFields.length === 0) {
+      console.log(`[generateUpdateCustomerCustomDataTool] Nenhum campo personalizado configurado para a ação ${action.name}`);
+      return null;
+    }
+
+    // Buscar os campos personalizados selecionados
+    const customFieldIds = action.config.customFields.map(field => field.id);
+    
+    const { data: customFields, error } = await supabase
+      .from('custom_fields_definition')
+      .select('id, name, type, options, mask_type, custom_mask, description, slug')
+      .eq('organization_id', organizationId)
+      .in('id', customFieldIds);
+    
+    if (error) {
+      console.error(`[generateUpdateCustomerCustomDataTool] Erro ao buscar campos personalizados:`, error);
+      return null;
+    }
+    
+    if (!customFields || customFields.length === 0) {
+      console.log(`[generateUpdateCustomerCustomDataTool] Nenhum campo personalizado encontrado para a organização ${organizationId}`);
+      return null;
+    }
+
+    // Usar o nome e a descrição da ação configurada ou usar padrões
+    const toolName = transformToolName(action.name || "update_customer_custom_data");
+    const toolDescription = action.description || 
+      "Update custom customer fields such as " + customFields.map(field => field.name).join(", ") + ".";
+    
+    // Construir propriedades para cada campo personalizado
+    const properties = {};
+    const required = [];
+
+    // Criar um mapeamento de slug para id
+    const slugToIdMap = {};
+
+    for (const field of customFields) {
+      // Verificar se o campo tem slug, caso contrário usar o ID
+      const slug = field.slug || field.id;
+      slugToIdMap[slug] = field.id;
+
+      let description = field.description || `Value for field "${field.name}"`;
+      
+      // Propriedades básicas
+      const property = {
+        type: "string",
+        description: description
+      };
+      
+      // Personalizar com base no tipo do campo
+      switch (field.type) {
+        case 'text':
+          // Adicionar instruções para máscaras se necessário
+          if (field.mask_type) {
+            switch (field.mask_type) {
+              case 'cpf':
+                property.description += ". Format: 123.456.789-01";
+                break;
+              case 'cnpj':
+                property.description += ". Format: 12.345.678/0001-90";
+                break;
+              case 'phone':
+                property.description += ". Format: (00) 00000-0000";
+                break;
+              case 'cep':
+                property.description += ". Format: 00000-000";
+                break;
+              case 'rg':
+                property.description += ". Format: 00.000.000-0";
+                break;
+              case 'custom':
+                if (field.custom_mask) {
+                  property.description += `. Custom format: ${field.custom_mask}`;
+                }
+                break;
+            }
+          }
+          break;
+        case 'number':
+          property.type = "number";
+          property.description += ". Must be a numeric value.";
+          break;
+        case 'date':
+          property.description += ". Format: YYYY-MM-DD (e.g. 2023-12-31)";
+          break;
+        case 'datetime':
+          property.description += ". Format: YYYY-MM-DD HH:MM (e.g. 2023-12-31 14:30)";
+          break;
+        case 'select':
+          if (field.options && field.options.length > 0) {
+            property.enum = field.options;
+            property.description += `. Allowed values: ${field.options.join(", ")}`;
+          }
+          break;
+      }
+      
+      // Adicionar à lista de propriedades
+      properties[slug] = property;
+      
+      // Todos os campos são obrigatórios
+      required.push(slug);
+    }
+    
+    // Construir a ferramenta
+    return {
+      name: toolName,
+      description: toolDescription,
+      parameters: {
+        type: "object",
+        properties: properties,
+        required: required
+      },
+      // Guardar o mapeamento de slugs para ids no objeto da ferramenta para uso posterior
+      _metadata: {
+        slugToIdMap: slugToIdMap
+      }
+    };
+  } catch (error) {
+    console.error(`[generateUpdateCustomerCustomDataTool] Erro ao gerar ferramenta de atualização de campos personalizados:`, error);
+    Sentry.captureException(error);
+    return null;
+  }
 };
 
 /**
