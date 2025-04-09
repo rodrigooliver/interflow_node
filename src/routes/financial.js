@@ -1,4 +1,5 @@
 import express from 'express';
+import { verifyAuth } from '../middleware/auth.js';
 import { 
   runOverdueTransactions, 
   runRecurringTransactions, 
@@ -10,7 +11,18 @@ import {
   updateTransactionStatus
 } from '../controllers/financial.js';
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
+
+// Todas as rotas de canal precisam de autenticação
+router.use(verifyAuth);
+
+/**
+ * @route POST /api/:organizationId/financial/transactions/:transactionId/status
+ * @desc Atualiza o status de uma transação financeira
+ * @access Private
+ */
+router.post('/transactions/:transactionId/status', updateTransactionStatus);
+
 
 /**
  * @route POST /api/:organizationId/financial/run-overdue
@@ -60,12 +72,5 @@ router.post('/defaults/all', addAllFinancialDefaults);
  * @access Private
  */
 router.post('/transactions/:transactionId/regenerate-series', regenerateRecurringSeries);
-
-/**
- * @route POST /api/:organizationId/financial/transactions/:transactionId/status
- * @desc Atualiza o status de uma transação financeira
- * @access Private
- */
-router.post('/transactions/:transactionId/status', updateTransactionStatus);
 
 export default router; 

@@ -607,6 +607,7 @@ export const regenerateRecurringSeries = async (req, res) => {
  */
 export const updateTransactionStatus = async (req, res) => {
   try {
+    // console.log('updateTransactionStatus', req.params);
     const { organizationId, transactionId } = req.params;
     const { status, payment_date } = req.body;
     
