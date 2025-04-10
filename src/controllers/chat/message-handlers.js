@@ -2006,7 +2006,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
               });
               console.error('Erro ao registrar arquivos da mensagem:', filesError);
             } else {
-              console.log(`[Arquivos] ${updatedFileRecords.length} arquivos registrados para a mensagem ${messageData.id}`);
+              // console.log(`[Arquivos] ${updatedFileRecords.length} arquivos registrados para a mensagem ${messageData.id}`);
             }
           }
         }

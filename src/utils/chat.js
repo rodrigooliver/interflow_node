@@ -3,9 +3,14 @@
  * 
  * Converte a sintaxe markdown padrão para a formatação específica do WhatsApp:
  * - **texto** ou __texto__ para *texto* (negrito)
- * - _texto_ para _texto_ (itálico)
+ * - _texto_ ou *texto* para _texto_ (itálico)
  * - ~~texto~~ para ~texto~ (riscado)
  * - [texto](link) para link direto
+ * - # Título, ## Título, ### Título etc. para *Título* (cabeçalhos para negrito)
+ * - `código` ou ```código``` para [código] (blocos de código)
+ * - * item ou - item para • item (listas)
+ * - 1. item para item (listas numeradas)
+ * - > citação para _"citação"_ (blocos de citação)
  * 
  * @param {string} text - Texto em formato markdown
  * @returns {string} - Texto formatado para WhatsApp
@@ -14,11 +19,34 @@ export const formatMarkdownForWhatsApp = (text) => {
     if (!text) return text;
     
     return text
-      .replace(/\*\*(.*?)\*\*/g, '*$1*') // **negrito** -> *negrito*
-      .replace(/__(.*?)__/g, '*$1*')     // __negrito__ -> *negrito*
-      .replace(/_(.*?)_/g, '_$1_')       // _itálico_ -> _itálico_
-      .replace(/~~(.*?)~~/g, '~$1~')     // ~~riscado~~ -> ~riscado~
-      .replace(/\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '$1'); // [texto](link) -> link direto
+      // Cabeçalhos para negrito
+      .replace(/^#\s+(.*?)$/gm, '*$1*')      // # Título -> *Título*
+      .replace(/^##\s+(.*?)$/gm, '*$1*')     // ## Título -> *Título*
+      .replace(/^###\s+(.*?)$/gm, '*$1*')    // ### Título -> *Título*
+      .replace(/^####\s+(.*?)$/gm, '*$1*')   // #### Título -> *Título*
+      .replace(/^#####\s+(.*?)$/gm, '*$1*')  // ##### Título -> *Título*
+      .replace(/^######\s+(.*?)$/gm, '*$1*') // ###### Título -> *Título*
+      
+      // Formatação de texto
+      .replace(/\*\*(.*?)\*\*/g, '*$1*')     // **negrito** -> *negrito*
+      .replace(/__(.*?)__/g, '*$1*')         // __negrito__ -> *negrito*
+      .replace(/_(.*?)_/g, '_$1_')           // _itálico_ -> _itálico_
+      .replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, '_$1_') // *itálico* -> _itálico_ (não substitui **negrito**)
+      .replace(/~~(.*?)~~/g, '~$1~')         // ~~riscado~~ -> ~riscado~
+      
+      // Links
+      .replace(/\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '$1') // [texto](link) -> link direto
+      
+      // Blocos de código
+      .replace(/```(.*?)```/gs, '[$1]')   // ```código``` -> [código]
+      .replace(/`([^`]+)`/g, '[$1]')      // `código` -> [código]
+      
+      // Listas
+      .replace(/^[\*\-]\s+(.*?)$/gm, '• $1') // * item ou - item -> • item
+      .replace(/^\d+\.\s+(.*?)$/gm, '$1')    // 1. item -> item
+      
+      // Citações
+      .replace(/^>\s+(.*?)$/gm, '_"$1"_');   // > citação -> _"citação"_
 };
 
 /**
