@@ -194,7 +194,7 @@ export async function handleWapiWebhook(req, res) {
         break;
       case 'editedMessage':
         if (webhookData.editedMessage && webhookData.editedMessage.referencedMessage) {
-          console.log('Mensagem editada recebida:', webhookData);
+          // console.log('Mensagem editada recebida:', webhookData);
           
           // Função para tentar atualizar a mensagem editada
           const updateEditedMessage = async (retryCount = 0) => {
@@ -280,7 +280,7 @@ export async function handleWapiWebhook(req, res) {
         }
         break;
       case 'deletedMessage':
-        console.log('Mensagem apagada recebida:', webhookData);
+        // console.log('Mensagem apagada recebida:', webhookData);
         
         // Função para tentar atualizar o status da mensagem apagada
         const updateDeletedMessage = async (retryCount = 0) => {
@@ -2052,15 +2052,15 @@ export async function handleDeleteMessageWapiChannel(channel, messageData) {
 
     if (channelError) throw channelError;
 
-    const credentials = channelData.credentials;
-    const apiUrl = credentials.api_url;
-    const apiKey = decrypt(credentials.api_key);
+    const credentials = decryptCredentials(channelData.credentials);
 
-    const response = await fetch(`${apiUrl}/message/delete?connectionKey=${credentials.apiConnectionKey}`, {
+    const baseUrl = `https://${credentials.apiHost}`;
+
+    const response = await fetch(`${baseUrl}/message/delete?connectionKey=${credentials.apiConnectionKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': apiKey
+        'Authorization': `Bearer ${credentials.apiToken}`
       },
       body: JSON.stringify({
         phoneNumber: messageData.to,
@@ -2073,6 +2073,7 @@ export async function handleDeleteMessageWapiChannel(channel, messageData) {
     });
 
     if (!response.ok) {
+      console.log('Erro ao deletar mensagem WAPI:', response);
       const errorData = await response.json();
       throw new Error(`WAPI error: ${JSON.stringify(errorData)}`);
     }
