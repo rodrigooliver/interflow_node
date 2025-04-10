@@ -25,7 +25,7 @@ export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
 
-  // console.log(webhookData)
+  console.log(webhookData)
 
   try {
     // Get channel details
@@ -190,6 +190,93 @@ export async function handleWapiWebhook(req, res) {
 
           // Inicia a primeira tentativa após 2 segundos
           setTimeout(() => updateMessageStatus(), 2000);
+        }
+        break;
+      case 'editedMessage':
+        if (webhookData.editedMessage && webhookData.editedMessage.referencedMessage) {
+          console.log('Mensagem editada recebida:', webhookData);
+          
+          // Função para tentar atualizar a mensagem editada
+          const updateEditedMessage = async (retryCount = 0) => {
+            // Encontra a mensagem usando o external_id da mensagem referenciada
+            const referencedMessageId = webhookData.editedMessage.referencedMessage.messageId;
+            
+            const { data: message, error: findError } = await supabase
+              .from('messages')
+              .select(`
+                id,
+                organization_id,
+                chat_id,
+                metadata,
+                chat:chat_id (
+                  channel_id
+                )
+              `)
+              .eq('external_id', referencedMessageId)
+              .eq('chat.channel_id', channel.id)
+              .single();
+
+            if (findError) {
+              // Se der erro e ainda não tentou 3 vezes, tenta novamente após 2 segundos
+              if (retryCount < 3) {
+                setTimeout(() => updateEditedMessage(retryCount + 1), 2000);
+              }
+              return;
+            }
+
+            if (message) {
+              // Formata o novo conteúdo para markdown se houver texto
+              const newContent = webhookData.editedMessage.text 
+                ? formatWhatsAppToMarkdown(webhookData.editedMessage.text)
+                : (webhookData.editedMessage.caption || '');
+              
+              // Prepara os metadados atualizados
+              const updatedMetadata = {
+                ...(message.metadata || {}),
+                edited: true,
+                editedAt: new Date().toISOString(),
+                previousContent: message.content
+              };
+              
+              // Atualiza o conteúdo e os metadados da mensagem (sem alterar o status)
+              const { error: updateError } = await supabase
+                .from('messages')
+                .update({ 
+                  content: newContent,
+                  metadata: updatedMetadata
+                })
+                .eq('id', message.id);
+
+              if (updateError) {
+                Sentry.captureException(updateError, {
+                  extra: {
+                    messageId: message.id,
+                    context: 'updating_edited_message'
+                  }
+                });
+              }
+
+              // Atualiza também o timestamp do último contato no chat
+              const { error: updateChatError } = await supabase
+                .from('chats')
+                .update({
+                  last_message_at: new Date().toISOString(),
+                })
+                .eq('id', message.chat_id);
+                
+              if (updateChatError) {
+                Sentry.captureException(updateChatError, {
+                  extra: {
+                    chatId: message.chat_id,
+                    context: 'updating_chat_after_edited_message'
+                  }
+                });
+              }
+            }
+          };
+
+          // Inicia a tentativa de atualizar a mensagem editada
+          updateEditedMessage();
         }
         break;
       case 'status':
