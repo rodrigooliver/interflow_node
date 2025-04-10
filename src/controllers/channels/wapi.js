@@ -124,6 +124,74 @@ export async function handleWapiWebhook(req, res) {
           setTimeout(() => updateMessageStatus(), 2000);
         }
         break;
+      case 'messageRead':
+        if (webhookData.fromMe) {
+          // Função para tentar atualizar o status
+          const updateMessageStatus = async (retryCount = 0) => {
+            // Primeiro encontra a mensagem usando a chave estrangeira correta
+            const { data: message, error: findError } = await supabase
+              .from('messages')
+              .select(`
+                id,
+                organization_id,
+                chat_id,
+                chat:chat_id (
+                  channel_id
+                )
+              `)
+              .eq('external_id', webhookData.messageId)
+              .eq('chat.channel_id', channel.id)
+              .single();
+
+            if (findError) {
+              // Se der erro e ainda não tentou 3 vezes, tenta novamente após 2 segundos
+              if (retryCount < 3) {
+                setTimeout(() => updateMessageStatus(retryCount + 1), 2000);
+              }
+              return;
+            }
+
+            if (message) {
+              // Atualiza o status da mensagem encontrada
+              const { error: updateError } = await supabase
+                .from('messages')
+                .update({ status: 'read' })
+                .eq('id', message.id);
+
+              if (updateError) {
+                Sentry.captureException(updateError, {
+                  extra: {
+                    messageId: message.id,
+                    context: 'updating_message_status'
+                  }
+                });
+              }
+
+              // console.log('chat', message.chat_id, message.organization_id);
+
+              const { data: chat, error: updateChatError } = await supabase
+                .from('chats')
+                .update({
+                  last_message_at: new Date().toISOString(),
+                })
+                .eq('id', message.chat_id)
+              // console.log('data', chat);
+              // console.log('updateChatError', updateChatError);
+              if (updateChatError) {
+                Sentry.captureException(updateChatError, {
+                  extra: {
+                    chatId: channel.id,
+                    context: 'updating_chat_last_message_at'
+                  }
+                });
+              }
+            }
+          };
+
+          // Inicia a primeira tentativa após 2 segundos
+          setTimeout(() => updateMessageStatus(), 2000);
+        }
+        break;
       case 'status':
         await handleStatusUpdate(channel, webhookData);
         break;
