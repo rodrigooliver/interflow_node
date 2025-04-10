@@ -25,7 +25,7 @@ export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
 
-  console.log(webhookData)
+  // console.log(webhookData)
 
   try {
     // Get channel details
@@ -278,6 +278,93 @@ export async function handleWapiWebhook(req, res) {
           // Inicia a tentativa de atualizar a mensagem editada
           updateEditedMessage();
         }
+        break;
+      case 'deletedMessage':
+        console.log('Mensagem apagada recebida:', webhookData);
+        
+        // Função para tentar atualizar o status da mensagem apagada
+        const updateDeletedMessage = async (retryCount = 0) => {
+          // Verifica se existe ID da mensagem referenciada
+          const messageId = webhookData.referencedMessage?.messageId || webhookData.messageId;
+          
+          if (!messageId) {
+            console.error('ID da mensagem não encontrado para mensagem apagada');
+            return;
+          }
+          
+          // Encontra a mensagem pelo ID externo
+          const { data: message, error: findError } = await supabase
+            .from('messages')
+            .select(`
+              id,
+              organization_id,
+              chat_id,
+              content,
+              metadata,
+              chat:chat_id (
+                channel_id
+              )
+            `)
+            .eq('external_id', messageId)
+            .eq('chat.channel_id', channel.id)
+            .single();
+
+          if (findError) {
+            // Se der erro e ainda não tentou 3 vezes, tenta novamente após 2 segundos
+            if (retryCount < 3) {
+              setTimeout(() => updateDeletedMessage(retryCount + 1), 2000);
+            }
+            return;
+          }
+
+          if (message) {
+            // Prepara os metadados atualizados
+            const updatedMetadata = {
+              ...(message.metadata || {}),
+              deleted: true,
+              deletedAt: new Date().toISOString(),
+              previousContent: message.content
+            };
+            
+            // Atualiza o status e metadados da mensagem
+            const { error: updateError } = await supabase
+              .from('messages')
+              .update({ 
+                status: 'deleted',
+                metadata: updatedMetadata
+              })
+              .eq('id', message.id);
+
+            if (updateError) {
+              Sentry.captureException(updateError, {
+                extra: {
+                  messageId: message.id,
+                  context: 'updating_deleted_message_status'
+                }
+              });
+            }
+
+            // Atualiza o timestamp do último contato no chat
+            const { error: updateChatError } = await supabase
+              .from('chats')
+              .update({
+                last_message_at: new Date().toISOString(),
+              })
+              .eq('id', message.chat_id);
+              
+            if (updateChatError) {
+              Sentry.captureException(updateChatError, {
+                extra: {
+                  chatId: message.chat_id,
+                  context: 'updating_chat_after_deleted_message'
+                }
+              });
+            }
+          }
+        };
+
+        // Inicia a tentativa de atualizar o status da mensagem
+        updateDeletedMessage();
         break;
       case 'status':
         await handleStatusUpdate(channel, webhookData);
