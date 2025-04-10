@@ -157,11 +157,11 @@ const findTransactionsForRecurringGeneration = async () => {
       .neq('frequency', 'once')
       .in('status', ['paid', 'received', 'cancelled'])
       .is('parent_transaction_id', null)
-      .not.exists(
+      .not('id', 'in', 
         supabase
           .from('financial_transactions')
-          .select('id')
-          .eq('parent_transaction_id', supabase.ref('financial_transactions.id'))
+          .select('parent_transaction_id')
+          .not('parent_transaction_id', 'is', null)
       );
     
     if (originalError) throw originalError;
