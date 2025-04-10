@@ -528,7 +528,7 @@ const prepareContextMessages = async (prompt, session) => {
           .from('chats')
           .select('id, title, channel_details:chat_channels(type), created_at')
           .eq('customer_id', session.customer_id)
-          .not('title', 'is', null)
+          // .not('title', 'is', null)
           .order('created_at', { ascending: false })
           .limit(5);
         
