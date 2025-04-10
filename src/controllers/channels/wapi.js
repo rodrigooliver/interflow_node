@@ -1282,6 +1282,8 @@ export async function handleSenderMessageWApi(channel, messageData) {
         };
       } else {
         endpoint = '/message/send-document';
+
+        // console.log('WAPI - attachment', attachment);
         
         // Verificar se o nome do arquivo tem extensão
         let fileName = attachment.name || 'documento';
@@ -1300,11 +1302,21 @@ export async function handleSenderMessageWApi(channel, messageData) {
             fileName = `${fileName}.txt`;
           }
         }
+
+        let extension = attachment.extension || null;
+        if (!extension) {
+          if (fileName.includes('.')) {
+            extension = fileName.split('.').pop().toLowerCase();
+          } else {
+            extension = 'txt';
+          }
+        }
         
         body = {
           phoneNumber: messageData.to,
           document: attachment.url,
           fileName: fileName,
+          extension: extension,
           ...(messageData.responseMessageId ? {
             messageId: messageData.responseMessageId,
             message: {
@@ -1312,6 +1324,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
             }
           } : {})
         };
+        // console.log('WAPI - body', body);
       }
       
       response = await fetch(`${baseUrl}${endpoint}?connectionKey=${apiConnectionKey}`, {
