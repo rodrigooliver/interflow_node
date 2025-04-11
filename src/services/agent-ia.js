@@ -652,9 +652,11 @@ const prepareContextMessages = async (prompt, session) => {
   // Agrupar mensagens consecutivas do mesmo remetente
   let currentSenderType = null;
   let groupedContent = '';
-  let lastSenderType = null;
 
-  chatMessages?.forEach((msg, index) => {
+  // Processar cada mensagem uma vez para agrupamento
+  for (let index = 0; index < chatMessages?.length; index++) {
+    const msg = chatMessages[index];
+    
     // Adicionar timestamp da mensagem
     const messageDate = new Date(msg.created_at);
     
@@ -691,54 +693,38 @@ const prepareContextMessages = async (prompt, session) => {
       content = `[Sticker]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     }
     
-    if(!content) return;
+    if(!content) continue;
 
-    // Se o remetente mudou ou é a última mensagem, enviar a mensagem agrupada anterior
-    if (currentSenderType !== null && (msg.sender_type !== currentSenderType || index === chatMessages.length - 1)) {
-      // Se for a última mensagem e do mesmo remetente, adicionar à mensagem agrupada atual
-      if (index === chatMessages.length - 1 && msg.sender_type === currentSenderType) {
-        if (groupedContent.length > 0) {
-          groupedContent += '\n\n';
-        }
-        groupedContent += content;
-      }
-      
-      // Adicionar mensagem agrupada às mensagens do contexto
-      if (groupedContent.length > 0) {
-        messages.push({
-          role: currentSenderType === 'customer' ? 'user' : 'assistant',
-          content: groupedContent
-        });
-      }
-      
-      // Reiniciar para novo grupo se não for a última mensagem
-      if (index !== chatMessages.length - 1 || msg.sender_type !== currentSenderType) {
-        currentSenderType = msg.sender_type;
-        groupedContent = content;
-      }
-    } 
-    // Mesmo remetente, então agrupar
-    else {
-      if (currentSenderType === null) {
-        currentSenderType = msg.sender_type;
-        groupedContent = content;
-      } else {
-        // Adicionar separador entre mensagens do mesmo remetente
-        groupedContent += '\n\n' + content;
-      }
+    // Se é a primeira mensagem, inicializar o agrupamento
+    if (currentSenderType === null) {
+      currentSenderType = msg.sender_type;
+      groupedContent = content;
+      continue;
     }
-    
-    // Atualizar o último remetente
-    lastSenderType = msg.sender_type;
-  });
 
-  
-  // Adicionar a última mensagem agrupada se ainda não foi adicionada
-  if (groupedContent.length > 0 && currentSenderType === lastSenderType) {
-    messages.push({
-      role: currentSenderType === 'customer' ? 'user' : 'assistant',
-      content: groupedContent
-    });
+    // Verificar se o remetente mudou
+    if (msg.sender_type !== currentSenderType) {
+      // Adicionar mensagem agrupada anterior às mensagens do contexto
+      messages.push({
+        role: currentSenderType === 'customer' ? 'user' : 'assistant',
+        content: groupedContent
+      });
+      
+      // Iniciar novo grupo
+      currentSenderType = msg.sender_type;
+      groupedContent = content;
+    } else {
+      // Mesmo remetente, adicionar à mensagem agrupada atual
+      groupedContent += '\n\n' + content;
+    }
+
+    // Se é a última mensagem, adicionar o grupo atual
+    if (index === chatMessages.length - 1) {
+      messages.push({
+        role: currentSenderType === 'customer' ? 'user' : 'assistant',
+        content: groupedContent
+      });
+    }
   }
 
   console.log('[prepareContextMessages] messages', messages)
