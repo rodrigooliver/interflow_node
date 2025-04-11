@@ -412,7 +412,7 @@ export const improveTextWithOpenAI = async (req, res) => {
 
       // Se a última mensagem for do agente e a opção for 'generate',
       // adicionar uma mensagem de usuário solicitando resposta
-      if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+      if (!messages.length || (messages.length > 0 && messages[messages.length - 1].role === 'assistant')) {
         messages.push({
           role: 'user',
           content: 'Please generate a response for the client based on this conversation.'
