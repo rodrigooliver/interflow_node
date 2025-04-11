@@ -15,7 +15,7 @@ const MAIN_ORGANIZATION_ID = process.env.MAIN_ORGANIZATION_ID || null;
 const router = express.Router({ mergeParams: true });
 
 // Função para criar recursos iniciais (funil, estágios e tipos de encerramento)
-const createInitialResources = async (organizationId, language = 'pt') => {
+const createInitialResources = async (organizationId, language = 'pt', userId = null) => {
   if (!organizationId) return;
   
   try {
@@ -36,7 +36,9 @@ const createInitialResources = async (organizationId, language = 'pt') => {
       closedWonStage: 'Ganho',
       closedWonStageDesc: 'Negócio fechado com sucesso',
       closedLostStage: 'Perdido',
-      closedLostStageDesc: 'Oportunidade perdida'
+      closedLostStageDesc: 'Oportunidade perdida',
+      defaultServiceTeamName: 'Atendimento',
+      defaultServiceTeamDesc: 'Equipe padrão de atendimento ao cliente'
     };
 
     // Configurar traduções com base no idioma
@@ -57,7 +59,9 @@ const createInitialResources = async (organizationId, language = 'pt') => {
         closedWonStage: 'Closed Won',
         closedWonStageDesc: 'Deal successfully closed',
         closedLostStage: 'Closed Lost',
-        closedLostStageDesc: 'Opportunity lost'
+        closedLostStageDesc: 'Opportunity lost',
+        defaultServiceTeamName: 'Support',
+        defaultServiceTeamDesc: 'Default customer support team'
       };
     } else if (language === 'es') {
       translations = {
@@ -76,7 +80,9 @@ const createInitialResources = async (organizationId, language = 'pt') => {
         closedWonStage: 'Ganado',
         closedWonStageDesc: 'Negocio cerrado con éxito',
         closedLostStage: 'Perdido',
-        closedLostStageDesc: 'Oportunidad perdida'
+        closedLostStageDesc: 'Oportunidad perdida',
+        defaultServiceTeamName: 'Atención',
+        defaultServiceTeamDesc: 'Equipo predeterminado de atención al cliente'
       };
     }
 
@@ -175,6 +181,39 @@ const createInitialResources = async (organizationId, language = 'pt') => {
       if (stagesError) {
         console.error('Erro ao criar estágios padrão:', stagesError);
         Sentry.captureException(stagesError);
+      }
+    }
+    
+    // 4. Criar time de serviço padrão
+    const { data: serviceTeam, error: serviceTeamError } = await supabase
+      .from('service_teams')
+      .insert({
+        organization_id: organizationId,
+        name: translations.defaultServiceTeamName,
+        description: translations.defaultServiceTeamDesc,
+        is_default: true
+      })
+      .select('id')
+      .single();
+
+    if (serviceTeamError) {
+      console.error('Erro ao criar time de serviço padrão:', serviceTeamError);
+      Sentry.captureException(serviceTeamError);
+    }
+
+    // 5. Adicionar usuário como líder do time de serviço (se userId for fornecido)
+    if (serviceTeam && userId) {
+      const { error: teamMemberError } = await supabase
+        .from('service_team_members')
+        .insert({
+          team_id: serviceTeam.id,
+          user_id: userId,
+          role: 'leader'
+        });
+
+      if (teamMemberError) {
+        console.error('Erro ao adicionar líder ao time de serviço:', teamMemberError);
+        Sentry.captureException(teamMemberError);
       }
     }
     
@@ -439,7 +478,7 @@ router.post('/signup', signUpLimiter, async (req, res) => {
     }
 
     // 5.1 Criar recursos iniciais (funil, estágios e tipos de encerramento)
-    await createInitialResources(orgData.id, language);
+    await createInitialResources(orgData.id, language, authData.user.id);
 
     // 6. Criar customer para iniciar chat
     if(MAIN_ORGANIZATION_ID) {
