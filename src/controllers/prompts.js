@@ -409,6 +409,15 @@ export const improveTextWithOpenAI = async (req, res) => {
         role: msg.sender_type === 'agent' ? 'assistant' : 'user',
         content: msg.content || ''
       }));
+
+      // Se a última mensagem for do agente e a opção for 'generate',
+      // adicionar uma mensagem de usuário solicitando resposta
+      if (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+        messages.push({
+          role: 'user',
+          content: 'Please generate a response for the client based on this conversation.'
+        });
+      }
     } else {
       // Configurar prompts específicos para cada tipo de melhoria com base no idioma
       let basePrompt = '';
