@@ -28,6 +28,10 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Configurar trust proxy para lidar com cabeçalhos X-Forwarded-For
+// Usando uma configuração mais segura - confiar apenas no primeiro proxy
+app.set('trust proxy', 1);
+
 // The request handler must be the first middleware on the app
 app.use(Sentry.Handlers.requestHandler());
 
