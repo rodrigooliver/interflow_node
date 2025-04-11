@@ -732,7 +732,6 @@ const prepareContextMessages = async (prompt, session) => {
     lastSenderType = msg.sender_type;
   });
 
-  console.log('[prepareContextMessages] groupedContent', groupedContent)
   
   // Adicionar a última mensagem agrupada se ainda não foi adicionada
   if (groupedContent.length > 0 && currentSenderType === lastSenderType) {
@@ -742,6 +741,7 @@ const prepareContextMessages = async (prompt, session) => {
     });
   }
 
+  console.log('[prepareContextMessages] messages', messages)
   return messages;
 };
 
