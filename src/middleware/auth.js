@@ -154,7 +154,7 @@ export async function verifyAuth(req, res, next) {
 
       const { data: apiKeyData } = await supabase
         .from('api_keys')
-        .select('organization_id, profile_id')
+        .select('organization_id, profile_id, organization:organizations(settings)')
         .eq('key_hash', keyHash)
         .eq('is_active', true)
         .eq('organization_id', organizationId)
@@ -166,6 +166,7 @@ export async function verifyAuth(req, res, next) {
 
       req.organizationId = organizationId;
       req.profileId = apiKeyData.profile_id;
+      req.language = req.language ?? apiKeyData.organization?.settings?.language ?? 'pt';
     } else {
       // Validação do token JWT do Supabase
       const token = authHeader.replace('Bearer ', '');
@@ -178,17 +179,19 @@ export async function verifyAuth(req, res, next) {
       try {
         const { data: membership, error: membershipError } = await supabase
           .from('organization_members')
-          .select('organization_id')
+          .select('organization_id, organization:organizations(settings)')
           .eq('profile_id', user.id)
           .eq('organization_id', organizationId)
           .single();
 
         if (membershipError || !membership) {
+          console.log(membershipError);
           return res.status(403).json({ error: 'User does not have access to this organization' });
         }
 
         req.profileId = user.id;
         req.organizationId = organizationId;
+        req.language = req.language ?? membership.organization?.settings?.language ?? 'pt';
       } catch (error) {
         Sentry.captureException(error, {
           tags: {

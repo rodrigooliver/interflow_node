@@ -21,6 +21,7 @@ import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
 import { testEmailConnection } from './controllers/member.js';
 import userRoutes from './routes/user.js';
+import { i18nMiddleware } from './middleware/i18n.js';
 // Load environment variables
 dotenv.config();
 
@@ -37,6 +38,7 @@ app.use(Sentry.Handlers.requestHandler());
 
 // Middleware
 app.use(cors());
+app.use(i18nMiddleware);
 
 // Middleware personalizado para capturar o corpo bruto da requisição do Stripe
 const stripeWebhookMiddleware = express.raw({type: 'application/json'});

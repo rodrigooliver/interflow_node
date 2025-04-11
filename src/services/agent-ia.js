@@ -678,8 +678,10 @@ const prepareContextMessages = async (prompt, session) => {
     });
     
     const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
-    let content = msg.content;
-    if(msg.type === 'image') {
+    let content = '';
+    if(msg.type === 'text') {
+      content = msg.content;
+    } else if(msg.type === 'image') {
       content = `[Image]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'audio') {
       content = `[Audio]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');  
@@ -687,10 +689,16 @@ const prepareContextMessages = async (prompt, session) => {
       content = `[Video]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'document') {
       content = `[Document]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '')   ;
-    } else if(msg.type === 'location') {
-      content = `[Location]` + (msg.content ? ` - ${msg.content}` : '');
     } else if(msg.type === 'sticker') {
       content = `[Sticker]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
+    } else if(msg.type === 'location') {
+      content = `[Location]` + (msg.content ? ` - ${msg.content}` : '');
+    } else if(msg.type === 'instructions_model' && content) {
+      content = `[Instructions to model: ${msg.content}]`;
+    } else if(msg.type === 'team_transferred') {
+      content = `[Team transferred]`;
+    } else if(msg.type === 'user_transferred') {
+      content = `[User transferred]`;
     }
     
     if(!content) continue;

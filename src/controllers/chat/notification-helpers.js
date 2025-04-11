@@ -120,7 +120,7 @@ export async function sendChatNotifications(chat, customer, message) {
  * @param {Object} notificationData - Dados da notificação
  * @returns {Promise<void>}
  */
-async function sendToTeamMembers(chat, notificationData) {
+export async function sendToTeamMembers(chat, notificationData) {
   try {
     if (!chat.team_id) {
       console.log('Chat pendente sem equipe atribuída, nenhuma notificação enviada');
@@ -220,7 +220,7 @@ async function sendToAssignedAndCollaborators(chat, notificationData) {
  * @param {Object} notificationData - Dados da notificação
  * @returns {Promise<void>}
  */
-async function sendNotificationWithFilters(profileIds, notificationData) {
+export async function sendNotificationWithFilters(profileIds, notificationData) {
   try {
     if (!profileIds || profileIds.length === 0) {
       return;
