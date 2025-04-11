@@ -673,17 +673,17 @@ const prepareContextMessages = async (prompt, session) => {
     const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
     let content = msg.content;
     if(msg.type === 'image') {
-      content = `[Image]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+      content = `[Image]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'audio') {
-      content = `[Audio]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');  
+      content = `[Audio]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');  
     } else if(msg.type === 'video') {
-      content = `[Video]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+      content = `[Video]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'document') {
-      content = `[Document]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '')   ;
+      content = `[Document]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '')   ;
     } else if(msg.type === 'location') {
       content = `[Location]` + (msg.content ? ` - ${msg.content}` : '');
     } else if(msg.type === 'sticker') {
-      content = `[Sticker]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+      content = `[Sticker]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     }
     
     if(content) {
