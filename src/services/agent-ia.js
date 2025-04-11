@@ -611,10 +611,10 @@ const prepareContextMessages = async (prompt, session) => {
       });
       
       // Adicionar resposta simulada do assistente para completar o padrão de conversa
-      messages.push({
-        role: 'assistant',
-        content: 'Entendido.'
-      });
+      // messages.push({
+      //   role: 'assistant',
+      //   content: 'Entendido.'
+      // });
     } else {
       // Se não houver prompt, apenas adicionar o contexto como primeira mensagem do usuário
       messages.push({
@@ -727,7 +727,7 @@ const prepareContextMessages = async (prompt, session) => {
     }
   }
 
-  console.log('[prepareContextMessages] messages', messages)
+  // console.log('[prepareContextMessages] messages', messages)
   return messages;
 };
 
