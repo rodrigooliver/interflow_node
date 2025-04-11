@@ -731,6 +731,8 @@ const prepareContextMessages = async (prompt, session) => {
     // Atualizar o último remetente
     lastSenderType = msg.sender_type;
   });
+
+  console.log('[prepareContextMessages] groupedContent', groupedContent)
   
   // Adicionar a última mensagem agrupada se ainda não foi adicionada
   if (groupedContent.length > 0 && currentSenderType === lastSenderType) {
