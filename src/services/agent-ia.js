@@ -715,7 +715,7 @@ const prepareContextMessages = async (prompt, session) => {
       groupedContent = content;
     } else {
       // Mesmo remetente, adicionar à mensagem agrupada atual
-      groupedContent += '\n\n' + content;
+      groupedContent += `\n\n${content}`;
     }
 
     // Se é a última mensagem, adicionar o grupo atual
