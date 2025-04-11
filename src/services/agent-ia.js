@@ -645,7 +645,7 @@ const prepareContextMessages = async (prompt, session) => {
     .select('*')
     .eq('chat_id', session.chat_id)
     .in('sender_type', ['customer', 'agent'])
-    .not('content', 'is', null)
+    // .not('content', 'is', null)
     .neq('status', 'deleted')
     .order('created_at', { ascending: true });
 
@@ -670,13 +670,28 @@ const prepareContextMessages = async (prompt, session) => {
       timeZone: timezone
     });
     
-    const timestampInfo = ``;
-    // const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
+    const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
+    let content = msg.content;
+    if(msg.type === 'image') {
+      content = `[Image]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+    } else if(msg.type === 'audio') {
+      content = `[Audio]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');  
+    } else if(msg.type === 'video') {
+      content = `[Video]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+    } else if(msg.type === 'document') {
+      content = `[Document]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '')   ;
+    } else if(msg.type === 'location') {
+      content = `[Location]` + (msg.content ? ` - ${msg.content}` : '');
+    } else if(msg.type === 'sticker') {
+      content = `[Sticker]` + (msg.attatchements[0].name ? ` - ${msg.attatchements[0].name}` : '');
+    }
     
-    messages.push({
-      role: msg.sender_type === 'customer' ? 'user' : 'assistant',
-      content: timestampInfo + msg.content
-    });
+    if(content) {
+      messages.push({
+        role: msg.sender_type === 'customer' ? 'user' : 'assistant',
+        content: timestampInfo + content
+      });
+    }
   });
 
   return messages;
