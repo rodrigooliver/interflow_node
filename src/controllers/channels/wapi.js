@@ -1886,16 +1886,14 @@ export async function deleteWapiChannel(req, res) {
         const accountId = decrypt(channel.settings.interflowData.accountId);
         
         try {
-          // Primeiro desconecta a instância
-          const disconnectResponse = await fetch(
-            `https://api-painel.w-api.app/instance/disconnect?connectionKey=${credentials.apiConnectionKey}`,
-            {
-              method: 'DELETE',
-              headers: {
-                'Content-Type': 'application/json'
-              }
+         // Primeiro desconecta a instância
+          const disconnectResponse = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${credentials.apiConnectionKey}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${credentials.apiToken}`
             }
-          );
+          });
 
           if (!disconnectResponse.ok) {
             const disconnectData = await disconnectResponse.json();
@@ -1972,6 +1970,15 @@ export async function deleteWapiChannel(req, res) {
         }
       }
     }
+
+    //Excluir mensagens do chat
+    // const { error: deleteMessagesError } = await supabase
+    //   .from('messages, chats(id, channel_id)')
+    //   .delete()
+    //   .not('chats.channel_id', 'is', null)
+    //   .eq('chats.channel_id', channelId);
+
+    // if (deleteMessagesError) throw deleteMessagesError;
 
     // Excluir os chats associados ao canal
     const { error: deleteChatsError } = await supabase
