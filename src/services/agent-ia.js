@@ -689,7 +689,7 @@ const prepareContextMessages = async (prompt, session) => {
     if(content) {
       messages.push({
         role: msg.sender_type === 'customer' ? 'user' : 'assistant',
-        content: timestampInfo + content
+        content: content
       });
     }
   });
