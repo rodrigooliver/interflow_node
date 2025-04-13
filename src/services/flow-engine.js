@@ -1395,27 +1395,85 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const updateCustomer = async (data, session) => {
     try {
-      const { fields } = data;
-      if (!fields || !Array.isArray(fields) || fields.length === 0) {
-        const error = new Error('Campos para atualização não especificados');
+      const { field, value, teamId, userId, funnelId, stageId } = data;
+      if (!field) {
+        const error = new Error('Campo para atualização não especificado');
         Sentry.captureException(error);
         throw error;
       }
 
-      const updates = {};
-      
-      // Processa cada campo, substituindo variáveis se necessário
-      for (const field of fields) {
-        if (field.name && field.value) {
-          updates[field.name] = replaceVariables(field.value, session.variables);
+      let updateChat = {};
+      let updateCustomer = {};
+
+      if(field === 'rating') { // Atualiza a avaliação do chat
+        const rating = Number(replaceVariables(value, session.variables)); // Substitui variáveis no valor
+        if (!rating) {
+          const error = new Error('Avaliação não especificada');
+          Sentry.captureException(error);
+          throw error;
         }
+        if(rating < 0 || rating > 5) {
+          const error = new Error('Avaliação inválida');
+          Sentry.captureException(error);
+          throw error;
+        }
+        updateChat = {
+          rating: rating
+        };
+      } else if(field === 'feedback') { // Atualiza o feedback do chat
+        const feedback = replaceVariables(value, session.variables);
+        if(!feedback) {
+          const error = new Error('Feedback não especificado');
+          Sentry.captureException(error);
+          throw error;
+        }
+        updateChat = {
+          feedback: feedback
+        };
+      } else if(field === 'funnel') { // Atualiza o funil do chat
+        const funnel = replaceVariables(value, session.variables);
+        if(!funnel) {
+          const error = new Error('Funnel não especificado');
+          Sentry.captureException(error);
+          throw error;
+        }
+        updateCustomer = {
+          stage_id: stageId,
+        };
+      } else if(field === 'team') { // Atualiza o time do chat
+        const team = replaceVariables(value, session.variables);
+        if(!team) {
+          const error = new Error('Time não especificado');
+          Sentry.captureException(error);
+          throw error;
+        }
+        updateChat = {
+          team_id: teamId
+        };
+      } else if(field === 'user') { // Atualiza o usuário do chat
+        const user = replaceVariables(value, session.variables);
+        if(!user) {
+          const error = new Error('Usuário não especificado');
+          Sentry.captureException(error);
+          throw error;
+        }
+        updateChat = {
+          assigned_to: userId
+        };
       }
-      
-      if (Object.keys(updates).length > 0) {
+
+      if(Object.keys(updateChat).length > 0) {
+        await supabase  
+          .from('chats')
+          .update(updateChat)
+          .eq('id', session.chat_id);
+      }
+
+      if(Object.keys(updateCustomer).length > 0) {
         await supabase
           .from('customers')
-          .update(updates)
-          .eq('id', session.customer);
+          .update(updateCustomer)
+          .eq('id', session.customer_id);
       }
       
       return session;
