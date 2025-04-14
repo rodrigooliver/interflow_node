@@ -328,7 +328,7 @@ export const testOpenAIPrompt = async (req, res) => {
       });
     }
 
-    console.log('[testOpenAIPrompt] finalSystemPrompt', finalSystemPrompt)
+    // console.log('[testOpenAIPrompt] finalSystemPrompt', finalSystemPrompt)
 
     // Preparar as mensagens para a API da OpenAI
     const apiMessages = [
