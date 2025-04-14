@@ -263,7 +263,7 @@ export const validateOpenAIKey = async (req, res) => {
 export const testOpenAIPrompt = async (req, res) => {
   try {
     const { organizationId, id } = req.params;
-    const { systemPrompt, messages, model = 'gpt-3.5-turbo', temperature = 0.7 } = req.body;
+    const { systemPrompt, messages, model = 'gpt-3.5-turbo', temperature = 0.7, content_addons = [] } = req.body;
 
     // Validar campos obrigatórios
     if (!systemPrompt || !messages || !Array.isArray(messages) || messages.length === 0) {
@@ -316,9 +316,23 @@ export const testOpenAIPrompt = async (req, res) => {
       });
     }
 
+    // Processar content_addons e adicionar ao systemPrompt, se existirem
+    let finalSystemPrompt = systemPrompt;
+    
+    if (content_addons && Array.isArray(content_addons) && content_addons.length > 0) {
+      // Adicionar cada content_addon ao systemPrompt
+      content_addons.forEach(addon => {
+        if (addon && addon.content) {
+          finalSystemPrompt += `\n\n${addon.content}`;
+        }
+      });
+    }
+
+    console.log('[testOpenAIPrompt] finalSystemPrompt', finalSystemPrompt)
+
     // Preparar as mensagens para a API da OpenAI
     const apiMessages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: finalSystemPrompt },
       ...messages
     ];
 

@@ -601,9 +601,25 @@ const prepareContextMessages = async (prompt, session) => {
     if (prompt.content) {
       // Substituir variáveis no prompt
       const processedContent = replaceVariables(prompt.content, session.variables);
+      
+      // Preparar o conteúdo final incluindo os content_addons, se existirem
+      let finalContent = processedContent;
+      
+      // Verificar e adicionar os content_addons
+      if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
+        // Adicionar cada content_addon ao conteúdo processado
+        prompt.content_addons.forEach(addon => {
+          if (addon && addon.content) {
+            // Processar variáveis também nos content_addons
+            const processedAddon = replaceVariables(addon.content, session.variables);
+            finalContent += `\n\n${processedAddon}`;
+          }
+        });
+      }
+      
       messages.push({
         role: 'system',
-        content: processedContent
+        content: finalContent
       });
       
       // Adicionar informações de contexto como primeira mensagem do usuário para aproveitar o cache
@@ -634,9 +650,25 @@ const prepareContextMessages = async (prompt, session) => {
     if (prompt.content) {
       // Substituir variáveis no prompt
       const processedContent = replaceVariables(prompt.content, session.variables);
+      
+      // Preparar o conteúdo final incluindo os content_addons, se existirem
+      let finalContent = processedContent;
+      
+      // Verificar e adicionar os content_addons
+      if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
+        // Adicionar cada content_addon ao conteúdo processado
+        prompt.content_addons.forEach(addon => {
+          if (addon && addon.content) {
+            // Processar variáveis também nos content_addons
+            const processedAddon = replaceVariables(addon.content, session.variables);
+            finalContent += `\n\n${processedAddon}`;
+          }
+        });
+      }
+      
       messages.push({
         role: 'system',
-        content: processedContent
+        content: finalContent
       });
     }
   }
