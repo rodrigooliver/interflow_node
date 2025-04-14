@@ -713,7 +713,7 @@ const prepareContextMessages = async (prompt, session) => {
     
     const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
     let content = '';
-    if(msg.type === 'text') {
+    if(msg.type === 'text' || msg.content) {
       content = msg.content;
     } else if(msg.type === 'image') {
       content = `[Image]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
