@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
 import crypto from 'crypto';
-
+import { transferToTeam } from '../controllers/chat/transfer-handlers.js';
 /**
  * @fileoverview Implementação das ações do sistema para o AgentIA.
  * 
@@ -170,9 +170,12 @@ export const generateSystemTools = async (organizationId, systemActions = []) =>
         case 'updateCustomerCustomData':
           tool = await generateUpdateCustomerCustomDataTool(organizationId, action);
           break;
-        // case 'update_customer':
-        //   tool = generateUpdateCustomerTool(action);
-        //   break;
+        case 'changeCustomerName':
+          tool = generateChangeCustomerName(organizationId, action);
+          break;
+        case 'transferToTeam':
+          tool = await generateTransferToTeamTool(organizationId, action);
+          break;
         // case 'update_chat':
         //   tool = generateUpdateChatTool(action);
         //   break;
@@ -317,15 +320,16 @@ const generateScheduleTool = async (organizationId, action) => {
 };
 
 /**
- * Gera a ferramenta para atualizar dados do cliente
+ * Gera a ferramenta para alterar o nome do cliente
+ * @param {string} organizationId - ID da organização
  * @param {Object} action - Ação associada à ferramenta
  * @returns {Object} - Ferramenta de atualização de cliente
  */
-const generateUpdateCustomerTool = (action) => {
+const generateChangeCustomerName = (organizationId, action) => {
   // Usar o nome e a descrição da ação configurada ou usar padrões
-  const toolName = transformToolName(action.title || "update_customer");
+  const toolName = transformToolName(action.title || "change_customer_name");
   const toolDescription = action.description || 
-    "Atualizar informações do cliente, como nome, email, telefone ou estágio no funil.";
+    "Alterar o nome do cliente.";
   
   return {
     name: toolName,
@@ -335,29 +339,11 @@ const generateUpdateCustomerTool = (action) => {
       properties: {
         name: {
           type: "string",
-          description: "Novo nome para o cliente."
+          description: "Name of the customer to be changed."
         },
-        email: {
-          type: "string",
-          description: "Novo endereço de email para o cliente."
-        },
-        phone: {
-          type: "string",
-          description: "Novo número de telefone para o cliente."
-        },
-        funnel_stage: {
-          type: "string",
-          description: "Estágio do funil para o qual o cliente deve ser movido. Use o nome do estágio."
-        },
-        tags: {
-          type: "array",
-          items: {
-            type: "string"
-          },
-          description: "Tags a serem aplicadas ao cliente."
-        }
       }
-    }
+    },
+    required: ["name"]
   };
 };
 
@@ -513,7 +499,6 @@ const createNameToIdMap = (items, nameKey = 'name', idKey = 'id') => {
  * @param {string} tool - Ferramenta do sistema  a ser processada
  * @param {Object} args - Argumentos da chamada
  * @param {Object} session - Sessão atual
- * @param {Function} processUpdateCustomerAction - Função para processar ação de atualização de cliente
  * @param {Function} processUpdateChatAction - Função para processar ação de atualização de chat
  * @param {Function} processStartFlowAction - Função para processar ação de início de fluxo
  * @returns {Object|Array} - Resultado(s) da operação
@@ -524,20 +509,18 @@ export const handleSystemToolCall = async (
   actionsSystem,
   session, 
   { 
-    processUpdateCustomerAction, 
-    processUpdateChatAction, 
     processStartFlowAction 
   }
 ) => {
   try {
-    console.log(`[handleSystemToolCall] Processando chamada para ferramenta do sistema: ${tool.name}`);
+    // console.log(`[handleSystemToolCall] Processando chamada para ferramenta do sistema: ${tool.name}`);
 
     // console.log(`[handleSystemToolCall] Ferramentas disponíveis: ${JSON.stringify(actionsSystem)}`);
 
     const action = actionsSystem.find(action => action.name === tool.name);
 
-    console.log(`[handleSystemToolCall] Ferramenta encontrada: ${JSON.stringify(action)}`);
-    console.log(`[handleSystemToolCall] Ferramenta config: ${JSON.stringify(action.config)}`);
+    // console.log(`[handleSystemToolCall] Ferramenta encontrada: ${JSON.stringify(action)}`);
+    // console.log(`[handleSystemToolCall] Ferramenta config: ${JSON.stringify(action.config)}`);
 
     if(!action.type) {
       return {
@@ -899,76 +882,36 @@ export const handleSystemToolCall = async (
         };
       }
       
-      case 'update_customer': {
-        // Criar uma ação para processamento pelo processUpdateCustomerAction
-        const action = {
-          type: 'update_customer',
-          config: {
-            name: args.name,
-            // Mapeamento para funil/estágio se necessário
-            // Isso seria expandido conforme necessidade
-          }
+
+      case 'changeCustomerName': {
+        if(!args.name){
+          return {
+            status: "error",
+            message: "Name is required."
+          };
+        }
+
+        //Atualizar o nome do cliente
+        const { data: customer, error } = await supabase
+          .from('customers')
+          .update({ name: args.name })
+          .eq('id', session.customer_id)
+          .single();
+
+        if(error){
+          return {
+            status: "error",
+            message: "Error updating customer name."
+          };
+        }
+
+        return {
+          status: "success",
+          message: "Customer name updated successfully.",
+          customer: customer
         };
-        
-        // Processar a ação
-        return await processUpdateCustomerAction(action, args, session);
       }
       
-      case 'update_chat': {
-        // Mapear nome da equipe para ID apenas se fornecido
-        if (args.team_name) {
-          // Verificar se existe no cache
-          let teamMap = getCachedMap(session.organization_id, 'teams');
-          
-          // Se não existir no cache, buscar e armazenar
-          if (!teamMap) {
-            const { data: teams } = await supabase
-              .from('teams')
-              .select('id, name')
-              .eq('organization_id', session.organization_id);
-            
-            if (!teams || teams.length === 0) {
-              console.log(`[handleSystemToolCall] Nenhuma equipe encontrada, ignorando atribuição de equipe`);
-              // Não impedir a ação se não houver equipes, apenas ignorar este campo
-            } else {
-              // Criar e armazenar o mapa no cache
-              teamMap = createNameToIdMap(teams);
-              setCachedMap(session.organization_id, 'teams', teamMap);
-              console.log(`[handleSystemToolCall] Cache de equipes criado para organização ${session.organization_id}`);
-            }
-          } else {
-            console.log(`[handleSystemToolCall] Usando cache de equipes para organização ${session.organization_id}`);
-          }
-          
-          if (teamMap) {
-            const teamName = args.team_name.toLowerCase();
-            
-            if (teamMap[teamName]) {
-              args.team_id = teamMap[teamName];
-              console.log(`[handleSystemToolCall] Mapeado nome da equipe "${args.team_name}" para ID: ${args.team_id}`);
-            } else {
-              console.warn(`[handleSystemToolCall] Equipe "${args.team_name}" não encontrada`);
-              return {
-                status: "error",
-                message: `Team "${args.team_name}" not found. Please choose a valid team.`,
-              };
-            }
-          }
-        }
-        
-        // Criar uma ação para processamento pelo processUpdateChatAction
-        const action = {
-          type: 'update_chat',
-          config: {
-            title: args.title,
-            status: args.status,
-            teamId: args.team_id
-          }
-        };
-        
-        // Processar a ação
-        return await processUpdateChatAction(action, args, session);
-      }
       
       case 'start_flow': {
         // Verificar se flow_name foi fornecido (obrigatório)
@@ -1030,6 +973,84 @@ export const handleSystemToolCall = async (
         
         // Processar a ação
         return await processStartFlowAction(action, args, session);
+      }
+      
+      case 'transferToTeam': {
+        // Verificar se team_name foi fornecido (obrigatório)
+        if (!args.team_name) {
+          return {
+            status: "error",
+            message: "Team name is required."
+          };
+        }
+        
+        // Mapear nome da equipe para ID
+        // Verificar se existe no cache
+        let teamMap = getCachedMap(session.organization_id, 'teams');
+        
+        // Se não existir no cache, buscar e armazenar
+        if (!teamMap) {
+          const { data: teams } = await supabase
+            .from('service_teams')
+            .select('id, name')
+            .eq('organization_id', session.organization_id);
+          
+          if (!teams || teams.length === 0) {
+            console.log(`[handleSystemToolCall] Nenhuma equipe encontrada, ignorando atribuição de equipe`);
+            return {
+              status: "error",
+              message: "No active teams found for this organization.",
+            };
+            // Não impedir a ação se não houver equipes, apenas ignorar este campo
+          } else {
+            // Criar e armazenar o mapa no cache
+            teamMap = createNameToIdMap(teams);
+            setCachedMap(session.organization_id, 'teams', teamMap);
+            // console.log(`[handleSystemToolCall] Cache de equipes criado para organização ${session.organization_id}`);
+          }
+        } else {
+          console.log(`[handleSystemToolCall] Usando cache de equipes para organização ${session.organization_id}`);
+        }
+        
+        if (teamMap) {
+          const teamName = args.team_name.toLowerCase();
+          
+          if (teamMap[teamName]) {
+            args.team_id = teamMap[teamName];
+            // console.log(`[handleSystemToolCall] Mapeado nome da equipe "${args.team_name}" para ID: ${args.team_id}`);
+          } else {
+            console.warn(`[handleSystemToolCall] Equipe "${args.team_name}" não encontrada`);
+            return {
+              status: "error",
+              message: `Team "${args.team_name}" not found. Please choose a valid team.`,
+            };
+          }
+        }
+
+
+        // console.log(`[handleSystemToolCall] Transferindo chat para equipe ${args.team_id}`);
+        // console.log(`[handleSystemToolCall] Chat ID: ${session.chat_id}`);
+        // console.log(`[handleSystemToolCall] Organization ID: ${session.organization_id}`);
+
+        
+        //Transferir o chat para a equipe
+        const result = await transferToTeam({
+          organizationId: session.organization_id,
+          chatId: session.chat_id,
+          newTeamId: args.team_id
+        });
+
+        if(result.success){
+          return {
+            status: "success",
+            message: result.message
+          };
+        }
+
+        return {
+          status: "error",
+          message: result.message ?? "Error transferring chat to team."
+        };
       }
       
       default:
@@ -1904,6 +1925,60 @@ const generateUpdateCustomerCustomDataTool = async (organizationId, action) => {
     };
   } catch (error) {
     console.error(`[generateUpdateCustomerCustomDataTool] Erro ao gerar ferramenta de atualização de campos personalizados:`, error);
+    Sentry.captureException(error);
+    return null;
+  }
+};
+
+/**
+ * Gera a ferramenta para transferir para equipe
+ * @param {string} organizationId - ID da organização
+ * @param {Object} action - Ação associada à ferramenta
+ * @returns {Promise<Object>} - Ferramenta de transferência para equipe
+ */
+const generateTransferToTeamTool = async (organizationId, action) => {
+  try {
+    // Buscar todas as equipes de serviço ativas da organização
+    const { data: serviceTeams, error } = await supabase
+      .from('service_teams')
+      .select('id, name')
+      .eq('organization_id', organizationId);
+    
+    if (error) {
+      console.error(`[generateTransferToTeamTool] Erro ao buscar equipes:`, error);
+      return null;
+    }
+    
+    if (!serviceTeams || serviceTeams.length === 0) {
+      console.log(`[generateTransferToTeamTool] Nenhuma equipe encontrada para a organização ${organizationId}`);
+      return null;
+    }
+    
+    // Usar o nome e a descrição da ação configurada ou usar padrões
+    const toolName = transformToolName(action.name || "transfer_to_team");
+    const toolDescription = action.description || 
+      "Transfer the chat to a specific team for better support.";
+
+    console.log(`[generateTransferToTeamTool] Equipes encontradas:`, serviceTeams);
+    
+    // Construir a ferramenta
+    return {
+      name: toolName,
+      description: toolDescription,
+      parameters: {
+        type: "object",
+        properties: {
+          team_name: {
+            type: "string",
+            enum: serviceTeams.map(team => team.name),
+            description: "Name of the team to transfer the chat to."
+          }
+        },
+        required: ["team_name"]
+      }
+    };
+  } catch (error) {
+    console.error(`[generateTransferToTeamTool] Erro ao gerar ferramenta de transferência para equipe:`, error);
     Sentry.captureException(error);
     return null;
   }

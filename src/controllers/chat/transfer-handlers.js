@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { sendToTeamMembers, sendNotificationWithFilters } from './notification-helpers.js';
 import dotenv from 'dotenv';
+import { createTranslator } from '../../i18n/i18n-helper.js';
 
 dotenv.config();
 
@@ -107,23 +108,20 @@ export async function transferAllChatsCustomerRoute(req, res) {
   }
 } 
 
-export async function transferToTeamRoute(req, res) {
-  const { organizationId, chatId } = req.params;
-  const { oldTeamId, newTeamId, title } = req.body;
-  const { profileId, language } = req;
+export async function transferToTeam({
+  organizationId,
+  chatId,
+  newTeamId,
+  title,
+  profileId = null,
+  language = 'pt',
+  t
+}) {
+  // Se t não for fornecido, cria uma função de tradução
+  const translator = t || createTranslator(language);
 
   if (!chatId || !newTeamId) {
-    return res.status(400).json({ 
-      error: req.t('chat.transfer.errors.required_fields'),
-      language
-    });
-  }
-
-  if (oldTeamId === newTeamId) {
-    return res.status(400).json({ 
-      error: req.t('chat.transfer.errors.same_team'),
-      language
-    });
+    throw new Error(translator('chat.transfer.errors.required_fields'));
   }
 
   try {
@@ -137,10 +135,7 @@ export async function transferToTeamRoute(req, res) {
 
     if (chatError) throw chatError;
     if (!chat) {
-      return res.status(404).json({ 
-        error: req.t('chat.transfer.errors.chat_not_found'),
-        language
-      });
+      throw new Error(translator('chat.transfer.errors.chat_not_found'));
     }
 
     // Verificar se a equipe existe e pertence à organização
@@ -153,10 +148,7 @@ export async function transferToTeamRoute(req, res) {
 
     if (teamError) throw teamError;
     if (!team) {
-      return res.status(404).json({ 
-        error: req.t('chat.transfer.errors.team_not_found'),
-        language
-      });
+      throw new Error(translator('chat.transfer.errors.team_not_found'));
     }
 
     // Atualizar o team_id do chat
@@ -190,9 +182,9 @@ export async function transferToTeamRoute(req, res) {
     if (sendMessageError) throw sendMessageError;
 
     sendToTeamMembers(chat, {
-      heading: chat.customer?.name ?? req.t('chat.transfer.notifications.chat_available'),
-      subtitle: `${req.t('chat.transfer.notifications.chat_awaiting_attendance')} ${team.name}`,
-      content: title ?? `${req.t('chat.transfer.notifications.chat_awaiting_attendance')} ${team.name}`,
+      heading: chat.customer?.name ?? translator('chat.transfer.notifications.chat_available'),
+      subtitle: `${translator('chat.transfer.notifications.chat_awaiting_attendance')} ${team.name}`,
+      content: title ?? chat.title ?? `${translator('chat.transfer.notifications.chat_awaiting_attendance')} ${team.name}`,
       data: {
         url: `${FRONT_URL}/app/chats/${chat.id}`,
         chat_id: chat.id,
@@ -202,17 +194,50 @@ export async function transferToTeamRoute(req, res) {
       }
     });
 
-    // console.log(req.t('chat.transfer.success.team_transferred'));
-
-    return res.json({ 
-      success: true, 
-      message: req.t('chat.transfer.success.team_transferred'),
-      language
-    });
+    return {
+      success: true,
+      message: translator('chat.transfer.success.team_transferred'),
+      chat,
+      team
+    };
 
   } catch (error) {
     console.error('Erro ao transferir chat para equipe:', error);
     Sentry.captureException(error);
+    throw error;
+  }
+}
+
+export async function transferToTeamRoute(req, res) {
+  const { organizationId, chatId } = req.params;
+  const { oldTeamId, newTeamId, title } = req.body;
+  const { profileId, language } = req;
+
+  if (oldTeamId === newTeamId) {
+    return res.status(400).json({ 
+      error: req.t('chat.transfer.errors.same_team'),
+      language
+    });
+  }
+
+  try {
+    const result = await transferToTeam({
+      organizationId,
+      chatId,
+      newTeamId,
+      title,
+      profileId,
+      language,
+      t: req.t
+    });
+
+    return res.json({ 
+      success: result.success, 
+      message: result.message,
+      language
+    });
+
+  } catch (error) {
     return res.status(500).json({ 
       error: req.t('chat.transfer.errors.team_transfer_error'),
       language

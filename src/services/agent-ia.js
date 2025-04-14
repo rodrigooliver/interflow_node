@@ -162,6 +162,8 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 
     // console.log(`[AgentIA] Ferramentas do sistema: ${JSON.stringify(systemTools)}`);
 
+    // console.log(`[AgentIA] Ferramentas do sistema:`, systemTools);
+
     // Fazer chamada para o OpenAI
     const completion = await openai.chat.completions.create({
       model: prompt.model || 'gpt-4o',
