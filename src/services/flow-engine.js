@@ -886,7 +886,24 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       .single();
 
     if (error) throw error;
-    
+
+    if(updates.status && updates.status === 'inactive') {
+      //Pesquisar se chat está status await_closing e marcar como closed
+      const { data: chat, error: chatError } = await supabase
+        .from('chats')
+        .select('*')
+        .eq('id', data.chat_id)
+        .eq('status', 'await_closing')
+        .single();
+
+      if(chat) {
+        await supabase
+          .from('chats')
+          .update({ status: 'closed' })
+          .eq('id', data.chat_id);
+      }
+    }
+
     return data;
   };
 
@@ -1395,7 +1412,14 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    */
   const updateCustomer = async (data, session) => {
     try {
-      const { field, value, teamId, userId, funnelId, stageId } = data;
+      const {updateCustomer: updateCustomerData} = data;
+      if(!updateCustomerData) {
+        const error = new Error('Dados para atualização do cliente não especificados');
+        Sentry.captureException(error);
+        throw error;
+      }
+      const { field, value, teamId, userId, funnelId, stageId } = updateCustomerData;
+      console.log(`[updateCustomer] Atualizando cliente com dados:`, updateCustomerData);
       if (!field) {
         const error = new Error('Campo para atualização não especificado');
         Sentry.captureException(error);
@@ -1461,6 +1485,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           assigned_to: userId
         };
       }
+
+      // console.log(`[updateCustomer] Atualizando chat com dados:`, updateChat);
+      // console.log(`[updateCustomer] Atualizando cliente com dados:`, updateCustomer);
 
       if(Object.keys(updateChat).length > 0) {
         await supabase  

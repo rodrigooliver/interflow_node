@@ -53,7 +53,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
       .from('chats')
       .select('*, customers(*)')
       .eq('channel_id', channel.id)
-      .in('status', ['in_progress', 'pending'])
+      .in('status', ['in_progress', 'pending', 'await_closing'])
       .eq('external_id', externalId)
       .order('created_at', { ascending: false })
       .limit(1);
