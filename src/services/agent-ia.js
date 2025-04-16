@@ -620,7 +620,7 @@ const prepareContextMessages = async (prompt, session) => {
         });
       }
 
-      console.log('[prepareContextMessages] finalContent', finalContent)
+      // console.log('[prepareContextMessages] finalContent', finalContent)
       
       messages.push({
         role: 'system',
