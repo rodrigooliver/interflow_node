@@ -420,6 +420,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
               }
             } else if (part.type === 'list') {
               // Envia a lista com delay maior
+              // `${part.content ?? 'Lista'} \n\n ${part.metadata?.description ?? ''}`,
               await sendWithDelay(
                 `${part.content ?? 'Lista'} \n\n ${part.metadata?.description ?? ''}`,
                 null, 
@@ -955,7 +956,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
   const sendMessage = async (content, files, sessionId, metadata) => {
     try {
       // console.log('sendMessage', content, files, sessionId, metadata);
-      if(content || files) {
+      if(content || files || metadata) {
         const result = await createMessageToSend(chatId, organization.id, content, null, files, null, metadata);
         if (result.status !== 201) {
           const error = new Error(result.error);

@@ -595,6 +595,8 @@ const prepareContextMessages = async (prompt, session) => {
 4. Avoid modifying or shortening the URLs.`;
     }
     
+    contextInfo += `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
+    
     contextInfo += `\n\n--- \n\n**Please use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.** ]`;
     
     // Adicionar prompt do sistema (instruções gerais sem o contexto)

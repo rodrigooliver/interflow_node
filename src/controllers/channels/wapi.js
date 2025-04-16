@@ -1361,7 +1361,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
           }))
         })
       });
-    } else if (messageData.content) {
+    } else if (messageData.content && messageData.content != '[object Object]') {
       const body = {
         phoneNumber: messageData.to,
         text: messageData.content,
