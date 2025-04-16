@@ -605,9 +605,6 @@ const prepareContextMessages = async (prompt, session) => {
       // Preparar o conteúdo final incluindo os content_addons, se existirem
       let finalContent = processedContent;
       
-      // Adicionar instrução de idioma diretamente ao prompt principal
-      finalContent += `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
-      
       // Verificar e adicionar os content_addons
       if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
         // Adicionar cada content_addon ao conteúdo processado
@@ -620,12 +617,17 @@ const prepareContextMessages = async (prompt, session) => {
         });
       }
 
+      // Adicionar instrução de idioma diretamente ao prompt principal
+      finalContent += `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
+
       // console.log('[prepareContextMessages] finalContent', finalContent)
       
       messages.push({
         role: 'system',
         content: finalContent
       });
+
+      // console.log('[prepareContextMessages] contextInfo', contextInfo)
       
       // Adicionar informações de contexto como primeira mensagem do usuário para aproveitar o cache
       messages.push({
@@ -691,10 +693,13 @@ const prepareContextMessages = async (prompt, session) => {
     .neq('status', 'deleted')
     .order('created_at', { ascending: true });
 
+  // console.log('[prepareContextMessages] chatMessages', chatMessages)
+
   // Agrupar mensagens consecutivas do mesmo remetente
   let currentSenderType = null;
   let groupedContent = '';
 
+  console.log('[prepareContextMessages] chatMessages length', chatMessages?.length)
   // Processar cada mensagem uma vez para agrupamento
   for (let index = 0; index < chatMessages?.length; index++) {
     const msg = chatMessages[index];
@@ -742,13 +747,22 @@ const prepareContextMessages = async (prompt, session) => {
     } else if(msg.type === 'user_transferred') {
       content = `[User transferred]`;
     }
-    
+
     if(!content) continue;
 
     // Se é a primeira mensagem, inicializar o agrupamento
     if (currentSenderType === null) {
       currentSenderType = msg.sender_type;
       groupedContent = content;
+      
+      // Se for a única mensagem, adicionar diretamente
+      if (index === chatMessages.length - 1) {
+        messages.push({
+          role: currentSenderType === 'customer' ? 'user' : 'assistant',
+          content: groupedContent
+        });
+      }
+      
       continue;
     }
 
@@ -776,6 +790,7 @@ const prepareContextMessages = async (prompt, session) => {
       });
     }
   }
+  
 
   // console.log('[prepareContextMessages] messages', messages)
   return messages;
