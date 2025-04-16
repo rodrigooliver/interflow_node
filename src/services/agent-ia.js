@@ -606,7 +606,7 @@ const prepareContextMessages = async (prompt, session) => {
       let finalContent = processedContent;
       
       // Adicionar instrução de idioma diretamente ao prompt principal
-      finalContent = `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
+      finalContent += `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
       
       // Verificar e adicionar os content_addons
       if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
@@ -619,6 +619,8 @@ const prepareContextMessages = async (prompt, session) => {
           }
         });
       }
+
+      console.log('[prepareContextMessages] finalContent', finalContent)
       
       messages.push({
         role: 'system',

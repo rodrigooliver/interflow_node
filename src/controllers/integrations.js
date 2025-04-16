@@ -263,7 +263,7 @@ export const validateOpenAIKey = async (req, res) => {
 export const testOpenAIPrompt = async (req, res) => {
   try {
     const { organizationId, id } = req.params;
-    const { systemPrompt, messages, model = 'gpt-3.5-turbo', temperature = 0.7, content_addons = [] } = req.body;
+    const { systemPrompt, messages, model = 'gpt-4o-mini', temperature = 0.7, content_addons = [] } = req.body;
 
     // Validar campos obrigatórios
     if (!systemPrompt || !messages || !Array.isArray(messages) || messages.length === 0) {
