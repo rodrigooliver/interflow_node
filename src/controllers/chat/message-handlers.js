@@ -3,7 +3,6 @@ import axios from 'axios';
 import FormData from 'form-data';
 import Queue from 'queue';
 
-import { getActiveS3Integration } from '../../lib/s3.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { createChat } from '../../services/chat.js';
@@ -553,17 +552,19 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
-    const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
-      // isFirstMessage: true,
-      isFirstMessage,
-      lastMessage: message
-    });
+    if(!messageData.fromMe) {
+      const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
+        // isFirstMessage: true,
+        isFirstMessage,
+        lastMessage: message
+      });
 
-    await flowEngine.processMessage({
-      content: messageData.message.content,
-      type: messageData.message.type,
-      metadata: messageData.message.raw
-    });
+      await flowEngine.processMessage({
+        content: messageData.message.content,
+        type: messageData.message.type,
+        metadata: messageData.message.raw
+      });
+    }
 
   } catch (error) {
     Sentry.captureException(error, {
@@ -1803,7 +1804,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         let uploadResult;
         // Usar a função uploadFile para processar o arquivo
         if(file.url) {
-          console.log('file', file);
+          // console.log('file', file);
           uploadResult = {
             attachment: {
               url: file.url,
