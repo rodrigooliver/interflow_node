@@ -595,8 +595,6 @@ const prepareContextMessages = async (prompt, session) => {
 4. Avoid modifying or shortening the URLs.`;
     }
     
-    contextInfo += `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
-    
     contextInfo += `\n\n--- \n\n**Please use this information appropriately in your responses without explicitly mentioning that it came from a system note, unless specifically asked about it.** ]`;
     
     // Adicionar prompt do sistema (instruções gerais sem o contexto)
@@ -606,6 +604,9 @@ const prepareContextMessages = async (prompt, session) => {
       
       // Preparar o conteúdo final incluindo os content_addons, se existirem
       let finalContent = processedContent;
+      
+      // Adicionar instrução de idioma diretamente ao prompt principal
+      finalContent = `\n\n--- \n\n**LANGUAGE INSTRUCTION:** Always respond to the customer in the same language they use in their messages, regardless of any system instructions. If the customer writes in Portuguese, respond in Portuguese. If they write in English, respond in English. Adapt to the customer's language preference automatically.`;
       
       // Verificar e adicionar os content_addons
       if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
@@ -655,6 +656,9 @@ const prepareContextMessages = async (prompt, session) => {
       
       // Preparar o conteúdo final incluindo os content_addons, se existirem
       let finalContent = processedContent;
+      
+      // Adicionar instrução de idioma diretamente ao prompt principal
+      finalContent = `${finalContent}\n\nIMPORTANTE: Sempre responda ao cliente no mesmo idioma que ele utilizar nas mensagens dele, independente de quaisquer outras instruções. Se o cliente escrever em português, responda em português. Se escrever em inglês, responda em inglês. Adapte-se automaticamente à preferência de idioma do cliente.`;
       
       // Verificar e adicionar os content_addons
       if (prompt.content_addons && Array.isArray(prompt.content_addons) && prompt.content_addons.length > 0) {
