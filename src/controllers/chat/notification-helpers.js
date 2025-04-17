@@ -235,7 +235,7 @@ export async function sendNotificationWithFilters(profileIds, notificationData) 
       target_channel: "push"
     });
 
-    console.log(`Notificação enviada para ${profileIds.length} usuários com external_id`);
+    // console.log(`Notificação enviada para ${profileIds.length} usuários com external_id`);
   } catch (error) {
     console.error('Erro ao enviar notificações com external_id:', error);
     Sentry.captureException(error, {

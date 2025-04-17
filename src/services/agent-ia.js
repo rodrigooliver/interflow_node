@@ -2244,7 +2244,7 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
             data: notificationData
           });
           
-          console.log(`[createAppointment] Notificação enviada para ${profileIds.length} providers`);
+          // console.log(`[createAppointment] Notificação enviada para ${profileIds.length} providers`);
         } catch (notificationError) {
           console.error('[createAppointment] Error sending notification:', notificationError);
           Sentry.captureException(notificationError, {
