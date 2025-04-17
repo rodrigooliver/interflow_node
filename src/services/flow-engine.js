@@ -6,6 +6,9 @@ import crypto from 'crypto';
 import { decrypt } from '../utils/crypto.js';
 import { processAgentIA } from './agent-ia.js';
 
+// Objeto global para armazenar os timeouts ativos por sessão
+const sessionTimeouts = {};
+
 /**
  * Cria um motor de fluxo para gerenciar conversas automatizadas
  * @param {Object} organization - Organização atual
@@ -16,7 +19,7 @@ import { processAgentIA } from './agent-ia.js';
  */
 export const createFlowEngine = (organization, channel, customer, chatId, options = {}) => {
   const { isFirstMessage, lastMessage } = options;
-
+  
   /**
    * Processa cada mensagem recebida, gerenciando o fluxo ativo e o sistema de debounce
    * @param {Object} message - Mensagem a ser processada
@@ -41,82 +44,26 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         }
       }
 
-      // console.log('Active Flow:', activeFlow);
-
       if (activeFlow) {
+        // Criar uma chave única para o timeout usando chatId e sessionId
+        const timeoutKey = `${chatId}_${activeFlow.id}`;
+      
+        // Cancelar qualquer timeout pendente para esta sessão
+        if (sessionTimeouts[timeoutKey]) {
+          clearTimeout(sessionTimeouts[timeoutKey]);
+        }
+
         // Verificar se está dentro do período de debounce
-        const now = new Date();
-        const debounceTime = activeFlow.flow?.debounce_time || 10000; // em milissegundos
-        
-        // console.log('debounceTime', debounceTime);
-        // console.log('activeFlow.debounce_timestamp', activeFlow.debounce_timestamp);
-        // console.log('now.getTime()', now.getTime());
-        // console.log('new Date(activeFlow.debounce_timestamp).getTime()', new Date(activeFlow.debounce_timestamp).getTime());
-        // console.log('now.getTime() - new Date(activeFlow.debounce_timestamp).getTime()', now.getTime() - new Date(activeFlow.debounce_timestamp).getTime());
-        
-        if (activeFlow.debounce_timestamp && 
-            now.getTime() - new Date(activeFlow.debounce_timestamp).getTime() < debounceTime) {
-              // Adicionar mensagem ao histórico temporário
-              if(message.content) {
-                await updateMessageHistory(activeFlow.id, {
-                  content: message.content,
-                  type: message.type,
-                  timestamp: now
-                });
-              }
-              
-              return; // Aguardar próxima mensagem
-            }
-
-        // Se chegou aqui, o período de debounce acabou ou é a primeira mensagem
-        // Buscar novamente o fluxo ativo para obter o histórico de mensagens atualizado
-        activeFlow = await getActiveFlow();
-
-        // Atualizar timestamp do debounce para a mensagem atual
-        // Isso é crucial para iniciar o período de debounce
-        await updateSession(activeFlow.id, {
-          debounce_timestamp: now
-        });
-
-        // Processar todas as mensagens acumuladas
-        const messages = activeFlow.message_history || [];
-        messages.push({
-          content: message.content,
-          type: message.type,
-          timestamp: now
-        });
-
-        // Processar mensagens acumuladas
-        const combinedMessage = {
-          content: messages.map(m => m.content).join('\n'),
-          type: message.type,
-          metadata: { ...message.metadata, original_messages: messages }
-        };
+        const debounceTime = activeFlow.flow?.debounce_time || 20000; // em milissegundos
 
         // Definimos um timeout para processar a mensagem após o período de debounce
-        setTimeout(async () => {
+        sessionTimeouts[timeoutKey] = setTimeout(async () => {
           try {
-            // Buscar a sessão mais recente para verificar se ainda é a mesma mensagem de debounce
-            const currentSession = await getActiveFlow();
-            
-            // Verificar se o timestamp do debounce ainda é o mesmo
-            // Se for diferente, significa que uma nova mensagem chegou e alterou o timestamp
-            if (currentSession && 
-                currentSession.debounce_timestamp && 
-                new Date(currentSession.debounce_timestamp).getTime() === now.getTime()) {
-                
-              // Executar o fluxo apenas se o timestamp não tiver sido atualizado por uma nova mensagem
-              // console.log('Executando fluxo após o período de debounce  ------------------ ');
-              await continueFlow(currentSession, combinedMessage);
-              
-              // Limpar histórico após processamento
-              await clearMessageHistory(currentSession.id);
-              
-              // Limpar o timestamp de debounce
-              await updateSession(currentSession.id, {
-                debounce_timestamp: null
-              });
-            }
+            // Limpa a referência ao timeout concluído
+            delete sessionTimeouts[timeoutKey];
+
+            // Executar o fluxo caso não tenha sido cancelado por outra mensagem nova
+            await continueFlow(activeFlow, message);
           } catch (error) {
             Sentry.captureException(error);
             console.error('Erro durante o processamento do timeout de debounce:', error);
@@ -472,7 +419,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         } 
         // 2. Se não tem JSON, verifica se deve extrair links
         else if (node.data.extractLinks) {
-          console.log('Processando texto com extração de links');
+          // console.log('Processando texto com extração de links');
           const parts = extractLinks(processedText);
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await processAndSendParts(parts, metadata);
@@ -480,7 +427,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         // 3. Se não tem JSON nem links, verifica se deve separar por parágrafos
         else if (node.data.splitParagraphs) {
           // Comportamento existente para splitParagraphs
-          console.log('Processando parágrafos separados');
+          // console.log('Processando parágrafos separados');
           const paragraphs = processedText
             .split('\n\n')
             .filter(paragraph => paragraph.trim().length > 0);
@@ -500,7 +447,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         // 4. Caso contrário, envia o texto completo sem processamento
         else {
           // Comportamento padrão
-          console.log('Enviando texto completo sem processamento');
+          // console.log('Enviando texto completo sem processamento');
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await sendMessage(processedText, null, updatedSession.id, metadata);
         }
@@ -553,7 +500,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     }
 
     // Atualizar histórico de mensagens
-    await updateMessageHistory(updatedSession.id, node);
+    // await updateMessageHistory(updatedSession.id, node);
     
     // Retorna a sessão potencialmente atualizada
     return updatedSession;
