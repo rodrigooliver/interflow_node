@@ -415,7 +415,22 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         if (jsonParts.length > 1 || (jsonParts.length === 1 && jsonParts[0].type === 'list')) {
           // Se encontrou blocos JSON, processa cada parte
           // console.log('Processando texto com blocos JSON');
-          await processAndSendParts(jsonParts, null);
+          
+          // Processa os links dentro de partes de texto antes de enviar
+          if (node.data.extractLinks) {
+            const processedParts = jsonParts.map(part => {
+              if (part.type === 'text') {
+                // Extrai links apenas de partes do tipo texto
+                const linkParts = extractLinks(part.content);
+                return linkParts;
+              }
+              return [part];
+            }).flat();
+            
+            await processAndSendParts(processedParts, null);
+          } else {
+            await processAndSendParts(jsonParts, null);
+          }
         } 
         // 2. Se não tem JSON, verifica se deve extrair links
         else if (node.data.extractLinks) {
