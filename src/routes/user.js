@@ -4,7 +4,7 @@ import { generateSlug } from '../utils/string.js';
 import dotenv from 'dotenv';
 import Sentry from '../lib/sentry.js';
 import rateLimit from 'express-rate-limit';
-
+import { updateFirstLoginStatus } from '../controllers/member.js';
 // Carregar variáveis de ambiente
 dotenv.config();
 
@@ -384,6 +384,7 @@ router.post('/signup', signUpLimiter, async (req, res) => {
         email,
         full_name: fullName,
         role: 'admin',
+        settings: { first_login: true },
         whatsapp: whatsapp ? `+${countryCode}${whatsapp.replace(/\D/g, '')}` : null
       });
 
@@ -705,6 +706,9 @@ router.post('/recover-password', passwordRecoveryLimiter, async (req, res) => {
     res.status(500).json({ error: 'Erro ao recuperar senha', details: err.message });
   }
 });
+
+
+router.put('/:userId/first-login', updateFirstLoginStatus);
 
 export default router;
 

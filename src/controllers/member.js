@@ -219,6 +219,113 @@ export const updateMember = async (req, res) => {
   }
 };
 
+export const deleteMember = async (req, res) => {
+  try {
+    const { organizationId, id } = req.params;
+    
+    // Verificar se o usuário que está fazendo a requisição tem permissão para remover membros
+    // Apenas donos da organização podem remover membros
+    const { data: currentMember, error: currentMemberError } = await supabase
+      .from('organization_members')
+      .select('role')
+      .eq('organization_id', organizationId)
+      .eq('user_id', req.profileId)
+      .single();
+
+    if (currentMemberError) {
+      return res.status(404).json({ error: 'Organização não encontrada ou você não tem acesso' });
+    }
+
+    if (currentMember.role !== 'owner') {
+      return res.status(403).json({ error: 'Apenas proprietários podem remover membros' });
+    }
+
+    // Verificar se o membro a ser removido existe
+    const { data: memberToDelete, error: memberError } = await supabase
+      .from('organization_members')
+      .select('role, user_id')
+      .eq('profile_id', id)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (memberError) {
+      return res.status(404).json({ error: 'Membro não encontrado' });
+    }
+
+    // Verificar se está tentando remover um proprietário
+    if (memberToDelete.role === 'owner') {
+      return res.status(403).json({ error: 'Não é possível remover um proprietário da organização' });
+    }
+
+    // Verificar se o usuário pertence apenas a esta organização
+    const { data: otherMemberships, error: membershipsError } = await supabase
+      .from('organization_members')
+      .select('id')
+      .eq('profile_id', id)
+      .neq('organization_id', organizationId);
+
+    if (membershipsError) {
+      throw membershipsError;
+    }
+
+    // Remover o membro
+    const { error: deleteError } = await supabase
+      .from('organization_members')
+      .delete()
+      .eq('profile_id', id)
+      .eq('organization_id', organizationId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    // Se o usuário não pertence a nenhuma outra organização, remover o perfil e o usuário do auth
+    if (otherMemberships.length === 0) {
+      try {
+        // Remover o perfil
+        const { error: profileDeleteError } = await supabase
+          .from('profiles')
+          .delete()
+          .eq('id', id);
+
+        if (profileDeleteError) {
+          console.error('Erro ao remover perfil:', profileDeleteError);
+          // Não lançamos o erro para não interromper o fluxo principal
+        }
+
+        // Remover o usuário do auth
+        const { error: authDeleteError } = await supabase.auth.admin.deleteUser(
+          id
+        );
+
+        if (authDeleteError) {
+          console.error('Erro ao remover usuário do auth:', authDeleteError);
+          // Não lançamos o erro para não interromper o fluxo principal
+        }
+
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Membro removido com sucesso e conta excluída permanentemente' 
+        });
+      } catch (error) {
+        console.error('Erro ao excluir usuário:', error);
+        Sentry.captureException(error);
+        // Mesmo com erro na exclusão do perfil/auth, consideramos sucesso na remoção do membro
+        return res.status(200).json({ 
+          success: true, 
+          message: 'Membro removido com sucesso, mas houve um erro ao excluir a conta permanentemente' 
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Membro removido com sucesso' });
+  } catch (error) {
+    console.error('Erro ao remover membro:', error);
+    Sentry.captureException(error);
+    res.status(500).json({ error: error.message || 'Erro interno do servidor' });
+  }
+};
+
 export const inviteMember = async (req, res) => {
   try {
     const { organizationId } = req.params;
@@ -250,13 +357,13 @@ export const inviteMember = async (req, res) => {
     const formattedSubject = strings.subject.replace('{organization}', organization.name);
     const formattedGreeting = strings.greeting.replace('{name}', fullName);
     // URL para redirecionar após o aceite do convite
-    const redirectUrl = process.env.FRONTEND_URL || 'https://app.interflow.ai';
-    const redirectToUrl = `${redirectUrl}/app/profile`;
+    const redirectUrl = process.env.FRONTEND_URL || 'https://interflow.chat';
+    const redirectToUrl = `${redirectUrl}/app/profile?join=true&org=${organizationId}`;
 
     // Verificar se o usuário já existe
     const { data: existingUser, error: userError } = await supabase
       .from('profiles')
-      .select('id, email')
+      .select('id, email, settings')
       .eq('email', email)
       .single();
 
@@ -284,15 +391,39 @@ export const inviteMember = async (req, res) => {
         return res.status(400).json({ error: 'Usuário já é membro ativo desta organização' });
       }
 
-      // Criar um token seguro para vincular o usuário à organização
-      const token = Buffer.from(JSON.stringify({
-        userId: existingUser.id,
-        organizationId,
-        role,
-        exp: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60) // 7 dias de expiração
-      })).toString('base64');
+      let linkUrl = '';
+      
+      // Verificar se é um usuário que ainda não fez o primeiro login (não definiu senha)
+      // Acessar first_login dentro da coluna settings
+      const isFirstLogin = existingUser.settings?.first_login === false;
+      
+      if (isFirstLogin) {
+        // Gerar um token de redefinição de senha para usuário que ainda não definiu senha
+        const { data: passwordResetData, error: passwordResetError } = await supabase.auth.admin.generateLink({
+          type: 'recovery',
+          email,
+          options: {
+            redirectTo: redirectToUrl
+          }
+        });
 
-      const linkUrl = `${redirectUrl}/join?token=${token}`;
+        if (passwordResetError) {
+          throw passwordResetError;
+        }
+
+        // Usar o link de redefinição de senha
+        linkUrl = passwordResetData.properties.action_link;
+      } else {
+        // Criar um token seguro para vincular o usuário à organização
+        const token = Buffer.from(JSON.stringify({
+          userId: existingUser.id,
+          organizationId,
+          role,
+          exp: Math.floor(Date.now() / 1000) + (2 * 24 * 60 * 60) // 2 dias de expiração
+        })).toString('base64');
+
+        linkUrl = `${redirectUrl}/join?token=${token}`;
+      }
 
       // Preparar o conteúdo do email
       const emailHtml = `
@@ -321,7 +452,7 @@ export const inviteMember = async (req, res) => {
         throw new Error('Falha ao enviar email de convite');
       }
 
-      if (existingMember?.status === 'pending') {
+      if (existingMember?.status === 'pending' || existingMember?.status === 'inactive') {
         // Se já existe um convite pendente, apenas atualizar o role se necessário
         if (existingMember.role !== role) {
           const { error: updateError } = await supabase
@@ -333,7 +464,7 @@ export const inviteMember = async (req, res) => {
             throw updateError;
           }
         }
-      } else {
+      } else if (!existingMember) {
         // Se não existe membro ou está inativo, criar novo registro
         const { error: addMemberError } = await supabase
           .from('organization_members')
@@ -352,7 +483,12 @@ export const inviteMember = async (req, res) => {
         }
       }
 
-      return res.status(201).json({ success: true, user: existingUser });
+      return res.status(201).json({ 
+        success: true, 
+        user: existingUser,
+        isNewUser: false,
+        needsPasswordReset: isFirstLogin
+      });
     }
 
     // Se o usuário não existe, criar um novo usuário e enviar convite por email
@@ -393,6 +529,8 @@ export const inviteMember = async (req, res) => {
         redirectTo: redirectToUrl
       }
     });
+
+    // console.log(passwordResetData, passwordResetError)
 
     if (passwordResetError) {
       throw passwordResetError;
@@ -438,6 +576,7 @@ export const inviteMember = async (req, res) => {
           full_name: fullName,
           role: role,
           is_superadmin: false,
+          settings: { first_login: false } // Usar a coluna settings com o campo first_login
         },
       ]);
 
@@ -446,7 +585,7 @@ export const inviteMember = async (req, res) => {
     }
 
     // 3. Adicionar à organização
-    const { error: memberError } = await supabase
+    const { data: memberData, error: memberError } = await supabase
       .from('organization_members')
       .insert([
         {
@@ -462,7 +601,12 @@ export const inviteMember = async (req, res) => {
       throw memberError;
     }
 
-    res.status(201).json({ success: true, user: authData.user });
+    res.status(201).json({ 
+      success: true, 
+      user: authData.user,
+      isNewUser: true,
+      needsPasswordReset: true
+    });
   } catch (error) {
     console.error('Erro ao convidar membro:', error);
     Sentry.captureException(error);
@@ -473,7 +617,7 @@ export const inviteMember = async (req, res) => {
 export const joinOrganization = async (req, res) => {
   try {
     const { organizationId } = req.params;
-    const { userId, role } = req.body;
+    const { userId } = req.body;
     
     // Verificar se o usuário existe
     const { data: user, error: userError } = await supabase
@@ -711,6 +855,60 @@ export const testEmailConnection = async (req, res) => {
     }
   } catch (error) {
     console.error('Erro ao testar conexão de email:', error);
+    Sentry.captureException(error);
+    res.status(500).json({ error: error.message || 'Erro interno do servidor' });
+  }
+};
+
+// Função para atualizar o status de primeiro login do usuário
+export const updateFirstLoginStatus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Obter o perfil atual do usuário
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('settings')
+      .eq('id', userId)
+      .single();
+    
+    if (profileError) {
+      throw profileError;
+    }
+
+    if(!profile.settings?.first_login) {
+      // Preparar as novas configurações com first_login = true
+      const newSettings = {
+        ...(profile.settings || {}),
+        first_login: true
+      };
+
+      // Atualizar o status de primeiro login
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ 
+          settings: newSettings
+        })
+        .eq('id', userId)
+        .select();
+
+      if (error) {
+        throw error;
+      }
+
+      return res.status(200).json({ 
+        success: true, 
+        message: 'Status de primeiro login atualizado com sucesso',
+        profile: {full_name: data[0].full_name}
+      });
+    }
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Status de primeiro login atualizado com sucesso'
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar status de primeiro login:', error);
     Sentry.captureException(error);
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
