@@ -24,7 +24,7 @@ router.get('/oauth', async (req, res) => {
     res.redirect(`${process.env.FRONTEND_URL}/app/channels/${channelId}/edit/instagram?success=true`);
   } catch (error) {
     console.error('Erro na autenticação do Instagram:', error);
-    res.redirect(`${process.env.FRONTEND_URL}/app/channels/${channelId}/edit/instagram?error=auth_failed`);
+    res.redirect(`${process.env.FRONTEND_URL}/app/channels?error=auth_failed`);
   }
 });
 

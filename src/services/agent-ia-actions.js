@@ -1458,6 +1458,13 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
         message: `The requested time slot is not available. Available times: ${availabilityCheck.available_times.join(', ')}`
       };
     }
+
+    if(!time){
+      return {
+        success: false,
+        message: `Appointment time is required`
+      };
+    }
     
     // Buscar informações do serviço
     const { data: serviceData } = await supabase

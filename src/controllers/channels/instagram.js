@@ -61,11 +61,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
     const existingChat = chats?.[0];
 
     // Se for echo, apenas retorna o chat existente
-    if (isEcho) {
-      if (!existingChat) {
-        console.log('Chat não encontrado para mensagem echo', channel.id, externalId);
-        throw new Error('Chat não encontrado para mensagem echo');
-      }
+    if (isEcho && existingChat) {
       return existingChat;
     }
 

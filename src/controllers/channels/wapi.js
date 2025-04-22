@@ -25,7 +25,7 @@ export async function handleWapiWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
 
-  // console.log(webhookData)
+  console.log(webhookData)
 
   try {
     // Get channel details
@@ -376,7 +376,7 @@ export async function handleWapiWebhook(req, res) {
         await handleConnectedInstance(channel, webhookData);
         break;
       case 'disconnectedInstance':
-        // await handleDisconnectedInstance(channel, webhookData);
+        await handleDisconnectedInstance(channel, webhookData);
         break;
       case 'unreadMessageCount':
         // await handleUnreadMessageCount(channel, webhookData);
@@ -610,6 +610,39 @@ async function handleConnectedInstance(channel, webhookData) {
       }
     });
     console.error('Error handling connected instance:', error);
+    throw error;
+  }
+}
+
+async function handleDisconnectedInstance(channel, webhookData) {
+  try {
+    // Update channel status in database to mark as disconnected
+    const { error: updateError } = await supabase
+      .from('chat_channels')
+      .update({
+        is_connected: false,
+        is_tested: false,
+        status: 'inactive',
+        credentials: {
+          ...channel.credentials,
+          qrCode: null,
+          qrExpiresAt: null
+        },
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', channel.id);
+
+    if (updateError) throw updateError;
+
+    return true;
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        webhookData
+      }
+    });
+    console.error('Error handling disconnected instance:', error);
     throw error;
   }
 }
