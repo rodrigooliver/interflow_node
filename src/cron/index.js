@@ -7,6 +7,7 @@ import {
   generateRecurringTransactions,
   processDailyFinancialJobs 
 } from './financial-jobs.js';
+import { processScheduledNotifications } from '../controllers/schedules/scheduleNotifications.js';
 
 /**
  * Configura todos os cron jobs da aplicação
@@ -62,13 +63,26 @@ export const setupCronJobs = () => {
       }
     });
     
+    // Job para verificar e enviar notificações programadas (executa a cada 5 minutos)
+    const notificationsCron = cron.schedule('*/5 * * * *', async () => {
+      try {
+        // console.log('[CRON] Iniciando verificação de notificações programadas...');
+        const result = await processScheduledNotifications();
+        // console.log(`[CRON] Processamento de notificações concluído: ${result.appointments_processed} agendamentos processados, ${result.reminders_created} lembretes criados`);
+      } catch (error) {
+        console.error('Erro ao verificar notificações programadas:', error);
+        Sentry.captureException(error);
+      }
+    });
+    
     // Retorna os cron jobs para que possam ser parados se necessário
     return {
       timeoutCron,
       instagramTokenCron,
       overdueTransactionsCron,
       recurringTransactionsCron,
-      dailyFinancialJobsCron
+      dailyFinancialJobsCron,
+      notificationsCron
     };
   } catch (error) {
     Sentry.captureException(error);
