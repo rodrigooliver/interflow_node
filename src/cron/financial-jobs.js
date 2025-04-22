@@ -156,21 +156,42 @@ const findTransactionsForRecurringGeneration = async () => {
       .select('*')
       .neq('frequency', 'once')
       .in('status', ['paid', 'received', 'cancelled'])
-      .is('parent_transaction_id', null)
-      .not('id', 'in', 
-        supabase
-          .from('financial_transactions')
-          .select('parent_transaction_id')
-          .not('parent_transaction_id', 'is', null)
-      );
+      .is('parent_transaction_id', null);
     
     if (originalError) throw originalError;
     
-    // Buscar últimas transações de cada série que precisam gerar próximas
-    const { data: lastTransactions, error: lastError } = await supabase
-      .rpc('get_last_transactions_in_series');
+    // Buscar as últimas transações de cada série manualmente
+    const { data: childTransactions, error: childError } = await supabase
+      .from('financial_transactions')
+      .select('*')
+      .neq('frequency', 'once')
+      .in('status', ['paid', 'received', 'cancelled'])
+      .not('parent_transaction_id', 'is', null)
+      .order('due_date', { ascending: false });
     
-    if (lastError) throw lastError;
+    if (childError) throw childError;
+    
+    // Agrupar transações filhas por parent_transaction_id
+    const groupedByParent = {};
+    childTransactions?.forEach(tx => {
+      if (!groupedByParent[tx.parent_transaction_id]) {
+        groupedByParent[tx.parent_transaction_id] = [];
+      }
+      groupedByParent[tx.parent_transaction_id].push(tx);
+    });
+    
+    // Pegar a última transação de cada série
+    const lastTransactions = [];
+    Object.keys(groupedByParent).forEach(parentId => {
+      // Ordenar por data de vencimento decrescente
+      const sorted = groupedByParent[parentId].sort((a, b) => 
+        new Date(b.due_date) - new Date(a.due_date)
+      );
+      // Adicionar a última transação (primeiro item após ordenação)
+      if (sorted.length > 0) {
+        lastTransactions.push(sorted[0]);
+      }
+    });
     
     // Combinar os resultados
     return [...(originalTransactions || []), ...(lastTransactions || [])].filter(shouldGenerateNext);
@@ -188,12 +209,12 @@ export const generateRecurringTransactions = async () => {
   try {
     console.log('Iniciando geração avançada de transações recorrentes');
     
-    // Criar uma função RPC para buscar as últimas transações de cada série
-    // Esta função é necessária apenas uma vez
-    await createGetLastTransactionsFunction();
-    
+    // NOTA: Versão corrigida - Agora usando a função findTransactionsForRecurringGeneration corrigida
+    // que já não depende mais da função RPC
+
     // Buscar todas as transações que precisam gerar a próxima na série
     const transactionsToProcess = await findTransactionsForRecurringGeneration();
+    
     console.log(`Encontradas ${transactionsToProcess.length} transações para geração da próxima na série`);
     
     // Contador de transações geradas
@@ -343,84 +364,12 @@ export const generateRecurringTransactions = async () => {
 
 /**
  * Cria uma função no banco de dados para buscar as últimas transações de cada série
+ * NOTA: Esta função foi removida por causa de erros de permissão.
+ * A lógica foi movida diretamente para a função generateRecurringTransactions
  */
 const createGetLastTransactionsFunction = async () => {
-  try {
-    // Verificar se a função já existe
-    const { data: functionExists, error: checkError } = await supabase
-      .rpc('function_exists', { function_name: 'get_last_transactions_in_series' });
-    
-    if (checkError) {
-      console.error('Erro ao verificar se a função existe:', checkError);
-      return;
-    }
-    
-    // Se a função já existe, não precisa criar novamente
-    if (functionExists) return;
-    
-    // Criar a função para buscar as últimas transações de cada série
-    const { error } = await supabase.rpc('create_function', {
-      function_definition: `
-      CREATE OR REPLACE FUNCTION public.get_last_transactions_in_series()
-      RETURNS SETOF public.financial_transactions AS $$
-      BEGIN
-        RETURN QUERY
-        WITH series_last_transactions AS (
-          SELECT 
-            ft.*,
-            ROW_NUMBER() OVER(PARTITION BY COALESCE(ft.parent_transaction_id, ft.id) ORDER BY ft.due_date DESC) as rn
-          FROM 
-            public.financial_transactions ft
-          WHERE 
-            ft.frequency != 'once'
-            AND (ft.status = 'paid' OR ft.status = 'received' OR ft.status = 'cancelled')
-            AND (ft.parent_transaction_id IS NOT NULL OR EXISTS (
-              SELECT 1 FROM public.financial_transactions 
-              WHERE parent_transaction_id = ft.id
-            ))
-        )
-        SELECT
-          slt.id,
-          slt.organization_id,
-          slt.transaction_code,
-          slt.description,
-          slt.amount,
-          slt.transaction_type,
-          slt.category_id,
-          slt.payment_method_id,
-          slt.cashier_id,
-          slt.cashier_operation_id,
-          slt.due_date,
-          slt.payment_date,
-          slt.frequency,
-          slt.installment_number,
-          slt.total_installments,
-          slt.parent_transaction_id,
-          slt.status,
-          slt.notes,
-          slt.customer_id,
-          slt.chat_id,
-          slt.appointment_id,
-          slt.created_by,
-          slt.created_at,
-          slt.updated_at
-        FROM 
-          series_last_transactions slt
-        WHERE 
-          slt.rn = 1;
-      END;
-      $$ LANGUAGE plpgsql;
-      `
-    });
-    
-    if (error) {
-      console.error('Erro ao criar função get_last_transactions_in_series:', error);
-    } else {
-      console.log('Função get_last_transactions_in_series criada com sucesso');
-    }
-  } catch (error) {
-    console.error('Erro ao criar função de banco de dados:', error);
-  }
+  // Esta função não faz mais nada
+  return;
 };
 
 /**
