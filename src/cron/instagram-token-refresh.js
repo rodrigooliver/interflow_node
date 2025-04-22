@@ -13,7 +13,7 @@ export async function refreshInstagramTokens() {
     .eq('type', 'instagram')
     .eq('status', 'active')
     .eq('is_connected', true)
-    .lt('credentials.token_expires_at', thirtyDaysFromNow.toISOString());
+    .lt('token_expires_at', thirtyDaysFromNow.toISOString());
 
   if (error) {
     console.error('Erro ao buscar canais para atualização de token:', error);
@@ -50,15 +50,18 @@ export async function refreshInstagramTokens() {
         throw error;
       }
 
+      // Calcular a data de expiração do token
+      const tokenExpiresAt = new Date(Date.now() + (data.expires_in * 1000));
+
       // Atualizar o token no banco de dados
       const { error: updateError } = await supabase
         .from('chat_channels')
         .update({
           credentials: {
             ...channel.credentials,
-            access_token: encrypt(data.access_token),
-            token_expires_at: new Date(Date.now() + (data.expires_in * 1000)).toISOString()
+            access_token: encrypt(data.access_token)
           },
+          token_expires_at: tokenExpiresAt.toISOString(),
           updated_at: new Date().toISOString()
         })
         .eq('id', channel.id);

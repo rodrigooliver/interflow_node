@@ -501,13 +501,13 @@ export async function handleInstagramConnect({ code, channelId, organizationId }
           instagram_id: parseInt(userInfo.id, 10),
           username: userInfo.username,
           profile_picture_url: userInfo.profile_picture_url,
-          token_expires_at: new Date(Date.now() + (longLivedTokenData.expires_in * 1000)).toISOString()
         },
         external_id: userInfo.user_id,
         status: 'active',
         is_connected: true,
         is_tested: true,
         settings: {},
+        token_expires_at: new Date(Date.now() + (longLivedTokenData.expires_in * 1000)).toISOString(),
         updated_at: new Date().toISOString()
       })
       .eq('id', channelId)
