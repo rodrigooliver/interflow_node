@@ -167,18 +167,25 @@ export async function handleIncomingMessage(channel, messageData) {
 
     if (!chat) {
       const identifierColumn = channelConfig.identifier;
-      const normalizedId = normalizeContactId(messageData.externalId, channel.type);
+
+      let possibleIds = [];
+      if(channel.type === 'whatsapp_wapi') {
+        possibleIds = normalizeContactId(messageData.externalId, channel.type);
+      } else {
+        possibleIds = [messageData.externalId];
+      }
+
+      // console.log('possibleIds', possibleIds);
 
       const { data: chats, error } = await supabase
         .from('chats')
         .select('*, customers(*)')
         .eq('channel_id', channel.id)
         .in('status', ['in_progress', 'pending', 'await_closing'])
-        .eq('external_id', messageData.externalId)
+        .in('external_id', possibleIds)
         .order('created_at', { ascending: false })
         .limit(1);
 
-        
       chat = chats?.[0] || null;
       
       if (chat) {

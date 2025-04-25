@@ -2138,3 +2138,154 @@ export async function handleDeleteMessageWapiChannel(channel, messageData) {
     throw error;
   }
 }
+
+export async function validateWapiNumberRoute(req, res) {
+  try {
+    const { number } = req.body;
+    const { organizationId } = req.params;
+
+    // Obtenha o ID da organização de uma das fontes disponíveis
+    const orgId = organizationId || organization_id;
+
+    if (!number) {
+      return res.status(400).json({ error: 'Número de telefone é obrigatório' });
+    }
+
+    if (!orgId) {
+      return res.status(400).json({ error: 'ID da organização é obrigatório' });
+    }
+
+    // Normalizar o número (remover caracteres não numéricos)
+    const cleanNumber = number.replace(/\D/g, '');
+
+    // Buscar um canal WhatsApp ativo e conectado na organização
+    const { data: channels, error: channelsError } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .eq('organization_id', orgId)
+      .eq('type', 'whatsapp_wapi')
+      .eq('status', 'active')
+      .eq('is_connected', true);
+
+    if (channelsError) {
+      throw channelsError;
+    }
+
+    if (!channels || channels.length === 0) {
+      return res.status(400).json({ 
+        error: 'Nenhum canal WhatsApp ativo e conectado encontrado',
+        isValid: false
+      });
+    }
+
+    // Priorizar canais do tipo whatsapp_wapi
+    const wapiChannel = channels.find(channel => channel.type === 'whatsapp_wapi');
+    
+    // Se não houver canais wapi, usar o primeiro canal disponível
+    const selectedChannel = wapiChannel || channels[0];
+
+    // Verificar o número usando o canal selecionado
+    const validationResult = await validateWhatsAppNumber(selectedChannel, cleanNumber);
+
+    return res.status(200).json(validationResult);
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        context: 'validate_whatsapp_number'
+      }
+    });
+    return res.status(500).json({ 
+      error: 'Erro ao validar número de WhatsApp',
+      isValid: false
+    });
+  }
+}
+
+/**
+ * Valida se um número de telefone é um WhatsApp válido
+ * @param {Object} channel - Canal WhatsApp para usar na validação
+ * @param {string} phoneNumber - Número a ser validado
+ * @returns {Promise<Object>} - Resultado da validação {isValid, error?}
+ */
+export async function validateWhatsAppNumber(channel, phoneNumber) {
+  try {
+    // Verificar se o canal é válido
+    if (!channel || !channel.id) {
+      return { 
+        isValid: false, 
+        error: 'Canal inválido' 
+      };
+    }
+
+    // Buscar credenciais do canal
+    const { data: channelData, error: channelError } = await supabase
+      .from('chat_channels')
+      .select('credentials, type')
+      .eq('id', channel.id)
+      .single();
+
+    if (channelError) {
+      console.error('Erro ao buscar canal:', channelError);
+      return { 
+        isValid: false, 
+        error: 'Erro ao buscar credenciais do canal' 
+      };
+    }
+
+    // Verificar tipo de canal
+    if (channel.type !== 'whatsapp_wapi') {
+      // Para outros canais que não são wapi, retornar válido por padrão
+      // Em uma implementação completa, cada tipo de canal teria sua própria validação
+      return { isValid: true };
+    }
+
+    // Descriptografar credenciais
+    const credentials = decryptCredentials(channelData.credentials);
+    const baseUrl = `https://${credentials.apiHost}`;
+
+    // Verificar número na API W-API usando o endpoint correto
+    // GET https://HOST/contacts/onwhatsapp?connectionKey=CONNECTIONKEY&phoneNumber=5599992249708
+    const response = await fetch(`${baseUrl}/contacts/onwhatsapp?connectionKey=${credentials.apiConnectionKey}&phoneNumber=${phoneNumber}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${credentials.apiToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Erro na resposta da W-API:', errorData);
+      return { 
+        isValid: false, 
+        error: 'Erro ao verificar número na API' 
+      };
+    }
+
+    const data = await response.json();
+    
+    // A resposta da API contém um campo 'exists' que indica se o número é um WhatsApp válido
+    return { 
+      isValid: data.exists === true, 
+      data: {
+        exists: data.exists,
+        inputPhone: data.inputPhone,
+        outputPhone: data.outputPhone,
+        profilePictureUrl: data.profilePictureUrl
+      }
+    };
+  } catch (error) {
+    console.error('Erro ao validar número WhatsApp:', error);
+    Sentry.captureException(error, {
+      extra: {
+        phoneNumber,
+        channelId: channel?.id,
+        context: 'validate_whatsapp_number'
+      }
+    });
+    
+    return { 
+      isValid: false, 
+      error: 'Erro ao validar número de WhatsApp' 
+    };
+  }
+}
