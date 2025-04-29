@@ -2019,7 +2019,16 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           }
         }
 
-        // Envia a mensagem imediatamente após cadastro
+        // Atualiza o last_message_id do chat
+        await supabase
+          .from('chats')
+            .update({ 
+              last_message_id: messageData.id,
+              last_message_at: new Date().toISOString()
+            })
+            .eq('id', chatId);
+
+        // Envia a mensagem imediatamente após cadastro, não espera o resultado
         await sendSystemMessage(messageData.id);
       } catch (error) {
         Sentry.captureException(error, {
@@ -2042,7 +2051,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       };
     }
 
-    // Atualiza o last_message_id do chat
+    // Atualiza o last_message_id do chat apos os envios
     const lastMessage = messagesData[messagesData.length - 1];
     
     if (lastMessage) {
@@ -2051,7 +2060,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         .update({ 
           unread_count: 0,
           last_message_id: lastMessage.id,
-          last_message_at: lastMessage.created_at
+          last_message_at: new Date().toISOString()
         })
         .eq('id', chatId);
     }
