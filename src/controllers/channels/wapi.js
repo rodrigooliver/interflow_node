@@ -36,12 +36,24 @@ export async function handleWapiWebhook(req, res) {
     }
     if(webhookData.isGroup) return res.json({ success: true });
 
+    
+
     // Handle different webhook events
     switch (webhookData.event) {
       case 'messageReceived':
       case 'messageSent':
       case 'forwardedMessage':
       case 'repliedMessage':
+
+        if(webhookData?.connectedPhone === '5519996003991') {
+          Sentry.captureMessage(`Webhook recebido do número: ${webhookData?.connectedPhone}`, {
+            level: 'info',
+            extra: {
+              webhookData
+            }
+          });
+        }
+        
         // console.log('messageReceived', webhookData);
         const normalizedMessage = normalizeWapiMessage(webhookData);
         normalizedMessage.event = webhookData.event;
@@ -590,16 +602,6 @@ function normalizeWapiMessage(webhookData) {
     // Prioriza o selectedRowId se existir, caso contrário usa o title
     // messageContent = webhookData.listResponseMessage.selectedRowId || webhookData.listResponseMessage.title || '';
     messageContent = webhookData.listResponseMessage.title || '';
-  }
-
-  if(webhookData?.connectedPhone === '5519996003991') {
-    Sentry.captureMessage(`Mensagem recebida do número: ${webhookData.connectedPhone}`, {
-      level: 'info',
-      extra: {
-        channelId: channel.id,
-        webhookData
-      }
-    });
   }
 
   return {
