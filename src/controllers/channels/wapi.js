@@ -503,6 +503,16 @@ function normalizeWapiMessage(webhookData) {
     messageContent = webhookData.listResponseMessage.title || '';
   }
 
+  if(webhookData.messageText?.connectedPhone === '5519996003991') {
+    Sentry.captureMessage(`Mensagem recebida do número: ${webhookData.messageText?.connectedPhone}`, {
+      level: 'info',
+      extra: {
+        channelId: channel.id,
+        webhookData
+      }
+    });
+  }
+
   return {
     messageId: webhookData.messageId,
     timestamp: webhookData.moment,
