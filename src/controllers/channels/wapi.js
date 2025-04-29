@@ -45,14 +45,14 @@ export async function handleWapiWebhook(req, res) {
       case 'forwardedMessage':
       case 'repliedMessage':
 
-        if(webhookData?.connectedPhone === '5519996003991') {
-          Sentry.captureMessage(`Webhook recebido do número: ${webhookData?.connectedPhone}`, {
-            level: 'info',
-            extra: {
-              webhookData
-            }
-          });
-        }
+        // if(webhookData?.connectedPhone === '5519996003991') {
+        //   Sentry.captureMessage(`Webhook recebido do número: ${webhookData?.connectedPhone}`, {
+        //     level: 'info',
+        //     extra: {
+        //       webhookData
+        //     }
+        //   });
+        // }
         
         // console.log('messageReceived', webhookData);
         const normalizedMessage = normalizeWapiMessage(webhookData);
