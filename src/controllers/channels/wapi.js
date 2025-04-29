@@ -366,6 +366,95 @@ export async function handleWapiWebhook(req, res) {
         // Inicia a tentativa de atualizar o status da mensagem
         updateDeletedMessage();
         break;
+      case 'reactedMessage':
+        // Função para processar a reação em uma mensagem
+        const updateMessageReaction = async (retryCount = 0) => {
+          // Verifica se existe ID da mensagem referenciada
+          if (!webhookData.reactionMessage?.referencedMessage?.messageId) {
+            console.error('ID da mensagem referenciada não encontrado para reação');
+            return;
+          }
+          
+          // Busca a mensagem referenciada
+          const referencedMessageId = webhookData.reactionMessage.referencedMessage.messageId;
+          
+          const { data: message, error: findError } = await supabase
+            .from('messages')
+            .select(`
+              id,
+              organization_id,
+              chat_id,
+              metadata,
+              chat:chat_id (
+                channel_id
+              )
+            `)
+            .eq('external_id', referencedMessageId)
+            .eq('chat.channel_id', channel.id)
+            .single();
+
+          if (findError) {
+            // Se der erro e ainda não tentou 3 vezes, tenta novamente após 2 segundos
+            if (retryCount < 3) {
+              setTimeout(() => updateMessageReaction(retryCount + 1), 2000);
+            }
+            return;
+          }
+
+          if (message) {
+            // Prepara os metadados atualizados com a reação
+            const updatedMetadata = {
+              ...(message.metadata || {}),
+              reactions: {
+                ...(message.metadata?.reactions || {}),
+                [webhookData.sender.id]: {
+                  reaction: webhookData.reactionMessage.reaction,
+                  timestamp: new Date().toISOString(),
+                  senderName: webhookData.sender.pushName,
+                  senderProfilePicture: webhookData.sender.profilePicture
+                }
+              }
+            };
+            
+            // Atualiza os metadados da mensagem
+            const { error: updateError } = await supabase
+              .from('messages')
+              .update({ 
+                metadata: updatedMetadata
+              })
+              .eq('id', message.id);
+
+            if (updateError) {
+              Sentry.captureException(updateError, {
+                extra: {
+                  messageId: message.id,
+                  context: 'updating_message_reaction'
+                }
+              });
+            }
+
+            // Atualiza o timestamp do último contato no chat
+            // const { error: updateChatError } = await supabase
+            //   .from('chats')
+            //   .update({
+            //     last_message_at: new Date().toISOString(),
+            //   })
+            //   .eq('id', message.chat_id);
+              
+            // if (updateChatError) {
+            //   Sentry.captureException(updateChatError, {
+            //     extra: {
+            //       chatId: message.chat_id,
+            //       context: 'updating_chat_after_reaction'
+            //     }
+            //   });
+            // }
+          }
+        };
+
+        // Inicia a tentativa de atualizar a mensagem com a reação
+        updateMessageReaction();
+        break;
       case 'status':
         await handleStatusUpdate(channel, webhookData);
         break;
