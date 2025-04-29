@@ -401,6 +401,15 @@ export async function handleWapiWebhook(req, res) {
         break;
         
       // Add more event handlers as needed
+      default:
+        Sentry.captureMessage(`Evento WAPI não tratado: ${JSON.stringify(webhookData)}`, {
+          level: 'warning',
+          extra: {
+            channelId: channel.id,
+            webhookData
+          }
+        });
+        break;
     }
 
     res.json({ success: true });
