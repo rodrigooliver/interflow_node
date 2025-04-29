@@ -592,8 +592,8 @@ function normalizeWapiMessage(webhookData) {
     messageContent = webhookData.listResponseMessage.title || '';
   }
 
-  if(webhookData.messageText?.connectedPhone === '5519996003991') {
-    Sentry.captureMessage(`Mensagem recebida do número: ${webhookData.messageText?.connectedPhone}`, {
+  if(webhookData?.connectedPhone === '5519996003991') {
+    Sentry.captureMessage(`Mensagem recebida do número: ${webhookData.connectedPhone}`, {
       level: 'info',
       extra: {
         channelId: channel.id,
