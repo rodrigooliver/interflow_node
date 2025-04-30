@@ -5,8 +5,7 @@ import dotenv from 'dotenv';
 import Sentry from '../lib/sentry.js';
 import rateLimit from 'express-rate-limit';
 import { updateFirstLoginStatus } from '../controllers/member.js';
-import { createFlowEngine } from '../services/flow-engine.js';
-import { validateWhatsAppNumber } from '../controllers/channels/wapi.js';
+import { startSignupChatFlow } from '../controllers/chat/signup-flow.js';
 // Carregar variáveis de ambiente
 dotenv.config();
 
@@ -507,6 +506,8 @@ router.post('/signup', signUpLimiter, async (req, res) => {
 
     // 6. Criar customer para iniciar chat
     if(MAIN_ORGANIZATION_ID) {
+      let customerData = null;
+      
       //Consultar organization
       const { data: organizationData, error: organizationError } = await supabase
         .from('organizations')
@@ -520,9 +521,8 @@ router.post('/signup', signUpLimiter, async (req, res) => {
       }
 
       if(organizationData) {
-
         //Criar customer
-        const { data: customerData, error: customerError } = await supabase
+        const { data: customerDataCreate, error: customerError } = await supabase
           .from('customers')
           .insert({
             name: fullName,
@@ -543,7 +543,8 @@ router.post('/signup', signUpLimiter, async (req, res) => {
         }
 
         // Inserir contatos na tabela customer_contacts se o cliente foi criado
-        if (customerData) {
+        if (customerDataCreate) {
+          customerData = customerDataCreate;
           const whatsappNumber = whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null;
           const { error: contactError } = await supabase
             .from('customer_contacts')
@@ -564,132 +565,31 @@ router.post('/signup', signUpLimiter, async (req, res) => {
               }
             ]);
 
-            if (contactError) {
-              Sentry.captureException(contactError);
-              console.error('Erro ao criar contatos:', contactError);
-              // Não impede o fluxo, apenas loga o erro
-            }
+          if (contactError) {
+            Sentry.captureException(contactError);
+            console.error('Erro ao criar contatos:', contactError);
+            // Não impede o fluxo, apenas loga o erro
+          }
 
-            //INICIAR CHAT COM O CLIENTE
-            if(DEFAULT_SIGNUP_CHANNEL_ID && whatsappNumber) {
-              //Buscar canal
-              const { data: channelData, error: channelError } = await supabase
-                .from('chat_channels')
-                .select('*')
-                .eq('id', DEFAULT_SIGNUP_CHANNEL_ID)
-                .single();
-
-              if(channelError) {
-                Sentry.captureException(channelError);
-                console.error('Erro ao buscar canal:', channelError);
-              }
-
-              //Checar se whatsappNumber é um número válido
-              const { isValid, data } = await validateWhatsAppNumber(channelData, whatsappNumber);
-              if(isValid && data.outputPhone) {
-                //Consultar se exite chat ativo para o outputPhone
-                let chatData = null;
-                const { data: chatDataActive, error: chatErrorActive } = await supabase
-                  .from('chats')
-                  .select('*')
-                  .eq('external_id', data.outputPhone)
-                  .eq('organization_id', MAIN_ORGANIZATION_ID)
-                  .in('status', ['pending', 'in_progress', 'await_closing']);
-
-                if(chatDataActive.length > 0) {
-                  chatData = chatDataActive[0];
-                } else {
-                  //Criar chat do whatsapp
-                  const { data: chatDataCreate, error: chatError } = await supabase
-                  .from('chats')
-                  .insert({
-                    organization_id: MAIN_ORGANIZATION_ID,
-                    channel_id: DEFAULT_SIGNUP_CHANNEL_ID,
-                    customer_id: customerData.id,
-                    status: 'pending',
-                    created_at: new Date().toISOString(),
-                    arrival_time: new Date().toISOString(),
-                    team_id: DEFAULT_SIGNUP_TEAM_ID,
-                    external_id: data.outputPhone
-                  }).select().single();
-
-                  if(chatError) {
-                    Sentry.captureException(chatError);
-                    console.error('Erro ao criar chat:', chatError);
-                  }
-
-                  if(chatDataCreate) {
-                    chatData = chatDataCreate;
-                  }
-                }
-                
-                if(chatData) {
-                  //Cadastrar mensagem do type system
-                  const { error: messageError } = await supabase
-                    .from('messages')
-                    .insert({
-                      chat_id: chatData.id,
-                      type: 'text',
-                      organization_id: MAIN_ORGANIZATION_ID,
-                      sender_type: 'system',
-                      status: 'sent',
-                      content: '### CLIENTE SE REGISTROU PARA TESTAR A DEMONSTRAÇÃO ###',
-                      created_at: new Date().toISOString(),
-                      sent_from_system: false
-                    })
-
-                  if(messageError) {
-                    Sentry.captureException(messageError);
-                    console.error('Erro ao cadastrar mensagem do type system:', messageError);
-                  }
-
-                  //Iniciar fluxo
-                  if(DEFAULT_SIGNUP_FLOW_ID) {
-                    //Buscar fluxo
-                    const { data: flow, error: flowError } = await supabase
-                      .from('flows')
-                      .select('*')
-                      .eq('id', DEFAULT_SIGNUP_FLOW_ID)
-                      .eq('organization_id', MAIN_ORGANIZATION_ID)
-                      .single();
-
-                    if(flowError) {
-                      Sentry.captureException(flowError);
-                      console.error('Erro ao buscar fluxo:', flowError);
-                    }
-
-                    if(flow) {
-                      //Criar engine de fluxo
-                      const flowEngine = createFlowEngine(organizationData, channelData, customerData, chatData.id, {isFirstMessage: false,});
-
-                      //Iniciar fluxo
-                      const session = await flowEngine.processMessage({ content: '', type: '' }, flow);
-                      if(session) {
-                        //Atualizar chat com o ID da sessão do fluxo
-                        const { error: updateError } = await supabase
-                          .from('chats')
-                          .update({ flow_session_id: session.id })
-                          .eq('id', chatData.id);
-
-                        if(updateError) {
-                          Sentry.captureException(updateError);
-                          console.error('Erro ao atualizar chat com o ID da sessão do fluxo:', updateError);
-                        }
-                      }
-                    }
-                  }
-                }
-              } else {
-                Sentry.captureMessage('Número de WhatsApp inválido:', {
-                  extra: { whatsappNumber }
-                });
-              }
-            }
-
-          
+          // Iniciar chat com o cliente de forma assíncrona
+          if (DEFAULT_SIGNUP_CHANNEL_ID && whatsapp) {
+            const whatsappNumber = `${countryCode}${whatsapp.replace(/\D/g, '')}`;
+            
+            // Iniciar fluxo de chat de forma assíncrona (não aguardar resposta)
+            startSignupChatFlow({
+              organizationId: MAIN_ORGANIZATION_ID,
+              channelId: DEFAULT_SIGNUP_CHANNEL_ID,
+              customerData,
+              whatsappNumber,
+              flowId: DEFAULT_SIGNUP_FLOW_ID,
+              teamId: DEFAULT_SIGNUP_TEAM_ID
+            }).catch(error => {
+              Sentry.captureException(error);
+              console.error('Erro ao iniciar fluxo de chat assíncrono:', error);
+            });
+          }
         }
       }
-      
     }
 
     // Retornar sucesso com os dados do usuário e organização
