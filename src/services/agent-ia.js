@@ -688,7 +688,7 @@ const prepareContextMessages = async (prompt, session) => {
     .from('messages')
     .select('*')
     .eq('chat_id', session.chat_id)
-    .in('sender_type', ['customer', 'agent'])
+    // .in('sender_type', ['customer', 'agent', 'system'])
     // .not('content', 'is', null)
     .neq('status', 'deleted')
     .order('created_at', { ascending: true });
@@ -724,10 +724,11 @@ const prepareContextMessages = async (prompt, session) => {
       timeZone: timezone
     });
     
-    const timestampInfo = `[${formattedDate}, ${formattedTime}] `;
     let content = '';
-    if(msg.type === 'text' || msg.content) {
+    if((msg.sender_type === 'customer' || msg.sender_type === 'agent') && (msg.type === 'text' || msg.content)) {
       content = msg.content;
+    } else if(msg.sender_type === 'system' && msg.type === 'text' && msg.content) {
+      content = `[Instructions to model: ${msg.content}]`;
     } else if(msg.type === 'image') {
       content = `[Image]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'audio') {
@@ -747,6 +748,8 @@ const prepareContextMessages = async (prompt, session) => {
     } else if(msg.type === 'user_transferred') {
       content = `[User transferred]`;
     }
+
+    // console.log('[prepareContextMessages] content', content)
 
     if(!content) continue;
 

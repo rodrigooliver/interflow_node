@@ -18,7 +18,7 @@ const sessionTimeouts = {};
  * @param {Object} options - Opções adicionais
  */
 export const createFlowEngine = (organization, channel, customer, chatId, options = {}) => {
-  const { isFirstMessage, lastMessage } = options;
+  const { isFirstMessage } = options;
   
   /**
    * Processa cada mensagem recebida, gerenciando o fluxo ativo e o sistema de debounce

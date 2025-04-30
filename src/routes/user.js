@@ -5,12 +5,18 @@ import dotenv from 'dotenv';
 import Sentry from '../lib/sentry.js';
 import rateLimit from 'express-rate-limit';
 import { updateFirstLoginStatus } from '../controllers/member.js';
+import { createFlowEngine } from '../services/flow-engine.js';
+import { validateWhatsAppNumber } from '../controllers/channels/wapi.js';
 // Carregar variáveis de ambiente
 dotenv.config();
 
 // Obter valores padrão das variáveis de ambiente ou usar fallbacks
-const DEFAULT_PLAN_ID = process.env.DEFAULT_PLAN_ID || null;
 const MAIN_ORGANIZATION_ID = process.env.MAIN_ORGANIZATION_ID || null;
+const DEFAULT_SIGNUP_PLAN_ID = process.env.DEFAULT_SIGNUP_PLAN_ID || null;
+const DEFAULT_SIGNUP_CHANNEL_ID = process.env.DEFAULT_SIGNUP_CHANNEL_ID || null;
+const DEFAULT_SIGNUP_FLOW_ID = process.env.DEFAULT_SIGNUP_FLOW_ID || null;
+const DEFAULT_SIGNUP_FUNNEL_STAGE_ID = process.env.DEFAULT_SIGNUP_FUNNEL_STAGE_ID || null;
+const DEFAULT_SIGNUP_TEAM_ID = process.env.DEFAULT_SIGNUP_TEAM_ID || null;
 
 const router = express.Router({ mergeParams: true });
 
@@ -322,7 +328,7 @@ router.post('/signup', signUpLimiter, async (req, res) => {
     organizationName, 
     whatsapp, 
     countryCode, 
-    planId = DEFAULT_PLAN_ID, 
+    planId = DEFAULT_SIGNUP_PLAN_ID, 
     billingPeriod = 'monthly',
     referral = null,
     language = 'pt' // Valor padrão pt (português)
@@ -385,7 +391,7 @@ router.post('/signup', signUpLimiter, async (req, res) => {
         full_name: fullName,
         role: 'admin',
         settings: { first_login: true },
-        whatsapp: whatsapp ? `+${countryCode}${whatsapp.replace(/\D/g, '')}` : null
+        whatsapp: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null
       });
 
     if (profileError) {
@@ -501,52 +507,189 @@ router.post('/signup', signUpLimiter, async (req, res) => {
 
     // 6. Criar customer para iniciar chat
     if(MAIN_ORGANIZATION_ID) {
-      const { data: customerData, error: customerError } = await supabase
-        .from('customers')
-        .insert({
-          name: fullName,
-          email,
-          organization_id: referral?.organization_id || MAIN_ORGANIZATION_ID,
-          referrer_id: referral?.id || null,
-          indication_id: referral?.user_id || null,
-          whatsapp: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null
-        })
-        .select()
+      //Consultar organization
+      const { data: organizationData, error: organizationError } = await supabase
+        .from('organizations')
+        .select('*')
+        .eq('id', MAIN_ORGANIZATION_ID)
         .single();
 
-      if (customerError) {
-        Sentry.captureException(customerError);
-        console.error('Erro ao criar cliente:', customerError);
-        // Não impede o fluxo, apenas loga o erro
+      if(organizationError) {
+        Sentry.captureException(organizationError);
+        console.error('Erro ao buscar organização:', organizationError);
       }
 
-      // Inserir contatos na tabela customer_contacts se o cliente foi criado
-      if (customerData) {
-        const { error: contactError } = await supabase
-          .from('customer_contacts')
-          .insert([
-            {
-              customer_id: customerData.id,
-              type: 'email',
-              value: email,
-              label: 'Email',
-              created_at: new Date().toISOString()
-            },
-            {
-              customer_id: customerData.id,
-              type: 'whatsapp',
-              value: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null,
-              label: 'WhatsApp',
-              created_at: new Date().toISOString()
-            }
-          ]);
+      if(organizationData) {
 
-        if (contactError) {
-          Sentry.captureException(contactError);
-          console.error('Erro ao criar contatos:', contactError);
+        //Criar customer
+        const { data: customerData, error: customerError } = await supabase
+          .from('customers')
+          .insert({
+            name: fullName,
+            email,
+            organization_id: referral?.organization_id || MAIN_ORGANIZATION_ID,
+            referrer_id: referral?.id || null,
+            indication_id: referral?.user_id || null,
+            whatsapp: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null,
+            stage_id: DEFAULT_SIGNUP_FUNNEL_STAGE_ID
+          })
+          .select()
+          .single();
+
+        if (customerError) {
+          Sentry.captureException(customerError);
+          console.error('Erro ao criar cliente:', customerError);
           // Não impede o fluxo, apenas loga o erro
         }
+
+        // Inserir contatos na tabela customer_contacts se o cliente foi criado
+        if (customerData) {
+          const whatsappNumber = whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null;
+          const { error: contactError } = await supabase
+            .from('customer_contacts')
+            .insert([
+              {
+                customer_id: customerData.id,
+                type: 'email',
+                value: email,
+                label: 'Email',
+                created_at: new Date().toISOString()
+              },
+              {
+                customer_id: customerData.id,
+                type: 'whatsapp',
+                value: whatsappNumber,
+                label: 'WhatsApp',
+                created_at: new Date().toISOString()
+              }
+            ]);
+
+            if (contactError) {
+              Sentry.captureException(contactError);
+              console.error('Erro ao criar contatos:', contactError);
+              // Não impede o fluxo, apenas loga o erro
+            }
+
+            //INICIAR CHAT COM O CLIENTE
+            if(DEFAULT_SIGNUP_CHANNEL_ID && whatsappNumber) {
+              //Buscar canal
+              const { data: channelData, error: channelError } = await supabase
+                .from('chat_channels')
+                .select('*')
+                .eq('id', DEFAULT_SIGNUP_CHANNEL_ID)
+                .single();
+
+              if(channelError) {
+                Sentry.captureException(channelError);
+                console.error('Erro ao buscar canal:', channelError);
+              }
+
+              //Checar se whatsappNumber é um número válido
+              const { isValid, data } = await validateWhatsAppNumber(channelData, whatsappNumber);
+              if(isValid && data.outputPhone) {
+                //Consultar se exite chat ativo para o outputPhone
+                let chatData = null;
+                const { data: chatDataActive, error: chatErrorActive } = await supabase
+                  .from('chats')
+                  .select('*')
+                  .eq('external_id', data.outputPhone)
+                  .eq('organization_id', MAIN_ORGANIZATION_ID)
+                  .in('status', ['pending', 'in_progress', 'await_closing']);
+
+                if(chatDataActive.length > 0) {
+                  chatData = chatDataActive[0];
+                } else {
+                  //Criar chat do whatsapp
+                  const { data: chatDataCreate, error: chatError } = await supabase
+                  .from('chats')
+                  .insert({
+                    organization_id: MAIN_ORGANIZATION_ID,
+                    channel_id: DEFAULT_SIGNUP_CHANNEL_ID,
+                    customer_id: customerData.id,
+                    status: 'pending',
+                    created_at: new Date().toISOString(),
+                    arrival_time: new Date().toISOString(),
+                    team_id: DEFAULT_SIGNUP_TEAM_ID,
+                    external_id: data.outputPhone
+                  }).select().single();
+
+                  if(chatError) {
+                    Sentry.captureException(chatError);
+                    console.error('Erro ao criar chat:', chatError);
+                  }
+
+                  if(chatDataCreate) {
+                    chatData = chatDataCreate;
+                  }
+                }
+                
+                if(chatData) {
+                  //Cadastrar mensagem do type system
+                  const { error: messageError } = await supabase
+                    .from('messages')
+                    .insert({
+                      chat_id: chatData.id,
+                      type: 'text',
+                      organization_id: MAIN_ORGANIZATION_ID,
+                      sender_type: 'system',
+                      status: 'sent',
+                      content: '### CLIENTE SE REGISTROU PARA TESTAR A DEMONSTRAÇÃO ###',
+                      created_at: new Date().toISOString(),
+                      sent_from_system: false
+                    })
+
+                  if(messageError) {
+                    Sentry.captureException(messageError);
+                    console.error('Erro ao cadastrar mensagem do type system:', messageError);
+                  }
+
+                  //Iniciar fluxo
+                  if(DEFAULT_SIGNUP_FLOW_ID) {
+                    //Buscar fluxo
+                    const { data: flow, error: flowError } = await supabase
+                      .from('flows')
+                      .select('*')
+                      .eq('id', DEFAULT_SIGNUP_FLOW_ID)
+                      .eq('organization_id', MAIN_ORGANIZATION_ID)
+                      .single();
+
+                    if(flowError) {
+                      Sentry.captureException(flowError);
+                      console.error('Erro ao buscar fluxo:', flowError);
+                    }
+
+                    if(flow) {
+                      //Criar engine de fluxo
+                      const flowEngine = createFlowEngine(organizationData, channelData, customerData, chatData.id, {isFirstMessage: false,});
+
+                      //Iniciar fluxo
+                      const session = await flowEngine.processMessage({ content: '', type: '' }, flow);
+                      if(session) {
+                        //Atualizar chat com o ID da sessão do fluxo
+                        const { error: updateError } = await supabase
+                          .from('chats')
+                          .update({ flow_session_id: session.id })
+                          .eq('id', chatData.id);
+
+                        if(updateError) {
+                          Sentry.captureException(updateError);
+                          console.error('Erro ao atualizar chat com o ID da sessão do fluxo:', updateError);
+                        }
+                      }
+                    }
+                  }
+                }
+              } else {
+                Sentry.captureMessage('Número de WhatsApp inválido:', {
+                  extra: { whatsappNumber }
+                });
+              }
+            }
+
+          
+        }
       }
+      
     }
 
     // Retornar sucesso com os dados do usuário e organização
