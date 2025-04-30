@@ -2282,6 +2282,16 @@ export async function deleteMessageRoute(req, res) {
           }
         });
       }
+    } else {
+      //Deletar a mensagem, pois está apenas no nosso banco de dados
+      const { error: deleteError } = await supabase
+        .from('messages')
+        .delete()
+        .eq('id', messageId);
+
+      if (deleteError) {
+        throw deleteError;
+      }
     }
 
     return res.status(200).json({ message: 'Mensagem deletada com sucesso' });
