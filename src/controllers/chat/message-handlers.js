@@ -183,7 +183,7 @@ export async function handleIncomingMessage(channel, messageData) {
         .eq('channel_id', channel.id)
         .in('status', ['in_progress', 'pending', 'await_closing'])
         .in('external_id', possibleIds)
-        .order('created_at', { ascending: false })
+        .order('last_message_at', { ascending: false })
         .limit(1);
 
       chat = chats?.[0] || null;
@@ -191,17 +191,23 @@ export async function handleIncomingMessage(channel, messageData) {
       if (chat) {
         customer = chat.customers;
         if(messageData.externalProfilePicture) {
-          //Atualizar o profile_picture do chat
-          // supabase
-          //   .from('chats')
-          //   .update({ profile_picture: messageData.externalProfilePicture })
-          //   .eq('id', chat.id);
+          // Atualizar o profile_picture do chat
+          const { error: updateError } = await supabase
+            .from('chats')
+            .update({ profile_picture: messageData.externalProfilePicture })
+            .eq('id', chat.id);
 
-          // //Atualizar o profile_picture do customer
-          // supabase
-          //   .from('customers')
-          //   .update({ profile_picture: messageData.externalProfilePicture })
-          //   .eq('id', customer.id);
+          if(updateError) {
+            Sentry.captureException(updateError, {
+              extra: { channel, messageData, context: 'updating_chat_profile_picture' }
+            });
+          }
+
+          //Atualizar o profile_picture do customer
+          supabase
+            .from('customers')
+            .update({ profile_picture: messageData.externalProfilePicture })
+            .eq('id', customer.id);
         }
       } else {
         isFirstMessage = true;
