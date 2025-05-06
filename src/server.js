@@ -23,6 +23,7 @@ import { handleWebhook } from './controllers/stripe.js';
 import { testEmailConnection } from './controllers/member.js';
 import userRoutes from './routes/user.js';
 import { i18nMiddleware } from './middleware/i18n.js';
+import medicalRoutes from './routes/medical.js';
 // Load environment variables
 dotenv.config();
 
@@ -79,6 +80,7 @@ app.use('/api/webhook/whatsapp', whatsappRoutes);
 app.use('/api/:organizationId/stripe', stripeRoutes);
 app.use('/api/:organizationId/webhook', webhookRoutes);
 app.use('/api/:organizationId/channel', channelRoutes);
+app.use('/api/:organizationId/medical', medicalRoutes);
 app.use('/api/:organizationId/chat', chatRoutes);
 app.use('/api/:organizationId/flow', flowRoutes);
 app.use('/api/:organizationId/integrations', integrationRoutes);

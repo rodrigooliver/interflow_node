@@ -2186,6 +2186,7 @@ const createAppointment = async (scheduleId, customerId, date, time, serviceId, 
         time_slot: timeSlot,
         notes: notes || '',
         chat_id: session.chat_id,
+        organization_id: session.organization_id,
         metadata: {
           created_via: 'agent_ia',
           creation_date: new Date().toISOString(),
