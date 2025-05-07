@@ -151,7 +151,7 @@ const transformToolName = (name) => {
  * @param {Array<Object>} systemActions - Array de ações do sistema configuradas, incluindo nome, descrição e tipo
  * @returns {Promise<Array>} - Lista de ferramentas geradas
  */
-export const generateSystemTools = async (organizationId, systemActions = []) => {
+export const generateSystemTools = async (organizationId, systemActions = [], customer = null) => {
   try {
     console.log(`[generateSystemTools] Gerando ferramentas do sistema para organização ${organizationId}`);
     const tools = [];
@@ -175,6 +175,9 @@ export const generateSystemTools = async (organizationId, systemActions = []) =>
           break;
         case 'transferToTeam':
           tool = await generateTransferToTeamTool(organizationId, action);
+          break;
+        case 'changeFunnel':
+          tool = await generateChangeFunnelTool(organizationId, action, customer);
           break;
         // case 'update_chat':
         //   tool = generateUpdateChatTool(action);
@@ -1050,6 +1053,158 @@ export const handleSystemToolCall = async (
         return {
           status: "error",
           message: result.message ?? "Error transferring chat to team."
+        };
+      }
+      
+      case 'changeFunnel': {
+        console.log(`[handleSystemToolCall] Iniciando ação changeFunnel`);
+        if (!session.customer_id) {
+          return {
+            status: "error",
+            message: "No customer found in this session."
+          };
+        }
+
+        // Verificar se target_stage foi fornecido (obrigatório)
+        if (!args.target_stage) {
+          return {
+            status: "error",
+            message: "Target stage name is required."
+          };
+        }
+
+        // Verificar se o nome do estágio de destino está entre os estágios configurados
+        const targetStages = action.config.targetStages || [];
+        const targetStageConfig = targetStages.find(stage => stage.name === args.target_stage);
+        
+        if (!targetStageConfig) {
+          return {
+            status: "error",
+            message: `Invalid target stage name: ${args.target_stage}. Please choose one of the available options.`
+          };
+        }
+
+        const targetStageId = targetStageConfig.id;
+
+        // Verificar o estágio atual do cliente
+        const { data: customer, error: customerError } = await supabase
+          .from('customers')
+          .select('stage_id')
+          .eq('id', session.customer_id)
+          .single();
+
+        if (customerError) {
+          console.error(`[handleSystemToolCall] Erro ao obter estágio atual do cliente:`, customerError);
+          return {
+            status: "error",
+            message: "Error retrieving customer's current stage."
+          };
+        }
+
+        // Verificar se o cliente tem um estágio atual
+        if (!customer.stage_id) {
+          return {
+            status: "error",
+            message: "Customer is not in any funnel stage."
+          };
+        }
+
+        // Verificar se o estágio atual está entre os estágios de origem permitidos
+        const sourceStages = action.config.sourceStages || [];
+        const isValidSourceStage = sourceStages.some(stage => stage.id === customer.stage_id);
+        
+        if (!isValidSourceStage) {
+          // Encontrar o nome do estágio atual para mensagem de erro
+          // Primeiro, vamos obter o estágio atual do cliente
+          const { data: currentStage } = await supabase
+            .from('crm_stages')
+            .select('name, funnel_id')
+            .eq('id', customer.stage_id)
+            .single();
+          
+          // Depois, obter o nome do funil atual
+          let currentFunnelName = "";
+          if (currentStage && currentStage.funnel_id) {
+            const { data: currentFunnel } = await supabase
+              .from('crm_funnels')
+              .select('name')
+              .eq('id', currentStage.funnel_id)
+              .single();
+            
+            if (currentFunnel) {
+              currentFunnelName = currentFunnel.name;
+            }
+          }
+          
+          const currentStageInfo = currentStage ? 
+            `${currentStage.name}${currentFunnelName ? ` em ${currentFunnelName}` : ''}` : 
+            'estágio desconhecido';
+            
+          return {
+            status: "error",
+            message: `This action cannot be performed because the customer is currently in ${currentStageInfo}, which is not in the list of allowed source stages.`
+          };
+        }
+
+        // Obter informações do estágio de destino para resposta 
+        // (já temos o nome a partir do targetStageConfig, mas precisamos do nome do funil)
+        const { data: targetStage } = await supabase
+          .from('crm_stages')
+          .select('name, funnel_id')
+          .eq('id', targetStageId)
+          .single();
+        
+        let targetFunnelName = targetStageConfig.funnelName || "";
+        if (!targetFunnelName && targetStage && targetStage.funnel_id) {
+          const { data: targetFunnel } = await supabase
+            .from('crm_funnels')
+            .select('name')
+            .eq('id', targetStage.funnel_id)
+            .single();
+          
+          if (targetFunnel) {
+            targetFunnelName = targetFunnel.name;
+          }
+        }
+
+        // Atualizar o estágio do cliente
+        const { error: updateError } = await supabase
+          .from('customers')
+          .update({ 
+            stage_id: targetStageId
+          })
+          .eq('id', session.customer_id);
+
+        console.log(`[handleSystemToolCall] Estágio do cliente atualizado para ${args.target_stage}`);
+
+        if (updateError) {
+          console.error(`[handleSystemToolCall] Erro ao atualizar estágio do cliente:`, updateError);
+          return {
+            status: "error",
+            message: "Error updating customer's funnel stage."
+          };
+        }
+
+        // Registrar a mudança no histórico do CRM (opcional)
+        try {
+          await supabase
+            .from('customer_stage_history')
+            .insert({
+              customer_id: session.customer_id,
+              organization_id: session.organization_id,
+              stage_id: targetStageId,
+              notes: `Customer's funnel stage updated to ${args.target_stage}${targetFunnelName ? ` in ${targetFunnelName}` : ''}.`,
+              moved_at: new Date().toISOString(),
+              created_at: new Date().toISOString()
+            });
+        } catch (historyError) {
+          // Apenas logar o erro, não interromper o fluxo
+          console.warn(`[handleSystemToolCall] Erro ao registrar mudança no histórico do CRM:`, historyError);
+        }
+
+        return {
+          status: "success",
+          message: `Customer's funnel stage successfully updated to ${args.target_stage}${targetFunnelName ? ` in ${targetFunnelName}` : ''}. Note: Not informing the customer.` 
         };
       }
       
@@ -1987,6 +2142,101 @@ const generateTransferToTeamTool = async (organizationId, action) => {
     };
   } catch (error) {
     console.error(`[generateTransferToTeamTool] Erro ao gerar ferramenta de transferência para equipe:`, error);
+    Sentry.captureException(error);
+    return null;
+  }
+};
+
+/**
+ * Gera a ferramenta para alterar o funil do cliente
+ * @param {string} organizationId - ID da organização
+ * @param {Object} action - Ação associada à ferramenta
+ * @param {Object} customer - Cliente atual da sessão
+ * @returns {Promise<Object>} - Ferramenta de alteração de funil
+ */
+const generateChangeFunnelTool = async (organizationId, action, customer = null) => {
+  try {
+    // Verificar se há estágios de destino configurados
+    if (!action.config.targetStages || action.config.targetStages.length === 0) {
+      console.log(`[generateChangeFunnelTool] Nenhum estágio de destino configurado para a ação ${action.name}`);
+      return null;
+    }
+
+    // Verificar se há estágios de origem configurados
+    if (!action.config.sourceStages || action.config.sourceStages.length === 0) {
+      console.log(`[generateChangeFunnelTool] Nenhum estágio de origem configurado para a ação ${action.name}`);
+      return null;
+    }
+
+    //Verificar se o cliente está em algum estágio de origem configurado, se não estiver, retornar null
+    if (customer && customer.stage_id) {
+      const isInSourceStage = action.config.sourceStages.some(stage => stage.id === customer.stage_id);
+      if (!isInSourceStage) {
+        console.log(`[generateChangeFunnelTool] O cliente não está em um estágio de origem configurado para a ação ${action.name}`);
+        return null;
+      }
+    } else {
+      console.log(`[generateChangeFunnelTool] Não foi possível verificar se o cliente está em um estágio de origem configurado para a ação ${action.name}`);
+      return null;
+    }
+
+    // Buscar o cliente atual da sessão (se existir)
+    const targetStages = action.config.targetStages;
+    
+    // Usar o nome e a descrição da ação configurada ou usar padrões
+    const toolName = action.name || "change_funnel";
+    const toolDescription = action.description || 
+      "Change the customer's funnel to a specific stage.";
+    
+    // Criar enum com os nomes dos estágios de destino disponíveis
+    const stageEnum = [];
+    
+    // Criar descrição detalhada dos estágios disponíveis
+    let stageDescriptionText = "Available stages:\n";
+    
+    for (const stage of targetStages) {
+      if (stage.id && stage.name) {
+        const stageName = stage.name;
+        stageEnum.push(stageName);
+        
+        // Adicionar estágio à descrição
+        stageDescriptionText += `- ${stageName}`;
+        if (stage.description) {
+          stageDescriptionText += `: ${stage.description}`;
+        }
+        if (stage.funnelName) {
+          stageDescriptionText += ` (${stage.funnelName})`;
+        }
+        stageDescriptionText += "\n";
+      }
+    }
+    
+    // Se não houver estágios disponíveis, não criar a ferramenta
+    if (stageEnum.length === 0) {
+      console.log(`[generateChangeFunnelTool] Nenhum estágio de destino válido encontrado para a ação ${action.name}`);
+      return null;
+    }
+    
+    // Construir a ferramenta para alteração de funil
+    const tool = {
+      name: toolName,
+      description: toolDescription,
+      parameters: {
+        type: "object",
+        properties: {
+          target_stage: {
+            type: "string",
+            enum: stageEnum,
+            description: `Name of the destination stage to where the customer will be moved. ${stageDescriptionText}`
+          }
+        },
+        required: ["target_stage"]
+      }
+    };
+    
+    return tool;
+  } catch (error) {
+    console.error(`[generateChangeFunnelTool] Erro ao gerar ferramenta de alteração de funil:`, error);
     Sentry.captureException(error);
     return null;
   }

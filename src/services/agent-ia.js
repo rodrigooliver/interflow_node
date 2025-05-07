@@ -138,14 +138,20 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
     let systemTools = [];
     if (systemToolTypes.length > 0) {
       // Buscar a organização da sessão
-      const { data: chat } = await supabase
+      const { data: chat, error: chatError } = await supabase
         .from('chats')
-        .select('organization_id')
+        .select('organization_id, customer:customers(id, stage_id)')
         .eq('id', session.chat_id)
         .single();
+
+      if (chatError) {
+        console.error('[processAgentIA] Erro ao buscar chat:', chatError);
+        Sentry.captureException(chatError);
+        throw chatError;
+      }
       
       if (chat && chat.organization_id) {
-        systemTools = await generateSystemTools(chat.organization_id, prompt.actions);
+        systemTools = await generateSystemTools(chat.organization_id, prompt.actions, chat.customer);
         console.log(`[processAgentIA] Ferramentas do sistema geradas: ${systemTools.length}`);
       }
     }
@@ -465,6 +471,7 @@ const prepareContextMessages = async (prompt, session) => {
               updated_at,
               field_definition:custom_fields_definition(id, name, type, options)
             ),
+            stage:crm_stages(id, name, description),
             tags:customer_tags(
               tag_id,
               tags:tags(id, name, color)
@@ -503,6 +510,10 @@ const prepareContextMessages = async (prompt, session) => {
             if (tagNames) {
               contextInfo += `\n- Tags: ${tagNames}`;
             }
+          }
+
+          if (customer.stage) {
+            contextInfo += `\n- Stage funnel current: ${customer.stage.name} - ${customer.stage.description}`;
           }
           
           // Adicionar campos customizados
