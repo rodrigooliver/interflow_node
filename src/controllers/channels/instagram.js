@@ -137,6 +137,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
           channel_id: channel.id,
           status: 'pending',
           team_id: defaultTeam?.id || null,
+          stage_id: channel.settings?.defaultStageId || null,
           profile_picture: userInfo?.profile_pic || null,
           profile_updated_at: new Date().toISOString(),
           last_customer_message_at: new Date().toISOString()
@@ -188,6 +189,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
         external_id: externalId,
         status: 'pending',
         team_id: defaultTeam?.id || null,
+        stage_id: channel.settings?.defaultStageId || null,
         profile_picture: userInfo?.profile_pic || null,
         profile_updated_at: new Date().toISOString(),
         last_customer_message_at: new Date().toISOString()
