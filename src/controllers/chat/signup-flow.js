@@ -140,6 +140,13 @@ export async function startSignupChatFlow({
         }
 
         if (flow) {
+          //Pausar algum fluxo ativo
+          const { error: pauseError } = await supabase
+            .from('flow_sessions')
+            .update({ status: 'inactive' })
+            .eq('chat_id', chatData.id);
+            
+            
           // Criar engine de fluxo
           const flowEngine = createFlowEngine(
             organizationData, 
