@@ -293,7 +293,6 @@ export async function handleIncomingMessage(channel, messageData) {
             external_id: messageData.externalId,
             status: 'pending',
             team_id: channel.settings?.defaultTeamId || defaultTeam?.id || null,
-            stage_id: channel.settings?.defaultStageId || null,
             ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture }),
           });
 
