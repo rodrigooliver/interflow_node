@@ -159,6 +159,7 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
     const customerData = {
       organization_id: channel.organization_id,
       name: userInfo?.name || externalId,
+      stage_id: channel.settings?.defaultStageId || null,
       ...(userInfo?.profile_pic && { profile_picture: userInfo.profile_pic })
     };
 

@@ -240,6 +240,7 @@ export async function handleIncomingMessage(channel, messageData) {
               const customerData = {
                 organization_id: organization.id,
                 name: messageData.externalName || messageData.externalId,
+                stage_id: channel.settings?.defaultStageId || null,
                 ...(messageData.externalProfilePicture && { profile_picture: messageData.externalProfilePicture })
               };
 
