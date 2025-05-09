@@ -9,7 +9,10 @@ export async function deleteOrganizationRoute(req, res) {
 
 export async function deleteOrganization(organizationId) {
     try {
+        //Excluir os arquivos de upload do storage
+
         //Verificar se possui channel ativo e desconectar no api
+
         // const { data: channel, error: channelError } = await supabase
         //     .from('chat_channels')
         //     .select('*')

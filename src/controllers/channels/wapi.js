@@ -502,6 +502,8 @@ export async function handleWapiWebhook(req, res) {
         break;
         
       // Add more event handlers as needed
+      case 'memberRemoved':
+        break;
       default:
         Sentry.captureMessage(`Evento WAPI não tratado: ${JSON.stringify(webhookData)}`, {
           level: 'warning',

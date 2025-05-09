@@ -353,7 +353,7 @@ export async function handleIncomingMessage(channel, messageData) {
         //   messageId: messageData.messageId
         // });
 
-        const mediaResult = await processMessageMedia(messageData, organization.id);
+        const mediaResult = await processMessageMedia(messageData, organization.id, chat.id);
         
         // Remover todos os base64 dos metadados
         if (messageData.message.raw) {
@@ -483,6 +483,25 @@ export async function handleIncomingMessage(channel, messageData) {
 
     if (messageError) throw messageError;
 
+    //Atualizar o message_id em cada attachments
+    for (let i = 0; i < attachments.length; i++) {
+      await supabase
+        .from('attachments')
+        .update({ message_id: message.id })
+        .eq('id', attachments[i].id);
+
+      if (updateError) {
+        Sentry.captureException(updateError, {
+          extra: {
+            messageId: message.id,
+            attachmentId: attachments[i].id,
+            context: 'updating_attachment_message_id'
+          }
+        });
+        console.error('Erro ao atualizar message_id no attachment:', updateError);
+      }
+    }
+
     // Registrar arquivos vinculados à mensagem
     if (fileRecords && fileRecords.length > 0) {
       // Definir se é um canal social
@@ -608,7 +627,7 @@ export async function handleIncomingMessage(channel, messageData) {
  * @param {string} organizationId - ID da organização
  * @returns {Promise<Object>} - Dados do arquivo processado (attachment e fileRecord)
  */
-async function processMessageMedia(messageData, organizationId) {
+async function processMessageMedia(messageData, organizationId, chatId) {
   try {
     // Extrair dados da mídia
     const raw = messageData.message?.raw || {};
@@ -790,7 +809,8 @@ async function processMessageMedia(messageData, organizationId) {
           contentType: mimeType,
           organizationId,
           isBase64: true,
-          customFolder: 'media'
+          customFolder: 'media',
+          chatId: chatId
         });
         
         if (uploadResult.success) {
@@ -863,7 +883,8 @@ async function processMessageMedia(messageData, organizationId) {
           contentType: mimeType,
           fileSize: fileBuffer.length,
           organizationId,
-          customFolder: 'media'
+          customFolder: 'media',
+          chatId: chatId
         });
         
         if (uploadResult.success) {
@@ -1835,7 +1856,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
             contentType: file.mimetype,
             fileSize: file.size,
             organizationId,
-            customFolder: 'chat-attachments'
+            customFolder: 'chat-attachments',
+            chatId: chatId
           });
           
           if (!uploadResult.success) {

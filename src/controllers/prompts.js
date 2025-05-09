@@ -593,6 +593,22 @@ export async function uploadImage(req, res) {
       return res.status(400).json({ error: 'Arquivo muito grande. Tamanho máximo: 10MB' });
     }
 
+     // Buscar o prompt atual
+     const { data: prompt, error: promptError } = await supabase
+     .from('prompts')
+     .select('media')
+     .eq('id', promptId)
+     .eq('organization_id', organizationId)
+     .single();
+
+    if (promptError) {
+      throw promptError;
+    }
+
+    if (!prompt) {
+      return res.status(404).json({ error: 'Prompt não encontrado' });
+    }
+
     // Determinar o tipo de mídia baseado no mimetype
     let mediaType;
     if (file.mimetype.startsWith('image/')) {
@@ -618,27 +634,12 @@ export async function uploadImage(req, res) {
       contentType: file.mimetype,
       fileSize: file.size,
       organizationId,
-      customFolder: 'prompts'
+      customFolder: 'prompts',
+      promptId: promptId
     });
 
     if (!uploadResult.success) {
       throw new Error(uploadResult.error || 'Erro ao fazer upload do arquivo');
-    }
-
-    // Buscar o prompt atual
-    const { data: prompt, error: promptError } = await supabase
-      .from('prompts')
-      .select('media')
-      .eq('id', promptId)
-      .eq('organization_id', organizationId)
-      .single();
-
-    if (promptError) {
-      throw promptError;
-    }
-
-    if (!prompt) {
-      return res.status(404).json({ error: 'Prompt não encontrado' });
     }
 
     // Preparar o novo item de mídia

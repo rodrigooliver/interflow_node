@@ -56,37 +56,9 @@ export async function handleAttachment(req, res) {
         });
       }
       
-      // Registrar o arquivo na tabela files
-      const { data, error } = await supabase
-        .from('files')
-        .insert({
-          name: file.name,
-          size: file.size,
-          mime_type: file.mimetype,
-          public_url: uploadResult.fileUrl,
-          path: uploadResult.storagePath,
-          organization_id: organizationId,
-          created_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-      
-      if (error) {
-        Sentry.captureException(error);
-        // Tentar excluir o arquivo do storage
-        await deleteFileUtil({
-          fileId: uploadResult.fileId,
-          organizationId
-        });
-        
-        return res.status(500).json({
-          success: false,
-          error: 'Erro ao registrar arquivo no banco de dados'
-        });
-      }
-      
-      fileData = data;
-      newFileId = data.id;
+      // Usar os dados do arquivo já registrado pelo uploadFileUtil
+      fileData = uploadResult.fileRecord;
+      newFileId = uploadResult.fileId;
     }
     
     // 2. Se estamos substituindo um arquivo existente (temos novo arquivo e ID de arquivo antigo)
@@ -98,12 +70,7 @@ export async function handleAttachment(req, res) {
           organizationId
         });
         
-        // Marcar arquivo como excluído na base
-        await supabase
-          .from('files')
-          .delete()
-          .eq('id', file_id)
-          .eq('organization_id', organizationId);
+        // A exclusão do registro na tabela files já é feita pelo deleteFileUtil
       } catch (error) {
         console.error('Erro ao excluir arquivo antigo:', error);
         // Continuamos o processo mesmo se a exclusão falhar
@@ -138,6 +105,15 @@ export async function handleAttachment(req, res) {
           success: false,
           error: 'Erro ao atualizar anexo médico'
         });
+      }
+
+      if(newFileId) {
+        //Atualizar files com emr_attachment_id
+        await supabase
+          .from('files')
+          .update({ emr_attachment_id: attachment_id })
+          .eq('id', newFileId)
+          .eq('organization_id', organizationId);
       }
       
       return res.status(200).json({
@@ -227,17 +203,11 @@ export async function deleteAttachment(req, res) {
     // 2. Se houver um arquivo associado, excluímos ele primeiro
     if (attachment.file_id) {
       try {
+        // deleteFileUtil já exclui o arquivo físico e o registro na tabela files
         await deleteFileUtil({
           fileId: attachment.file_id,
           organizationId
         });
-        
-        // Excluir o registro do arquivo
-        await supabase
-          .from('files')
-          .delete()
-          .eq('id', attachment.file_id)
-          .eq('organization_id', organizationId);
       } catch (fileError) {
         // Registro do erro, mas continuamos com a exclusão do anexo
         console.error('Erro ao excluir o arquivo associado:', fileError);

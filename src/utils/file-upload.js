@@ -30,8 +30,13 @@ export async function uploadFile({
   organizationId,
   messageId = null,
   flowId = null,
+  promptId = null,
+  shortcutId = null,
   customFolder = null,
-  isBase64 = false
+  isBase64 = false,
+  chatId = null,
+  transactionId = null,
+  emrAttachmentId = null
 }) {
   try {
     // Gerar ID único para o arquivo
@@ -157,9 +162,14 @@ export async function uploadFile({
       path: fileKey,
       integration_id: s3Integration ? s3Integration.id : null,
       mime_type: contentType,
+      created_at: new Date().toISOString(),
       message_id: messageId,
       flow_id: flowId,
-      created_at: new Date().toISOString()
+      prompt_id: promptId,
+      shortcut_id: shortcutId,
+      chat_id: chatId,
+      transaction_id: transactionId,
+      emr_attachment_id: emrAttachmentId
     };
     
     // Inserir registro na tabela files se messageId for fornecido
