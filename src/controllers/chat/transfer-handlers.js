@@ -108,6 +108,71 @@ export async function transferAllChatsCustomerRoute(req, res) {
   }
 } 
 
+export async function transferChatToCustomerRoute(req, res) {
+  const { organizationId, chatId } = req.params;
+  const { newCustomerId } = req.body;
+  const { language } = req;
+
+  try {
+    // Verificar se o chat existe e pertence à organização
+    const { data: chat, error: chatError } = await supabase
+      .from('chats')
+      .select('*')
+      .eq('id', chatId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (chatError) throw chatError;
+
+    if (!chat) {
+      return res.status(404).json({ 
+        error: req.t('chat.transfer.errors.chat_not_found'),
+        language
+      });
+    }
+
+    // Verificar se o novo cliente existe e pertence à organização
+    const { data: newCustomer, error: newCustomerError } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('id', newCustomerId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (newCustomerError) throw newCustomerError;
+
+    if (!newCustomer) {
+      return res.status(404).json({ 
+        error: req.t('chat.transfer.errors.customer_not_found'),
+        language
+      });
+    }
+
+    // Atualizar o chat com o novo cliente
+    const { error: updateError } = await supabase
+      .from('chats')
+      .update({ customer_id: newCustomerId })
+      .eq('id', chatId)
+      .eq('organization_id', organizationId);
+
+    if (updateError) throw updateError;
+
+    return res.json({
+      success: true,
+      message: req.t('chat.transfer.success.chat_transferred'),
+      language
+    });
+
+  } catch (error) {
+    console.error('Erro ao transferir chat para cliente:', error);
+    Sentry.captureException(error);
+    return res.status(500).json({ 
+      error: req.t('chat.transfer.errors.chat_transfer_error'),
+      language
+    });
+  }
+}
+
 export async function transferToTeam({
   organizationId,
   chatId,
