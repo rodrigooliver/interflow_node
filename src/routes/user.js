@@ -388,6 +388,7 @@ router.post('/signup', signUpLimiter, async (req, res) => {
         id: authData.user.id,
         email,
         full_name: fullName,
+        nickname: fullName.split(' ')[0], //Pegar o primeiro nome do fullName
         role: 'admin',
         settings: { first_login: true },
         whatsapp: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null
