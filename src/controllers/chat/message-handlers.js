@@ -483,24 +483,24 @@ export async function handleIncomingMessage(channel, messageData) {
 
     if (messageError) throw messageError;
 
-    //Atualizar o message_id em cada attachments
-    for (let i = 0; i < attachments.length; i++) {
-      const { error: updateError } = await supabase
-        .from('attachments')
-        .update({ message_id: message.id })
-        .eq('id', attachments[i].id);
+    // //Atualizar o message_id em cada attachments
+    // for (let i = 0; i < attachments.length; i++) {
+    //   const { error: updateError } = await supabase
+    //     .from('attachments')
+    //     .update({ message_id: message.id })
+    //     .eq('id', attachments[i].id);
 
-      if (updateError) {
-        Sentry.captureException(updateError, {
-          extra: {
-            messageId: message.id,
-            attachmentId: attachments[i].id,
-            context: 'updating_attachment_message_id'
-          }
-        });
-        console.error('Erro ao atualizar message_id no attachment:', updateError);
-      }
-    }
+    //   if (updateError) {
+    //     Sentry.captureException(updateError, {
+    //       extra: {
+    //         messageId: message.id,
+    //         attachmentId: attachments[i].id,
+    //         context: 'updating_attachment_message_id'
+    //       }
+    //     });
+    //     console.error('Erro ao atualizar message_id no attachment:', updateError);
+    //   }
+    // }
 
     // Registrar arquivos vinculados à mensagem
     if (fileRecords && fileRecords.length > 0) {
