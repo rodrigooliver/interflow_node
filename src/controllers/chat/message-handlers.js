@@ -485,7 +485,7 @@ export async function handleIncomingMessage(channel, messageData) {
 
     //Atualizar o message_id em cada attachments
     for (let i = 0; i < attachments.length; i++) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('attachments')
         .update({ message_id: message.id })
         .eq('id', attachments[i].id);
