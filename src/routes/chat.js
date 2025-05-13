@@ -8,6 +8,7 @@ import { transferAllChatsCustomerRoute, transferChatToCustomerRoute, transferToT
 import { resolveChatRoute } from '../controllers/chat/resolve-handlers.js';
 import { startFlowRoute } from '../controllers/chat/flow-handlers.js';
 import { deleteChatRoute } from '../controllers/chat/delete-handlers.js';
+import { generateTaskContentRoute } from '../controllers/chat/task-handlers.js';
 const router = express.Router({ mergeParams: true });
 
 // Todas as rotas de canal precisam de autenticação
@@ -24,6 +25,7 @@ router.delete('/:chatId', deleteChatRoute);
 router.delete('/:chatId/message/:messageId', deleteMessageRoute);
 router.post('/:chatId/send-template', sendWhatsAppTemplateRoute);
 router.post('/:chatId/generate-summary', resolveChatRoute);
+router.post('/:chatId/generate-task-content', generateTaskContentRoute);
 router.post('/:chatId/start-flow', startFlowRoute);
 
 
