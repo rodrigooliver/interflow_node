@@ -240,6 +240,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         await updateSession(updatedSession.id, {
           status: 'inactive'
         });
+        //Atualiza o chat com o status de inativação
+        await supabase
+          .from('chats')
+          .update({ flow_session_id: null })
+          .eq('id', session.chat_id);
       }
     } catch (error) {
       console.log('Error: ', error);
@@ -1751,6 +1756,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           status: 'inactive',
           timeout_at: null
         });
+        //Atualiza o chat com o status de inativação
+        await supabase
+          .from('chats')
+          .update({ flow_session_id: null })
+          .eq('id', session.chat_id);
         return;
       }
       
@@ -1808,6 +1818,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         await updateSession(updatedSession.id, {
           status: 'inactive'
         });
+        //Atualiza o chat com o status de inativação
+        await supabase
+          .from('chats')
+          .update({ flow_session_id: null })
+          .eq('id', session.chat_id);
       }
     } catch (error) {
       Sentry.captureException(error);
