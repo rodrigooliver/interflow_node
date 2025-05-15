@@ -94,7 +94,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           edges,
           variables,
           debounce_time
-        )
+        ),
+        customer:customers!flow_sessions_customer_id_fkey (*),
+        chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .eq('customer_id', customer.id)
       .eq('chat_id', chatId)
@@ -162,7 +164,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           edges,
           variables,
           debounce_time
-        )
+        ),
+        customer:customers!flow_sessions_customer_id_fkey (*),
+        chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .single();
         
@@ -588,7 +592,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
    * @returns {boolean} - Verdadeiro se a subcondição for atendida
    */
   const evaluateSubCondition = async (subCondition, session) => {
-    const { type, field, operator, value } = subCondition;
+    const { type, field, operator, value, stageId } = subCondition;
     let fieldValue;
 
     // Buscar valor do campo apropriado
@@ -625,11 +629,13 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         return fieldValue !== compareValue;
         
       case 'contains':
-        return String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
+        const containsResult = String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
+        return containsResult;
         
       case 'doesNotContain':
       case 'notContains':
-        return !String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
+        const notContainsResult = !String(fieldValue).toLowerCase().includes(String(compareValue).toLowerCase());
+        return notContainsResult;
         
       case 'greaterThan':
         return Number(fieldValue) > Number(compareValue);
@@ -644,46 +650,88 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         return Number(fieldValue) <= Number(compareValue);
         
       case 'isSet':
-        return fieldValue !== null && fieldValue !== undefined && fieldValue !== '';
+        const isSetResult = fieldValue !== null && fieldValue !== undefined && fieldValue !== '';
+        return isSetResult;
         
       case 'isEmpty':
-        return fieldValue === null || fieldValue === undefined || fieldValue === '';
+        const isEmptyResult = fieldValue === null || fieldValue === undefined || fieldValue === '';
+        return isEmptyResult;
         
       case 'startsWith':
-        return String(fieldValue).toLowerCase().startsWith(String(compareValue).toLowerCase());
+        const startsWithResult = String(fieldValue).toLowerCase().startsWith(String(compareValue).toLowerCase());
+        return startsWithResult;
         
       case 'endsWith':
-        return String(fieldValue).toLowerCase().endsWith(String(compareValue).toLowerCase());
+        const endsWithResult = String(fieldValue).toLowerCase().endsWith(String(compareValue).toLowerCase());
+        return endsWithResult;
         
       case 'matchesRegex':
         try {
           const regex = new RegExp(compareValue);
-          return regex.test(String(fieldValue));
-        } catch {
+          const matchesResult = regex.test(String(fieldValue));
+          return matchesResult;
+        } catch (error) {
           return false;
         }
         
       case 'doesNotMatchRegex':
         try {
           const regex = new RegExp(compareValue);
-          return !regex.test(String(fieldValue));
-        } catch {
+          const notMatchesResult = !regex.test(String(fieldValue));
+          return notMatchesResult;
+        } catch (error) {
           return false;
         }
         
       case 'inList':
         const valueList = String(compareValue).split(',').map(v => v.trim().toLowerCase());
-        if (Array.isArray(fieldValue)) {
-          return fieldValue.some(v => valueList.includes(String(v).toLowerCase()));
+        
+        // Caso especial para chat_funil
+        if (field === 'chat_funil') {
+          // Não precisamos buscar novamente o estágio, pois o fieldValue já é o stage_id
+          if (!fieldValue) {
+            return false;
+          }
+          
+          // Verificar se o estágio do cliente está na lista de estágios permitidos
+          const stageIdList = String(stageId).split(',').map(id => id.trim());
+          const stageInListResult = stageIdList.includes(fieldValue);
+          return stageInListResult;
         }
-        return valueList.includes(String(fieldValue).toLowerCase());
+        
+        // Comportamento padrão para outros campos
+        if (Array.isArray(fieldValue)) {
+          const arrayInListResult = fieldValue.some(v => valueList.includes(String(v).toLowerCase()));
+          return arrayInListResult;
+        }
+        
+        const inListResult = valueList.includes(String(fieldValue).toLowerCase());
+        return inListResult;
         
       case 'notInList':
         const excludeList = String(compareValue).split(',').map(v => v.trim().toLowerCase());
-        if (Array.isArray(fieldValue)) {
-          return !fieldValue.some(v => excludeList.includes(String(v).toLowerCase()));
+        
+        // Caso especial para chat_funil
+        if (field === 'chat_funil') {
+          // Não precisamos buscar novamente o estágio, pois o fieldValue já é o stage_id
+          if (!fieldValue) {
+            return true; // Se não tem estágio, não está na lista
+          }
+          
+          // Verificar se o estágio do cliente NÃO está na lista de estágios
+          const stageIdList = String(stageId).split(',').map(id => id.trim());
+          const stageNotInListResult = !stageIdList.includes(fieldValue);
+          return stageNotInListResult;
         }
-        return !excludeList.includes(String(fieldValue).toLowerCase());
+        
+        // Comportamento padrão para outros campos
+        if (Array.isArray(fieldValue)) {
+          const arrayNotInListResult = !fieldValue.some(v => excludeList.includes(String(v).toLowerCase()));
+          return arrayNotInListResult;
+        }
+        
+        const notInListResult = !excludeList.includes(String(fieldValue).toLowerCase());
+        return notInListResult;
         
       default:
         return false;
@@ -700,18 +748,102 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     try {
       // Buscar dados do cliente
       if (field.startsWith('custumer_')) {
-        const { data: customer } = await supabase
+        // Usar dados do cliente já carregados na sessão, se disponíveis
+        if (session.customer) {
+          const customerField = field.replace('custumer_', '');
+          return session.customer[customerField];
+        }
+        
+        // Fallback para busca no banco se não tiver os dados na sessão
+        const { data: customerData } = await supabase
           .from('customers')
           .select('*')
           .eq('id', session.customer_id)
           .single();
           
         const customerField = field.replace('custumer_', '');
-        return customer?.[customerField];
+        return customerData?.[customerField];
+      }
+      
+      // Caso especial para chat_funil - retornar stage_id do cliente diretamente
+      if (field === 'chat_funil') {
+        // Usar dados do cliente já carregados na sessão, se disponíveis
+        if (session.customer) {
+          return session.customer.stage_id;
+        }
+        
+        // Fallback para busca no banco se não tiver os dados na sessão
+        const { data: customerData } = await supabase
+          .from('customers')
+          .select('stage_id')
+          .eq('id', session.customer_id)
+          .single();
+          
+        return customerData?.stage_id;
+      }
+      
+      // Caso especial para chat_price - retornar sale_price do cliente diretamente
+      if (field === 'chat_price') {
+        // Usar dados do cliente já carregados na sessão, se disponíveis
+        if (session.customer) {
+          return session.customer.sale_price;
+        }
+        
+        // Fallback para busca no banco se não tiver os dados na sessão
+        const { data: customerData } = await supabase
+          .from('customers')
+          .select('sale_price')
+          .eq('id', session.customer_id)
+          .single();
+          
+        return customerData?.sale_price;
+      }
+      
+      // Caso especial para chat_tag - retornar as tags do cliente da tabela customer_tags
+      if (field === 'chat_tag') {
+        // Buscar as tags do cliente da tabela de junção
+        const { data: customerTags, error } = await supabase
+          .from('customer_tags')
+          .select(`
+            tag_id,
+            tag:tags(*)
+          `)
+          .eq('customer_id', session.customer_id);
+          
+        if (error) {
+          Sentry.captureException(error);
+          return null;
+        }
+        
+        // Extrair os IDs das tags
+        const tagIds = customerTags?.map(ct => ct.tag_id) || [];
+        return tagIds;
       }
       
       // Buscar dados do chat
       if (field.startsWith('chat_')) {
+        // Usar dados do chat já carregados na sessão, se disponíveis
+        if (session.chat) {
+          const chat = session.chat;
+          
+          let result;
+          switch (field) {
+            case 'chat_team':
+              result = chat.team_id;
+              break;
+              
+            case 'chat_attendant':
+              result = chat.assigned_to;
+              break;
+              
+            default:
+              result = null;
+          }
+          
+          return result;
+        }
+        
+        // Fallback para busca no banco se não tiver os dados na sessão
         const { data: chat } = await supabase
           .from('chats')
           .select(`
@@ -722,25 +854,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           .eq('id', session.chat_id)
           .single();
           
+        let result;
         switch (field) {
-          case 'chat_funil':
-            return chat?.funnel_id;
-            
-          case 'chat_price':
-            return chat?.sale_value;
-            
           case 'chat_team':
-            return chat?.team?.id;
+            result = chat?.team?.id;
+            break;
             
           case 'chat_attendant':
-            return chat?.assigned_agent?.id;
-            
-          case 'chat_tag':
-            return chat?.tags;
+            result = chat?.assigned_agent?.id;
+            break;
             
           default:
-            return null;
+            result = null;
         }
+        
+        return result;
       }
       
       return null;
@@ -763,15 +891,15 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
     // Se for nó de condição
     if (currentNode.type === 'condition') {
-
       for (const condition of currentNode.data.conditions || []) {
         const { logicOperator, subConditions } = condition;
-        // console.log('logicOperator', logicOperator);
-        // console.log('subConditions', subConditions);
 
         // Avaliar cada subcondição
         const results = await Promise.all(
-          subConditions.map(sub => evaluateSubCondition(sub, session))
+          subConditions.map(async (sub) => {
+            const result = await evaluateSubCondition(sub, session);
+            return result;
+          })
         );
           
         // Aplicar operador lógico aos resultados
@@ -844,7 +972,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           nodes,
           edges,
           variables
-        )
+        ),
+        customer:customers!flow_sessions_customer_id_fkey (*),
+        chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .single();
 
