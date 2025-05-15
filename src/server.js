@@ -25,6 +25,7 @@ import userRoutes from './routes/user.js';
 import { i18nMiddleware } from './middleware/i18n.js';
 import medicalRoutes from './routes/medical.js';
 import organizationRoutes from './routes/organizations.js';
+import profileRoutes from './routes/profile.js';
 // Load environment variables
 dotenv.config();
 
@@ -94,6 +95,7 @@ app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/agent-ia', agentIARoutes);
 app.post('/api/test-email-connection', testEmailConnection);
 app.use('/api/organizations', organizationRoutes);
+app.use('/api/profile', profileRoutes);
 
 // The error handler must be before any other error middleware and after all controllers
 app.use(Sentry.Handlers.errorHandler());

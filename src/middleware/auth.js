@@ -299,3 +299,58 @@ export async function verifyAuthSuperAdmin(req, res, next) {
     return res.status(401).json({ error: 'Authentication failed' });
   }
 }
+
+// Middleware para rotas de perfil (não requer organização)
+export async function verifyAuthProfile(req, res, next) {
+  const authHeader = req.headers.authorization;
+  const apiKey = req.headers['x-api-key'];
+
+  if (!authHeader && !apiKey) {
+    return res.status(401).json({ error: 'No authorization header or API key' });
+  }
+
+  try {
+    if (apiKey) {
+      // Validação via API Key
+      const keyHash = crypto
+        .createHash('sha256')
+        .update(apiKey)
+        .digest('hex');
+
+      const { data: apiKeyData } = await supabase
+        .from('api_keys')
+        .select('profile_id')
+        .eq('key_hash', keyHash)
+        .eq('is_active', true)
+        .single();
+
+      if (!apiKeyData) {
+        return res.status(401).json({ error: 'Invalid API key' });
+      }
+
+      req.profileId = apiKeyData.profile_id;
+    } else {
+      // Validação via token JWT
+      const token = authHeader.replace('Bearer ', '');
+      const user = await validateSupabaseToken(token);
+
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+
+      req.profileId = user.id;
+    }
+
+    next();
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        location: 'verifyAuthProfile',
+        hasApiKey: !!apiKey,
+        hasAuthHeader: !!authHeader
+      }
+    });
+    console.error('Auth error:', error);
+    return res.status(401).json({ error: 'Authentication failed' });
+  }
+}

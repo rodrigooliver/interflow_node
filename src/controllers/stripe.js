@@ -730,3 +730,133 @@ async function handleSubscriptionDeleted(subscription) {
     throw error;
   }
 }
+
+// Create account partner
+export async function stripeAccountOnboarding(req, res) {
+  const { profileId } = req; // Assumindo que o middleware de autenticação adiciona o usuário na request
+
+  try {
+    // Verificar se o usuário já tem uma conta Stripe
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('stripe_account_id')
+      .eq('id', profileId)
+      .single();
+
+    if (profileError) {
+      Sentry.captureException(profileError);
+      return res.status(500).json({ error: 'Erro ao buscar perfil do usuário' });
+    }
+
+    // Se já tem uma conta Stripe, criar uma nova sessão de conta
+    if (profile.stripe_account_id) {
+      const accountSession = await stripe.accountSessions.create({
+        account: profile.stripe_account_id,
+        components: {
+          account_onboarding: { enabled: true },
+        },
+      });
+
+      return res.json({
+        success: true,
+        accountId: profile.stripe_account_id,
+        clientSecret: accountSession.client_secret,
+      });
+    }
+
+    // Se não tem uma conta Stripe, criar uma nova
+    const account = await stripe.accounts.create({
+      type: 'express',
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true }
+      },
+      business_type: 'individual',
+      metadata: {
+        user_id: profileId
+      }
+    });
+
+    // Atualizar o perfil do usuário com o ID da conta Stripe
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ stripe_account_id: account.id })
+      .eq('id', profileId);
+
+    if (updateError) {
+      Sentry.captureException(updateError);
+      // Tentar deletar a conta Stripe criada para evitar contas órfãs
+      try {
+        await stripe.accounts.del(account.id);
+      } catch (deleteError) {
+        Sentry.captureException(deleteError);
+      }
+      return res.status(500).json({ error: 'Erro ao atualizar perfil do usuário' });
+    }
+
+    // Criar uma sessão de conta para o onboarding
+    const accountSession = await stripe.accountSessions.create({
+      account: account.id,
+      components: {
+        account_onboarding: { enabled: true },
+      },
+    });
+
+    res.json({
+      success: true,
+      accountId: account.id,
+      clientSecret: accountSession.client_secret,
+    });
+  } catch (error) {
+    Sentry.captureException(error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
+// Manage Stripe connected account
+export async function stripeAccountManager(req, res) {
+  const { profileId } = req; // Assumindo que o middleware de autenticação adiciona o usuário na request
+
+  try {
+    // Buscar o perfil do usuário para obter o ID da conta Stripe
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('stripe_account_id')
+      .eq('id', profileId)
+      .single();
+
+    if (profileError) {
+      Sentry.captureException(profileError);
+      return res.status(500).json({ error: 'Erro ao buscar perfil do usuário' });
+    }
+
+    if (!profile.stripe_account_id) {
+      return res.status(404).json({ error: 'Conta Stripe não encontrada' });
+    }
+
+    // Criar uma sessão de gerenciamento de conta
+    const accountSession = await stripe.accountSessions.create({
+      account: profile.stripe_account_id,
+      components: {
+        payments: {
+          enabled: true,
+          features: {
+            refund_management: true,
+            dispute_management: true,
+            capture_payments: true,
+          }
+        },
+      }
+    });
+
+    res.json({
+      success: true,
+      accountId: profile.stripe_account_id,
+      clientSecret: accountSession.client_secret,
+    });
+  } catch (error) {
+    Sentry.captureException(error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
