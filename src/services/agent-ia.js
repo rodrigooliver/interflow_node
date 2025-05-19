@@ -4,6 +4,7 @@ import { decrypt } from '../utils/crypto.js';
 import Sentry from '../lib/sentry.js';
 import crypto from 'crypto';
 import { generateSystemTools, handleSystemToolCall } from './agent-ia-actions.js';
+import { pauseFlow } from './flow-engine.js';
 
 /**
  * @fileoverview Implementação do nó AgentIA para o flow-engine.
@@ -84,6 +85,8 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
         instructions: `Please provide a valid prompt ID. The prompt with ID ${node.data.agenteia.promptId} was not found.`
       };
     }
+
+    session.prompt = prompt;
 
     // Buscar a integração associada ao prompt
     const { data: integration, error: integrationError } = await supabase
@@ -250,6 +253,38 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
                 processStartFlowAction
               }
             );
+
+            // Verificar se o resultado é de uma ação unknownResponse
+            if (result && result.actions_taken && result.actions_taken.type === 'unknownResponse') {
+              // Verificar se deve pausar o agente
+              if (result.should_pause === true) {
+                await pauseFlow(session);
+              }
+              // Se tryToAnswer é false, não vamos continuar e retornamos a sessão atualizada sem fazer a requisição de follow-up
+              if (result.actions_taken.try_to_answer !== true) {
+                // console.log(`[processAgentIA] Não gerar follow-up devido à configuração tryToAnswer=false`);
+                 // Se tiver especificado um nome de variável para salvar a resposta, setar como ''
+                if (node.data.agenteia.variableName) {
+                  // Atualiza a sessão como vazio 
+                  const variables = Array.isArray(session.variables) 
+                    ? [...session.variables] 
+                    : [];
+                  const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
+                  if (variableIndex >= 0) {
+                    variables[variableIndex] = {
+                      ...variables[variableIndex],
+                      value: ''
+                    };
+                  }
+                  await updateSession(session.id, { variables });
+                  return {
+                    ...session,
+                    variables
+                  };
+                }
+                return session;
+              }
+            }
           }
 
           // Atualizar variáveis com os argumentos
@@ -319,7 +354,6 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
                    - For customer updates: changed fields and new values
                    - For chat updates: status changes, title changes
                    - For flow initiation: flow name and session details
-                   
                    If there are specific instructions in the results, include them in your response.
                    If there were errors, clearly explain what happened and suggest next steps.
                    Keep the tone professional but friendly, and be concise.`

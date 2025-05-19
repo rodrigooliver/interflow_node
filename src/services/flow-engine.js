@@ -236,15 +236,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         // Usa a sessão atualizada para executar o próximo nó
         updatedSession = await executeNode(sessionWithUpdatedNode, nextNode);
       } else {
-        // Finaliza o fluxo
-        await updateSession(updatedSession.id, {
-          status: 'inactive'
-        });
-        //Atualiza o chat com o status de inativação
-        await supabase
-          .from('chats')
-          .update({ flow_session_id: null })
-          .eq('id', session.chat_id);
+        await pauseFlow(session);
       }
     } catch (error) {
       console.log('Error: ', error);
@@ -1752,15 +1744,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       const currentNode = session.flow.nodes.find(n => n.id === session.current_node_id);
       if (!currentNode) {
         // Se não encontrar o nó atual, marca a sessão como inativa
-        await updateSession(session.id, {
-          status: 'inactive',
-          timeout_at: null
-        });
-        //Atualiza o chat com o status de inativação
-        await supabase
-          .from('chats')
-          .update({ flow_session_id: null })
-          .eq('id', session.chat_id);
+        await pauseFlow(session);
         return;
       }
       
@@ -1815,14 +1799,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         });
         await executeNode(updatedSession, nextNode);
       } else {
-        await updateSession(updatedSession.id, {
-          status: 'inactive'
-        });
-        //Atualiza o chat com o status de inativação
-        await supabase
-          .from('chats')
-          .update({ flow_session_id: null })
-          .eq('id', session.chat_id);
+        await pauseFlow(session);
       }
     } catch (error) {
       Sentry.captureException(error);
@@ -1904,3 +1881,33 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     handleSessionTimeout
   };
 }; 
+
+
+export const pauseFlow = async (session) => {
+  // Atualiza a sessão no banco de dados
+  if(session.id) {
+    const { data, error } = await supabase
+    .from('flow_sessions')
+    .update({
+      status: 'inactive',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', session.id);
+    if(error) {
+      console.error('[pauseFlow] Erro ao atualizar sessão:', error);
+      throw error;
+    }
+  }
+  //Atualiza o chat com o status de inativação
+  if(session.chat_id) {
+    const { data, error } = await supabase
+    .from('chats')
+    .update({ flow_session_id: null })
+    .eq('id', session.chat_id);
+    if(error) {
+      console.error('[pauseFlow] Erro ao atualizar chat:', error);
+      throw error;
+    }
+  }
+  return session;
+}

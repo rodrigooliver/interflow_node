@@ -179,6 +179,9 @@ export const generateSystemTools = async (organizationId, systemActions = [], cu
         case 'changeFunnel':
           tool = await generateChangeFunnelTool(organizationId, action, customer);
           break;
+        case 'unknownResponse':
+          tool = generateUnknownResponseTool(organizationId, action);
+          break;
         // case 'update_chat':
         //   tool = generateUpdateChatTool(action);
         //   break;
@@ -1205,6 +1208,81 @@ export const handleSystemToolCall = async (
         return {
           status: "success",
           message: `Customer's funnel stage successfully updated to ${args.target_stage}${targetFunnelName ? ` in ${targetFunnelName}` : ''}. Note: Not informing the customer.` 
+        };
+      }
+      
+      case 'unknownResponse': {
+        // console.log(`[handleSystemToolCall] Processando ação unknownResponse`);
+        
+        // Verificar se existem informações necessárias
+        if (!args.question || !args.content) {
+          return {
+            status: "error",
+            message: "Question and content are required for unknownResponse action."
+          };
+        }
+        
+        // Verificar se temos uma sessão válida
+        if (!session.organization_id || !session.chat_id) {
+          return {
+            status: "error",
+            message: "Invalid session data for unknownResponse action."
+          };
+        }
+        
+        // Extrair as configurações da ação
+        const config = action.config?.unknownResponse || {};
+        const pauseAgent = config.pauseAgent || false;
+        const saveQuestion = config.saveQuestion !== false; // Verdadeiro por padrão
+        const tryToAnswer = config.tryToAnswer || false;
+        
+        // Gerar um ID único para essa entrada
+        const entryId = crypto.randomUUID();
+        
+        // Se saveQuestion for true, salvar na tabela prompt_unknowns
+        if (saveQuestion) {
+          try {
+            // Criar a entrada na tabela prompt_unknowns
+            const { error: insertError } = await supabase
+              .from('prompt_unknowns')
+              .insert({
+                id: entryId,
+                prompt_id: session.prompt.id || null,
+                chat_id: session.chat_id,
+                question: args.question,
+                content: args.content,
+                category: args.category || null,
+                priority: args.priority || 'medium',
+                status: 'pending',
+                notes: args.notes || null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+            
+            if (insertError) {
+              console.error(`[handleSystemToolCall] Erro ao salvar informação desconhecida:`, insertError);
+              // Continuar o processamento mesmo com o erro
+            } else {
+              // console.log(`[handleSystemToolCall] Informação desconhecida salva com sucesso, ID: ${entryId}`);
+            }
+          } catch (dbError) {
+            console.error(`[handleSystemToolCall] Exceção ao salvar informação desconhecida:`, dbError);
+            // Continuar o processamento mesmo com o erro
+          }
+        }
+        
+        // Retornar a resposta apropriada
+        return {
+          status: "success",
+          message: "Unknown response action processed.",
+          entry_id: entryId,
+          actions_taken: {
+            pause_agent: pauseAgent,
+            save_question: saveQuestion,
+            try_to_answer: tryToAnswer,
+            type: 'unknownResponse'
+          },
+          should_pause: pauseAgent
         };
       }
       
@@ -2237,6 +2315,63 @@ const generateChangeFunnelTool = async (organizationId, action, customer = null)
     return tool;
   } catch (error) {
     console.error(`[generateChangeFunnelTool] Erro ao gerar ferramenta de alteração de funil:`, error);
+    Sentry.captureException(error);
+    return null;
+  }
+};
+
+/**
+ * Gera a ferramenta para processar respostas para perguntas desconhecidas pelo agente IA
+ * @param {string} organizationId - ID da organização
+ * @param {Object} action - Ação associada à ferramenta
+ * @returns {Object} - Ferramenta de resposta desconhecida
+ */
+const generateUnknownResponseTool = (organizationId, action) => {
+  try {
+    // Usar o nome e a descrição da ação configurada ou usar padrões
+    const toolName = transformToolName(action.name || "unknown_response");
+    const toolDescription = action.description || 
+      "Use this tool when the information requested by the user is not available in the provided context or knowledge base. This will record the question for review and possible addition to the knowledge base.";
+    
+    // Extrair configurações da ação se existirem
+    const config = action.config?.unknownResponse || {};
+    
+    // Construir a ferramenta para resposta desconhecida
+    return {
+      name: toolName,
+      description: toolDescription,
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description: "The original question that cannot be answered with the information available in the current context."
+          },
+          content: {
+            type: "string",
+            description: "The information that is missing from the context or needs to be added to the knowledge base."
+          },
+          category: {
+            type: "string",
+            description: "Optional category for the missing information (e.g., 'product', 'technical', 'process')."
+          },
+          priority: {
+            type: "string",
+            enum: ["high", "medium", "low"],
+            description: "Priority of this knowledge gap (default: medium)."
+          },
+          notes: {
+            type: "string",
+            description: "Optional notes or additional context about why this information is needed or is missing."
+          }
+        },
+        required: ["question", "content"]
+      },
+      // Passar as configurações do usuário para o objeto da ferramenta
+      _config: config
+    };
+  } catch (error) {
+    console.error(`[generateUnknownResponseTool] Erro ao gerar ferramenta de resposta desconhecida:`, error);
     Sentry.captureException(error);
     return null;
   }
