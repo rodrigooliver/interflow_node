@@ -511,6 +511,12 @@ export const improveTextWithOpenAI = async (req, res) => {
         max_tokens: 2000
       };
 
+      console.log('Fazendo requisição para OpenAI API:', JSON.stringify({
+        url: 'https://api.openai.com/v1/chat/completions',
+        model: apiRequestBody.model,
+        temperature: apiRequestBody.temperature
+      }));
+
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         apiRequestBody,
@@ -521,6 +527,11 @@ export const improveTextWithOpenAI = async (req, res) => {
           },
         }
       );
+
+      console.log('Resposta da OpenAI API:', JSON.stringify({
+        status: response.status,
+        usage: response.data.usage
+      }));
 
       // Extrair o texto da resposta
       const improvedText = response.data.choices[0].message.content;
@@ -731,5 +742,216 @@ export const deleteMedia = async (req, res) => {
     console.error('Erro ao excluir mídia:', error);
     Sentry.captureException(error);
     res.status(500).json({ success: false, error: 'Erro ao excluir mídia' });
+  }
+};
+
+/**
+ * Gera um prompt com base nas informações do negócio usando OpenAI
+ * POST /api/:organizationId/prompts/generate-prompt
+ */
+export const generatePromptWithOpenAI = async (req, res) => {
+  try {
+    const { organizationId } = req.params;
+    const { 
+      attendantName,
+      businessName, 
+      businessDescription, 
+      industry, 
+      targetAudience, 
+      tone,
+      language = 'pt',
+      specificNeeds
+    } = req.body;
+
+    // Validar campos obrigatórios
+    if (!businessDescription) {
+      return res.status(400).json({
+        success: false,
+        error: language === 'en' ? 'Business description is required' :
+               language === 'es' ? 'La descripción del negocio es obligatoria' :
+               'Descrição do negócio é obrigatória'
+      });
+    }
+
+    // Usar a chave API diretamente do ambiente
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: language === 'en' ? 'OpenAI API key not configured' :
+               language === 'es' ? 'Clave de API de OpenAI no configurada' :
+               'Chave de API da OpenAI não configurada'
+      });
+    }
+
+    // Definir tom padrão se não for fornecido
+    const selectedTone = tone || 'professional';
+    
+    // Criar o sistema de prompt para o GPT-4o
+    let systemPrompt = '';
+    
+    if (language === 'en') {
+      systemPrompt = `You are an expert AI consultant specializing in creating natural, human-like customer service system prompts. Your task is to create a detailed system prompt that will guide an AI to act as a virtual customer service representative${attendantName ? ` named ${attendantName}` : ''} for ${businessName || 'a company'}, simulating human-like interactions and responses.`;
+    } else if (language === 'es') {
+      systemPrompt = `Eres un consultor experto en IA especializado en crear prompts de sistema de atención al cliente naturales y humanos. Tu tarea es crear un prompt de sistema detallado que guiará a una IA para actuar como un representante virtual de atención al cliente${attendantName ? ` llamado ${attendantName}` : ''} para ${businessName || 'una empresa'}, simulando interacciones y respuestas humanas.`;
+    } else {
+      systemPrompt = `Você é um consultor especialista em IA, especializado em criar prompts de sistema para atendimento ao cliente que pareçam naturais e humanizados. Sua tarefa é criar um prompt de sistema detalhado que guiará uma IA para atuar como um atendente virtual${attendantName ? ` chamado ${attendantName}` : ''} para ${businessName || 'uma empresa'}, simulando interações e respostas humanas.`;
+    }
+
+    // Construir a mensagem do usuário com detalhes do negócio
+    let userPrompt = '';
+    
+    if (language === 'en') {
+      userPrompt = `Create a comprehensive system prompt for an AI that will function as a virtual customer service representative${attendantName ? ` named ${attendantName}` : ''} for ${businessName || 'our company'}.
+      
+Business Details:
+- Description: ${businessDescription}
+- Service Area: ${industry}
+- Customer Profile: ${targetAudience || 'General customers'}
+- Preferred tone: ${selectedTone}
+${specificNeeds ? `- Specific needs: ${specificNeeds}` : ''}
+
+The prompt should include:
+1. A clear introduction of who the virtual attendant is (${attendantName ? `using the name ${attendantName}` : 'including a fictional name'} and personality traits)
+2. Detailed knowledge about products/services with natural language explanations
+3. Guidelines for handling common customer scenarios:
+   - Greeting customers in a friendly, human-like manner
+   - Answering product/service questions
+   - Handling complaints and difficult customers
+   - Providing support for common issues
+   - Transferring to human agents when necessary
+4. Conversation flow instructions that mimic human conversation patterns:
+   - Using small talk appropriately
+   - Asking clarifying questions
+   - Using empathetic responses
+   - Including appropriate pauses in responses
+5. Tone and personality guidance matching the company brand (${selectedTone})
+6. Limitations and boundaries (what the virtual attendant should not do)
+7. Strategy for handling unexpected or out-of-scope questions
+
+Make the prompt read as instructions for a human customer service representative rather than an AI. The resulting virtual attendant should feel like a real person handling customer inquiries rather than an obvious AI system.
+
+Create a complete system prompt that can be directly used with an AI model. Do not include placeholders or sections to be filled in later. Provide a fully usable system prompt.`;
+    } else if (language === 'es') {
+      userPrompt = `Crea un prompt de sistema completo para una IA que funcionará como un representante virtual de atención al cliente${attendantName ? ` llamado ${attendantName}` : ''} para ${businessName || 'nuestra empresa'}.
+      
+Detalles del Negocio:
+- Descripción: ${businessDescription}
+- Área de Servicio: ${industry}
+- Perfil de Clientes: ${targetAudience || 'Clientes en general'}
+- Tono preferido: ${selectedTone}
+${specificNeeds ? `- Necesidades específicas: ${specificNeeds}` : ''}
+
+El prompt debe incluir:
+1. Una clara introducción de quién es el asistente virtual (${attendantName ? `usando el nombre ${attendantName}` : 'incluyendo un nombre ficticio'} y rasgos de personalidad)
+2. Conocimiento detallado sobre productos/servicios con explicaciones en lenguaje natural
+3. Directrices para manejar escenarios comunes de clientes:
+   - Saludar a los clientes de manera amistosa y humana
+   - Responder preguntas sobre productos/servicios
+   - Manejar quejas y clientes difíciles
+   - Proporcionar soporte para problemas comunes
+   - Transferir a agentes humanos cuando sea necesario
+4. Instrucciones de flujo de conversación que imiten patrones de conversación humana:
+   - Usar charla informal apropiadamente
+   - Hacer preguntas aclaratorias
+   - Usar respuestas empáticas
+   - Incluir pausas apropiadas en las respuestas
+5. Guía de tono y personalidad que coincida con la marca de la empresa (${selectedTone})
+6. Limitaciones y fronteras (lo que el asistente virtual no debe hacer)
+7. Estrategia para manejar preguntas inesperadas o fuera de alcance
+
+Haz que el prompt se lea como instrucciones para un representante humano de atención al cliente en lugar de una IA. El asistente virtual resultante debe sentirse como una persona real manejando consultas de clientes en lugar de un sistema de IA obvio.
+
+Crea un prompt de sistema completo que pueda usarse directamente con un modelo de IA. No incluyas marcadores de posición o secciones para completar más tarde. Proporciona un prompt de sistema completamente utilizable.`;
+    } else {
+      userPrompt = `Crie um prompt de sistema completo para uma IA que funcionará como um atendente virtual${attendantName ? ` chamado ${attendantName}` : ''} para ${businessName || 'nossa empresa'}.
+      
+Detalhes do Negócio:
+- Descrição: ${businessDescription}
+- Área de Atendimento: ${industry}
+- Perfil dos Clientes: ${targetAudience || 'Clientes em geral'}
+- Tom preferido: ${selectedTone}
+${specificNeeds ? `- Necessidades específicas: ${specificNeeds}` : ''}
+
+O prompt deve incluir:
+1. Uma clara introdução de quem é o atendente virtual (${attendantName ? `usando o nome ${attendantName}` : 'incluindo um nome fictício'} e traços de personalidade)
+2. Conhecimento detalhado sobre produtos/serviços com explicações em linguagem natural
+3. Diretrizes para lidar com cenários comuns de atendimento:
+   - Saudação aos clientes de maneira amigável e humana
+   - Responder perguntas sobre produtos/serviços
+   - Lidar com reclamações e clientes difíceis
+   - Fornecer suporte para problemas comuns
+   - Transferir para atendentes humanos quando necessário
+4. Instruções de fluxo de conversa que imitam padrões de conversação humana:
+   - Usar conversa casual apropriadamente
+   - Fazer perguntas esclarecedoras
+   - Usar respostas empáticas
+   - Incluir pausas apropriadas nas respostas
+5. Orientação de tom e personalidade compatível com a marca da empresa (${selectedTone})
+6. Limitações e fronteiras (o que o atendente virtual não deve fazer)
+7. Estratégia para lidar com perguntas inesperadas ou fora do escopo
+
+Faça com que o prompt pareça instruções para um atendente humano em vez de uma IA. O atendente virtual resultante deve se sentir como uma pessoa real lidando com consultas de clientes em vez de um sistema de IA óbvio.
+
+Crie um prompt de sistema completo que possa ser usado diretamente com um modelo de IA. Não inclua espaços reservados ou seções a serem preenchidas posteriormente. Forneça um prompt de sistema totalmente utilizável.`;
+    }
+
+    // Preparar requisição para a API da OpenAI
+    try {
+      const apiRequestBody = {
+        model: "gpt-4.1",
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7
+      };
+
+      const response = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        apiRequestBody,
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      // Extrair o texto da resposta
+      const generatedPrompt = response.data.choices[0].message.content;
+
+      return res.json({
+        success: true,
+        data: {
+          text: generatedPrompt,
+          usage: response.data.usage
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao chamar API da OpenAI:', error.response?.data || error);
+      
+      const errorMessage = language === 'en' ? 'Error generating prompt with OpenAI API' :
+                           language === 'es' ? 'Error al generar el prompt con la API de OpenAI' :
+                           'Erro ao gerar o prompt com a API da OpenAI';
+      
+      return res.status(error.response?.status || 500).json({
+        success: false,
+        error: error.response?.data?.error?.message || errorMessage
+      });
+    }
+  } catch (error) {
+    console.error('Erro ao gerar prompt:', error);
+    Sentry.captureException(error);
+    
+    const errorMessage = req.body.language === 'en' ? 'Error generating prompt' :
+                         req.body.language === 'es' ? 'Error al generar el prompt' :
+                         'Erro ao gerar prompt';
+    
+    return res.status(500).json({
+      success: false,
+      error: errorMessage
+    });
   }
 }; 
