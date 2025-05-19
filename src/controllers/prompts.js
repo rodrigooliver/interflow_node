@@ -807,10 +807,10 @@ export const generatePromptWithOpenAI = async (req, res) => {
       
 Business Details:
 - Description: ${businessDescription}
-- Service Area: ${industry}
+- Service Area: ${industry || 'General services'}
 - Customer Profile: ${targetAudience || 'General customers'}
 - Preferred tone: ${selectedTone}
-${specificNeeds ? `- Specific needs: ${specificNeeds}` : ''}
+${specificNeeds ? `- Additional Information: ${specificNeeds}` : ''}
 
 The prompt should include:
 1. A clear introduction of who the virtual attendant is (${attendantName ? `using the name ${attendantName}` : 'including a fictional name'} and personality traits)
@@ -829,6 +829,7 @@ The prompt should include:
 5. Tone and personality guidance matching the company brand (${selectedTone})
 6. Limitations and boundaries (what the virtual attendant should not do)
 7. Strategy for handling unexpected or out-of-scope questions
+8. IMPORTANT: Instructions to always respond with short paragraphs (2-3 sentences maximum per paragraph), as each paragraph will be sent as a separate message to the customer
 
 Make the prompt read as instructions for a human customer service representative rather than an AI. The resulting virtual attendant should feel like a real person handling customer inquiries rather than an obvious AI system.
 
@@ -838,10 +839,10 @@ Create a complete system prompt that can be directly used with an AI model. Do n
       
 Detalles del Negocio:
 - Descripción: ${businessDescription}
-- Área de Servicio: ${industry}
+- Área de Servicio: ${industry || 'Servicios en general'}
 - Perfil de Clientes: ${targetAudience || 'Clientes en general'}
 - Tono preferido: ${selectedTone}
-${specificNeeds ? `- Necesidades específicas: ${specificNeeds}` : ''}
+${specificNeeds ? `- Información adicional: ${specificNeeds}` : ''}
 
 El prompt debe incluir:
 1. Una clara introducción de quién es el asistente virtual (${attendantName ? `usando el nombre ${attendantName}` : 'incluyendo un nombre ficticio'} y rasgos de personalidad)
@@ -860,6 +861,7 @@ El prompt debe incluir:
 5. Guía de tono y personalidad que coincida con la marca de la empresa (${selectedTone})
 6. Limitaciones y fronteras (lo que el asistente virtual no debe hacer)
 7. Estrategia para manejar preguntas inesperadas o fuera de alcance
+8. IMPORTANTE: Instrucciones para responder siempre con párrafos cortos (máximo 2-3 frases por párrafo), ya que cada párrafo se enviará como un mensaje separado al cliente
 
 Haz que el prompt se lea como instrucciones para un representante humano de atención al cliente en lugar de una IA. El asistente virtual resultante debe sentirse como una persona real manejando consultas de clientes en lugar de un sistema de IA obvio.
 
@@ -869,10 +871,10 @@ Crea un prompt de sistema completo que pueda usarse directamente con un modelo d
       
 Detalhes do Negócio:
 - Descrição: ${businessDescription}
-- Área de Atendimento: ${industry}
+- Área de Atendimento: ${industry || 'Serviços em geral'}
 - Perfil dos Clientes: ${targetAudience || 'Clientes em geral'}
 - Tom preferido: ${selectedTone}
-${specificNeeds ? `- Necessidades específicas: ${specificNeeds}` : ''}
+${specificNeeds ? `- Informações Adicionais: ${specificNeeds}` : ''}
 
 O prompt deve incluir:
 1. Uma clara introdução de quem é o atendente virtual (${attendantName ? `usando o nome ${attendantName}` : 'incluindo um nome fictício'} e traços de personalidade)
@@ -891,6 +893,7 @@ O prompt deve incluir:
 5. Orientação de tom e personalidade compatível com a marca da empresa (${selectedTone})
 6. Limitações e fronteiras (o que o atendente virtual não deve fazer)
 7. Estratégia para lidar com perguntas inesperadas ou fora do escopo
+8. IMPORTANTE: Instruções para sempre responder com parágrafos curtos (máximo de 2-3 frases por parágrafo), pois cada parágrafo será enviado como uma mensagem separada para o cliente
 
 Faça com que o prompt pareça instruções para um atendente humano em vez de uma IA. O atendente virtual resultante deve se sentir como uma pessoa real lidando com consultas de clientes em vez de um sistema de IA óbvio.
 
