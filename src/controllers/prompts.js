@@ -865,7 +865,7 @@ El prompt debe incluir:
 
 Haz que el prompt se lea como instrucciones para un representante humano de atención al cliente en lugar de una IA. El asistente virtual resultante debe sentirse como una persona real manejando consultas de clientes en lugar de un sistema de IA obvio.
 
-Crea un prompt de sistema completo que pueda usarse directamente con un modelo de IA. No incluyas marcadores de posición o secciones para completar más tarde. Proporciona un prompt de sistema completamente utilizable.`;
+Crea un prompt de sistema completo que pueda usarse directamente con un modelo de IA. Não inclua espaços reservados ou seções a serem preenchidas posteriormente. Forneça um prompt de sistema totalmente utilizável.`;
     } else {
       userPrompt = `Crie um prompt de sistema completo para uma IA que funcionará como um atendente virtual${attendantName ? ` chamado ${attendantName}` : ''} para ${businessName || 'nossa empresa'}.
       
@@ -951,6 +951,228 @@ Crie um prompt de sistema completo que possa ser usado diretamente com um modelo
     const errorMessage = req.body.language === 'en' ? 'Error generating prompt' :
                          req.body.language === 'es' ? 'Error al generar el prompt' :
                          'Erro ao gerar prompt';
+    
+    return res.status(500).json({
+      success: false,
+      error: errorMessage
+    });
+  }
+};
+
+/**
+ * Gera sugestão de resposta para uma pergunta sem contexto usando OpenAI
+ * POST /api/:organizationId/prompts/:id/generate-response-unknown
+ */
+export const generateResponseUnknownWithOpenAI = async (req, res) => {
+  try {
+    const { organizationId, id: promptId } = req.params;
+    const {
+      question, 
+      content, 
+      notes,
+      promptContext,
+      language = 'pt'
+    } = req.body;
+
+    // Validar campos obrigatórios
+    if (!question) {
+      return res.status(400).json({
+        success: false,
+        error: language === 'en' ? 'Question is required' :
+               language === 'es' ? 'La pregunta es obligatoria' :
+               'A pergunta é obrigatória'
+      });
+    }
+
+    // Usar a chave API diretamente do ambiente
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: language === 'en' ? 'OpenAI API key not configured' :
+               language === 'es' ? 'Clave de API de OpenAI no configurada' :
+               'Chave de API da OpenAI não configurada'
+      });
+    }
+    
+    // Buscar o contexto do prompt se não foi fornecido
+    let contextText = promptContext;
+    
+    if (!contextText) {
+      const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .select('content')
+        .eq('id', promptId)
+        .single();
+
+      if (promptError) {
+        throw promptError;
+      }
+      
+      if (!promptData) {
+        return res.status(404).json({
+          success: false,
+          error: language === 'en' ? 'AI Agent not found' :
+                 language === 'es' ? 'Agente IA no encontrado' :
+                 'Agente IA não encontrado'
+        });
+      }
+      
+      contextText = promptData.content;
+    }
+    
+    // Definir instruções com base no idioma
+    let instructions = '';
+    
+    if (language === 'en') {
+      instructions = `
+You are an expert AI consultant specialized in creating responses for virtual assistants.
+A question was asked that doesn't have an answer in the current virtual assistant's context.
+Your task is to suggest an excellent response to this question that can be added to the assistant's context.
+
+The current virtual assistant context is:
+---
+${contextText}
+---
+
+The question without an answer in the context is: "${question}"
+${content ? `\nThe current (incomplete or inadequate) response is: "${content}"` : ''}
+${notes ? `\nNotes about the question: "${notes}"` : ''}
+
+Create a clear, concise and useful response that:
+1. Directly answers the question
+2. Is consistent with the tone and style of the existing context
+3. Can be added to the virtual assistant's context
+4. Addresses different variations or perspectives of the question
+5. Is well-formatted and structured
+
+IMPORTANT: Format your response with a bold question title followed by the answer.
+For example: "**What are your business hours?** Our operating hours are Monday to Friday from 9 AM to 6 PM."
+
+Make it clear that this is an instruction for the prompt, not a direct response to a user. Format the response
+so it can be easily added to the context document.
+
+Do not include explanations about your reasoning process - just provide the actual response that should be added to the
+virtual assistant's context.`;
+    } else if (language === 'es') {
+      instructions = `
+Eres un consultor experto en IA especializado en crear respuestas para asistentes virtuales.
+Se hizo una pregunta que no tiene respuesta en el contexto actual del asistente virtual.
+Tu tarea es sugerir una excelente respuesta a esta pregunta que pueda agregarse al contexto del asistente.
+
+El contexto actual del asistente virtual es:
+---
+${contextText}
+---
+
+La pregunta sin respuesta en el contexto es: "${question}"
+${content ? `\nLa respuesta actual (incompleta o inadecuada) es: "${content}"` : ''}
+${notes ? `\nNotas sobre la pregunta: "${notes}"` : ''}
+
+Crea una respuesta clara, concisa y útil que:
+1. Responda directamente a la pregunta
+2. Sea consistente con el tono y estilo del contexto existente
+3. Pueda agregarse al contexto del asistente virtual
+4. Aborde diferentes variaciones o perspectivas de la pregunta
+5. Esté bien formateada y estructurada
+
+IMPORTANTE: Formatea tu respuesta con un título en negrita de la pregunta seguido de la respuesta.
+Por ejemplo: "**¿Cuál es su horario comercial?** Nuestro horario de atención es de lunes a viernes de 9 AM a 6 PM."
+
+Deja claro que esto es una instrucción para el prompt, no una respuesta directa a un usuario. Formatea la respuesta
+para que pueda agregarse fácilmente al documento de contexto.
+
+No incluyas explicaciones sobre tu proceso de razonamiento - solo proporciona la respuesta real que debería agregarse al
+contexto del asistente virtual.`;
+    } else {
+      instructions = `
+Você é um consultor especialista em IA especializado em criar respostas para assistentes virtuais.
+Uma pergunta foi feita que não tem resposta no contexto atual do assistente virtual.
+Sua tarefa é sugerir uma excelente resposta para esta pergunta, que possa ser adicionada ao contexto do assistente.
+
+O contexto atual do assistente virtual é:
+---
+${contextText}
+---
+
+A pergunta sem resposta no contexto é: "${question}"
+${content ? `\nA resposta atual (incompleta ou inadequada) é: "${content}"` : ''}
+${notes ? `\nNotas sobre a pergunta: "${notes}"` : ''}
+
+Crie uma resposta clara, concisa e útil que:
+1. Responda diretamente à pergunta
+2. Seja consistente com o tom e estilo do contexto existente
+3. Possa ser adicionada ao contexto do assistente virtual
+4. Contemple diferentes variações ou perspectivas da pergunta
+5. Seja bem formatada e estruturada
+
+IMPORTANTE: Formate sua resposta com um título em negrito da pergunta seguido pela resposta.
+Por exemplo: "**Qual é o horário de funcionamento?** Nosso horário de atendimento é de segunda a sexta, das 9h às 18h."
+
+Deixe claro que isso é uma instrução para o prompt, não uma resposta direta a um usuário. Formate a resposta
+de modo que possa ser facilmente adicionada ao documento de contexto.
+
+Não inclua explicações sobre seu processo de raciocínio - apenas forneça a resposta real que deve ser adicionada ao
+contexto do assistente virtual.`;
+    }
+
+    // Preparar requisição para a API da OpenAI
+    try {
+      const apiRequestBody = {
+        model: "gpt-4o",
+        messages: [
+          { role: 'system', content: instructions },
+          { role: 'user', content: language === 'en' ? 
+            `Please generate an optimal response for the question: "${question}" that can be added to the virtual assistant's context.` :
+            language === 'es' ? 
+            `Por favor, genera una respuesta óptima para la pregunta: "${question}" que pueda agregarse al contexto del asistente virtual.` :
+            `Por favor, gere uma resposta ideal para a pergunta: "${question}" que possa ser adicionada ao contexto do assistente virtual.`
+          }
+        ],
+        temperature: 0.7
+      };
+
+      const response = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        apiRequestBody,
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      // Extrair o texto da resposta
+      const suggestedResponse = response.data.choices[0].message.content;
+
+      return res.json({
+        success: true,
+        data: {
+          suggestedResponse,
+          usage: response.data.usage
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao chamar API da OpenAI:', error.response?.data || error);
+      
+      const errorMessage = language === 'en' ? 'Error generating response suggestion with OpenAI API' :
+                          language === 'es' ? 'Error al generar sugerencia de respuesta con la API de OpenAI' :
+                          'Erro ao gerar sugestão de resposta com a API da OpenAI';
+      
+      return res.status(error.response?.status || 500).json({
+        success: false,
+        error: error.response?.data?.error?.message || errorMessage
+      });
+    }
+  } catch (error) {
+    console.error('Erro ao gerar sugestão de resposta:', error);
+    Sentry.captureException(error);
+    
+    const errorMessage = req.body.language === 'en' ? 'Error generating response suggestion' :
+                         req.body.language === 'es' ? 'Error al generar sugerencia de respuesta' :
+                         'Erro ao gerar sugestão de resposta';
     
     return res.status(500).json({
       success: false,

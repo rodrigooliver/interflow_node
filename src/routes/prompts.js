@@ -9,7 +9,8 @@ import {
   improveTextWithOpenAI,
   uploadImage,
   deleteMedia,
-  generatePromptWithOpenAI
+  generatePromptWithOpenAI,
+  generateResponseUnknownWithOpenAI
 } from '../controllers/prompts.js';
 
 const router = express.Router({ mergeParams: true });
@@ -28,6 +29,7 @@ router.delete('/:id/media/:mediaId', deleteMedia);
 
 // Rota para melhorar texto com OpenAI usando um prompt específico
 router.post('/:id/improve-text', improveTextWithOpenAI);
+router.post('/:id/generate-response-unknown', generateResponseUnknownWithOpenAI);
 router.post('/generate-prompt', generatePromptWithOpenAI);
 
 export default router; 
