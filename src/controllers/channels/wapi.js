@@ -1433,34 +1433,76 @@ export async function handleSenderMessageWApi(channel, messageData) {
         endpoint = '/message/send-document';
 
         // console.log('WAPI - attachment', attachment);
-        
-        // Verificar se o nome do arquivo tem extensão
-        let fileName = attachment.name || 'documento';
-        if (!fileName.includes('.')) {
-          // Tentar extrair extensão do MIME type
-          if (attachment.mime_type) {
-            const mimeExtension = attachment.mime_type.split('/')[1];
-            if (mimeExtension) {
-              fileName = `${fileName}.${mimeExtension}`;
-            } else {
-              // Fallback para extensão genérica
-              fileName = `${fileName}.txt`;
-            }
-          } else {
-            // Fallback para extensão genérica
-            fileName = `${fileName}.txt`;
-          }
-        }
 
         let extension = attachment.extension || null;
+        let url = attachment.url;
+        let fileName = attachment.name || 'file';
+        
+        // Tentar extrair o nome do arquivo da URL se não encontrado
+        if (!attachment.name && attachment.url) {
+          try {
+            // Tentar extrair de parâmetros da URL (ex: site.com?document.pdf)
+            const urlObj = new URL(attachment.url);
+            const pathSegments = urlObj.pathname.split('/');
+            const queryParams = Object.keys(Object.fromEntries(urlObj.searchParams));
+            
+            // Verificar se algum segmento do caminho ou parâmetro da query parece ser um nome de arquivo
+            const fileNamePattern = /\.[a-zA-Z0-9]{2,4}(?:$|\?|&)/;
+            
+            // Primeiro verificar o último segmento do caminho
+            if (pathSegments.length > 0 && fileNamePattern.test(pathSegments[pathSegments.length - 1])) {
+              fileName = pathSegments[pathSegments.length - 1];
+              
+              // Extrair a extensão do nome do arquivo obtido
+              if (fileName.includes('.') && !extension) {
+                extension = fileName.split('.').pop().toLowerCase();
+              }
+            } 
+            // Depois procurar nos parâmetros da query
+            else if (queryParams.length > 0) {
+              for (const param of queryParams) {
+                if (fileNamePattern.test(param)) {
+                  fileName = param;
+                  
+                  // Extrair a extensão do nome do arquivo obtido
+                  if (fileName.includes('.') && !extension) {
+                    extension = fileName.split('.').pop().toLowerCase();
+                  }
+                  break;
+                }
+              }
+            }
+          } catch (error) {
+            console.log('Erro ao extrair nome do arquivo da URL:', error);
+          }
+        }
+        
+        // Se ainda não tiver extensão, tentar extrair de outras fontes
         if (!extension) {
           if (fileName.includes('.')) {
             extension = fileName.split('.').pop().toLowerCase();
+          } else if (url.includes('.')) {
+            extension = url.split('.').pop().toLowerCase();
+          } else if (attachment.mime_type) {
+            const mimeExtension = attachment.mime_type.split('/')[1];
+            if (mimeExtension) {
+              extension = mimeExtension;
+            } else {
+              extension = 'txt';
+            }
           } else {
             extension = 'txt';
           }
         }
         
+        // Verificar se o nome do arquivo tem extensão
+        if (!fileName.includes('.')) {
+          // Adicionar extensão ao nome do arquivo
+          if(extension) {
+            fileName = `${fileName}.${extension}`;
+          }
+        }
+
         body = {
           phoneNumber: messageData.to,
           document: attachment.url,
@@ -1515,6 +1557,7 @@ export async function handleSenderMessageWApi(channel, messageData) {
         phoneNumber: messageData.to,
         text: messageData.content,
         ...(messageData.responseMessageId ? {
+          // messageId: messageData.responseMessageId,
           messageId: messageData.responseMessageId,
           message: {
             text: messageData.content

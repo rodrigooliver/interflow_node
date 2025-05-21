@@ -5,6 +5,7 @@ import { createMessageToSend, sendSystemMessage } from '../controllers/chat/mess
 import crypto from 'crypto';
 import { decrypt } from '../utils/crypto.js';
 import { processAgentIA } from './agent-ia.js';
+import axios from 'axios';
 
 // Objeto global para armazenar os timeouts ativos por sessão
 const sessionTimeouts = {};
@@ -95,7 +96,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           variables,
           debounce_time
         ),
-        customer:customers!flow_sessions_customer_id_fkey (*),
+        customer:customers!flow_sessions_customer_id_fkey (
+          *,
+          contacts:customer_contacts(*),
+          field_values:customer_field_values(
+            id,
+            field_definition_id,
+            value,
+            updated_at,
+            field_definition:custom_fields_definition(*)
+          ),
+          tags:customer_tags(
+            tag_id,
+            tags:tags(*)
+          )
+        ),
         chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .eq('customer_id', customer.id)
@@ -165,7 +180,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           variables,
           debounce_time
         ),
-        customer:customers!flow_sessions_customer_id_fkey (*),
+        customer:customers!flow_sessions_customer_id_fkey (
+          *,
+          contacts:customer_contacts(*),
+          field_values:customer_field_values(
+            id,
+            field_definition_id,
+            value,
+            updated_at,
+            field_definition:custom_fields_definition(*)
+          ),
+          tags:customer_tags(
+            tag_id,
+            tags:tags(*)
+          )
+        ),
         chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .single();
@@ -255,7 +284,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     
     switch (node.type) {
       case 'text':
-        const processedText = replaceVariables(node.data.text, updatedSession.variables);
+        const processedText = replaceVariables(node.data.text, updatedSession);
         // console.log('processedText', processedText);
         
         // Função para identificar o tipo de mídia baseado na URL
@@ -471,25 +500,25 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       case 'audio':
         // Processa a URL do áudio para substituir variáveis, se houver
-        const processedAudioUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        const processedAudioUrl = replaceVariables(node.data.mediaUrl, updatedSession);
         await sendMessage(null, {attachments: [{url: processedAudioUrl, type: 'audio'}]}, updatedSession.id);
         break;
 
       case 'image':
         // Processa a URL da imagem para substituir variáveis, se houver
-        const processedImageUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        const processedImageUrl = replaceVariables(node.data.mediaUrl, updatedSession);
         await sendMessage(null, {attachments: [{url: processedImageUrl, type: 'image'}]}, updatedSession.id);
         break;
 
       case 'video':
         // Processa a URL do vídeo para substituir variáveis, se houver
-        const processedVideoUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        const processedVideoUrl = replaceVariables(node.data.mediaUrl, updatedSession);
         await sendMessage(null, {attachments: [{url: processedVideoUrl, type: 'video'}]}, updatedSession.id);
         break;
 
       case 'document':
         // Processa a URL do documento para substituir variáveis, se houver
-        const processedDocUrl = replaceVariables(node.data.mediaUrl, updatedSession.variables);
+        const processedDocUrl = replaceVariables(node.data.mediaUrl, updatedSession);
         await sendMessage(null, {attachments: [{url: processedDocUrl, type: 'document'}]}, updatedSession.id);
         break;
 
@@ -512,6 +541,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         
       case 'update_customer':
         updatedSession = await updateCustomer(node.data, updatedSession);
+        break;
+
+      case 'request':
+        updatedSession = await processRequestNode(node.data, updatedSession);
         break;
     }
 
@@ -613,7 +646,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     // Processar variáveis no valor de comparação, se for string
     let compareValue = value;
     if (typeof value === 'string') {
-      compareValue = replaceVariables(value, session.variables);
+      compareValue = replaceVariables(value, session);
     }
 
     // Avaliar baseado no operador
@@ -970,7 +1003,21 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           edges,
           variables
         ),
-        customer:customers!flow_sessions_customer_id_fkey (*),
+        customer:customers!flow_sessions_customer_id_fkey (
+          *,
+          contacts:customer_contacts(*),
+          field_values:customer_field_values(
+            id,
+            field_definition_id,
+            value,
+            updated_at,
+            field_definition:custom_fields_definition(*)
+          ),
+          tags:customer_tags(
+            tag_id,
+            tags:tags(*)
+          )
+        ),
         chat:chats!flow_sessions_chat_id_fkey (*)
       `)
       .single();
@@ -1318,7 +1365,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       
       if (prompt) {
         // Substituir variáveis no prompt
-        const processedContent = replaceVariables(prompt.content, session.variables);
+        const processedContent = replaceVariables(prompt.content, session);
         messages.push({
           role: 'system',
           content: processedContent
@@ -1326,7 +1373,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
     } else if (config.promptType === 'custom' && config.customPrompt) {
       // Substituir variáveis no prompt personalizado
-      const processedContent = replaceVariables(config.customPrompt, session.variables);
+      const processedContent = replaceVariables(config.customPrompt, session);
       messages.push({
         role: 'system',
         content: processedContent
@@ -1441,7 +1488,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
 
       // Processa o valor da variável, substituindo quaisquer variáveis existentes
-      const processedValue = replaceVariables(data.variable.value, session.variables);
+      const processedValue = replaceVariables(data.variable.value, session);
 
       // Verifica se session.variables é um array ou um objeto e converte para array se necessário
       let variables = [];
@@ -1520,7 +1567,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       let updateCustomer = {};
 
       if(field === 'rating') { // Atualiza a avaliação do chat
-        const rating = Number(replaceVariables(value, session.variables)); // Substitui variáveis no valor
+        const rating = Number(replaceVariables(value, session)); // Substitui variáveis no valor
         if (!rating) {
           const error = new Error('Avaliação não especificada');
           Sentry.captureException(error);
@@ -1535,7 +1582,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           rating: rating
         };
       } else if(field === 'feedback') { // Atualiza o feedback do chat
-        const feedback = replaceVariables(value, session.variables);
+        const feedback = replaceVariables(value, session);
         if(!feedback) {
           const error = new Error('Feedback não especificado');
           Sentry.captureException(error);
@@ -1545,7 +1592,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           feedback: feedback
         };
       } else if(field === 'funnel') { // Atualiza o funil do chat
-        const funnel = replaceVariables(value, session.variables);
+        const funnel = replaceVariables(value, session);
         if(!funnel) {
           const error = new Error('Funnel não especificado');
           Sentry.captureException(error);
@@ -1555,7 +1602,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           stage_id: stageId,
         };
       } else if(field === 'team') { // Atualiza o time do chat
-        const team = replaceVariables(value, session.variables);
+        const team = replaceVariables(value, session);
         if(!team) {
           const error = new Error('Time não especificado');
           Sentry.captureException(error);
@@ -1565,7 +1612,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           team_id: teamId
         };
       } else if(field === 'user') { // Atualiza o usuário do chat
-        const user = replaceVariables(value, session.variables);
+        const user = replaceVariables(value, session);
         if(!user) {
           const error = new Error('Usuário não especificado');
           Sentry.captureException(error);
@@ -1709,28 +1756,123 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
   /**
    * Substitui as variáveis no formato {{nome_variavel}} pelo valor correspondente
+   * Também permite acessar propriedades de customer e chat como {{customer.name}} ou {{chat.title}}
    * @param {string} text - Texto com possíveis variáveis para substituir
-   * @param {Object|Array} variables - Variáveis disponíveis (pode ser um objeto ou um array)
+   * @param {Object} session - Sessão contendo as variáveis e objetos customer e chat
    * @returns {string} - Texto com as variáveis substituídas
    */
-  const replaceVariables = (text, variables) => {
-    if (!text || !variables) return text;
+  const replaceVariables = (text, session) => {
+    if (!text || !session) return text;
+    
+    const variables = session.variables;
+    
+    if (!variables && !session.customer && !session.chat) return text;
+    
+    // Pré-processamento do customer para facilitar acesso a contacts e custom fields
+    let processedCustomer = null;
+    if (session.customer) {
+      processedCustomer = { ...session.customer };
+      delete processedCustomer.contacts;
+      delete processedCustomer.field_values;
+      // delete processedCustomer.email;
+      // delete processedCustomer.whatsapp;
+      // delete processedCustomer.instagram_id;
+      
+      // Reorganizar contacts para acesso por tipo
+      if (Array.isArray(session.customer.contacts)) {
+        session.customer.contacts.forEach(contact => {
+          if (contact.type && contact.value) {
+            // Adiciona o contato diretamente como propriedade do customer
+            // Por exemplo, customer.email, customer.whatsapp, etc.
+            processedCustomer[contact.type] = contact.value;
+            
+            // Se o contato tiver um label, cria também uma propriedade baseada no label
+            if (contact.label) {
+              const labelKey = contact.label
+                .toLowerCase()
+                .replace(/\s+/g, '_')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, ''); // Remover acentos
+              
+              // processedCustomer[`contact_${labelKey}`] = contact.value;
+            }
+          }
+        });
+      }
+      
+      // Reorganizar field_values para acesso por slug
+      if (Array.isArray(session.customer.field_values)) {
+        session.customer.field_values.forEach(fieldValue => {
+          if (fieldValue.field_definition && fieldValue.field_definition.slug) {
+            // Adiciona o valor do campo diretamente como propriedade do customer
+            // Por exemplo, customer.origem, customer.cargo, etc.
+            processedCustomer[fieldValue.field_definition.slug] = fieldValue.value;
+            
+            // Adiciona também com prefixo field_ para evitar conflitos
+            // processedCustomer[`field_${fieldValue.field_definition.slug}`] = fieldValue.value;
+          }
+        });
+      }
+    }
+    // console.log('processedCustomer', processedCustomer);
     
     return text.replace(/\{\{([^}]+)\}\}/g, (match, variableName) => {
       const trimmedName = variableName.trim();
       let value;
       
-      // Verifica se variables é um array ou um objeto
-      if (Array.isArray(variables)) {
-        // Procura a variável no array de variáveis
-        const variable = variables.find(v => v.name === trimmedName);
-        value = variable ? variable.value : undefined;
-      } else if (typeof variables === 'object') {
-        // Acessa diretamente a propriedade do objeto
-        value = variables[trimmedName];
+      // Verifica primeiro na lista de variáveis (como antes)
+      if (variables) {
+        if (Array.isArray(variables)) {
+          // Procura a variável no array de variáveis
+          const variable = variables.find(v => v.name === trimmedName);
+          if (variable) {
+            return variable.value !== undefined ? variable.value : match;
+          }
+        } else if (typeof variables === 'object') {
+          // Acessa diretamente a propriedade do objeto
+          value = variables[trimmedName];
+          if (value !== undefined) {
+            return value;
+          }
+        }
       }
       
-      // Retorna o valor da variável ou mantém o placeholder se não encontrar
+      // Se não encontrou na lista de variáveis, verifica se é acesso a propriedades de customer ou chat
+      if (trimmedName.includes('.')) {
+        const parts = trimmedName.split('.');
+        const objectType = parts[0]; // 'customer' ou 'chat'
+        
+        // Remove o tipo de objeto do array de partes
+        parts.shift();
+        
+        if (objectType === 'customer' && processedCustomer) {
+          // Tenta acessar a propriedade do customer pré-processado
+          try {
+            let currentObj = processedCustomer;
+            for (const part of parts) {
+              currentObj = currentObj[part];
+              if (currentObj === undefined) break;
+            }
+            value = currentObj;
+          } catch (error) {
+            console.error(`Erro ao acessar propriedade ${parts.join('.')} de customer:`, error);
+          }
+        } else if (objectType === 'chat' && session.chat) {
+          // Tenta acessar a propriedade do chat
+          try {
+            let currentObj = session.chat;
+            for (const part of parts) {
+              currentObj = currentObj[part];
+              if (currentObj === undefined) break;
+            }
+            value = currentObj;
+          } catch (error) {
+            console.error(`Erro ao acessar propriedade ${parts.join('.')} de chat:`, error);
+          }
+        }
+      }
+      
+      // Retorna o valor encontrado ou mantém o placeholder se não encontrar
       return value !== undefined ? value : match;
     });
   };
@@ -1862,6 +2004,279 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     // return parts.filter(part => part.content && part.content.length > 0);
   };
 
+  /**
+   * Processa um nó do tipo requisição HTTP
+   * @param {Object} data - Dados do nó de requisição HTTP
+   * @param {Object} session - Sessão atual
+   * @returns {Object} - Sessão atualizada com as variáveis da resposta
+   */
+  const processRequestNode = async (data, session) => {
+    try {
+      if (!data.request) {
+        const error = new Error('Configuração da requisição HTTP não encontrada');
+        Sentry.captureException(error);
+        throw error;
+      }
+
+      const requestConfig = data.request;
+      
+      // Substituir variáveis em todos os campos da requisição
+      let url = replaceVariables(requestConfig.url, session);
+      
+      // Remover parâmetros da URL se existirem
+      let cleanUrl = url;
+      if (url.includes('?')) {
+        cleanUrl = url.split('?')[0];
+      }
+      
+      // Processar headers
+      const headers = {};
+      for (const header of requestConfig.headers || []) {
+        if (header.key && header.value) {
+          headers[header.key] = replaceVariables(header.value, session);
+        }
+      }
+      
+      // Configurar a requisição para o axios
+      const axiosConfig = {
+        method: requestConfig.method || 'GET',
+        url: cleanUrl,
+        headers: headers,
+        timeout: 15000 // 15 segundos por padrão
+      };
+      
+      // Adicionar parâmetros de query se fornecidos
+      if (requestConfig.params && Array.isArray(requestConfig.params) && requestConfig.params.length > 0) {
+        axiosConfig.params = {};
+        for (const param of requestConfig.params) {
+          if (param.key && param.value) {
+            axiosConfig.params[param.key] = replaceVariables(param.value, session);
+          }
+        }
+      }
+      
+      // Processar corpo da requisição, se houver
+      if (requestConfig.method !== 'GET' && requestConfig.bodyType !== 'none' && requestConfig.body) {
+        const processedBody = replaceVariables(requestConfig.body, session);
+        
+        if (requestConfig.bodyType === 'json') {
+          try {
+            // Verificar se é um JSON válido
+            axiosConfig.data = JSON.parse(processedBody);
+          } catch (jsonError) {
+            const error = new Error(`JSON inválido no corpo da requisição: ${jsonError.message}`);
+            Sentry.captureException(error);
+            throw error;
+          }
+        } else {
+          // Para outros tipos de body (form, text, etc.)
+          axiosConfig.data = processedBody;
+        }
+
+        // Configurar content-type baseado no bodyType
+        if (requestConfig.bodyType === 'json') {
+          axiosConfig.headers['Content-Type'] = 'application/json';
+        } else if (requestConfig.bodyType === 'form') {
+          axiosConfig.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        }
+      }
+      
+      // Executar a requisição HTTP usando axios
+      let response;
+      try {
+        // Fazer a requisição usando axios
+        response = await axios(axiosConfig);
+        
+        // Parsear a resposta como JSON
+        const responseData = response.data;
+        // console.log(`[processRequestNode] Resposta recebida:`, responseData);
+        
+        // Processar mapeamentos de variáveis, se houver
+        if (requestConfig.variableMappings && requestConfig.variableMappings.length > 0) {
+          // console.log(`[processRequestNode] Processando ${requestConfig.variableMappings.length} mapeamentos de variáveis`);
+          
+          // Verificar se session.variables é um array ou um objeto e converte para array se necessário
+          let variables = [];
+          
+          if (Array.isArray(session.variables)) {
+            variables = [...session.variables];
+          } else if (session.variables && typeof session.variables === 'object') {
+            // Converte de objeto para array
+            variables = Object.entries(session.variables).map(([name, value]) => ({
+              id: crypto.randomUUID(),
+              name,
+              value
+            }));
+          }
+          
+          // Processar cada mapeamento de variável
+          for (const mapping of requestConfig.variableMappings) {
+            if (mapping.variable && mapping.jsonPath) {
+              // Extrair o valor do jsonPath da resposta
+              const value = extractValueFromPath(responseData, mapping.jsonPath);
+              
+              if (value !== undefined) {
+                // console.log(`[processRequestNode] Valor extraído para ${mapping.variable}:`, value);
+                
+                // Verificar se a variável já existe
+                const variableIndex = variables.findIndex(v => v.name === mapping.variable);
+                
+                if (variableIndex >= 0) {
+                  // Atualizar a variável existente
+                  variables[variableIndex] = {
+                    ...variables[variableIndex],
+                    value: value
+                  };
+                } else {
+                  // Criar uma nova variável
+                  variables.push({
+                    id: crypto.randomUUID(),
+                    name: mapping.variable,
+                    value: value
+                  });
+                }
+              } else {
+                // console.log(`[processRequestNode] Caminho ${mapping.jsonPath} não encontrado na resposta`);
+              }
+            }
+          }
+          
+          // Atualizar as variáveis na sessão
+          await updateSession(session.id, { variables });
+          
+          // Criar uma cópia atualizada da sessão com as novas variáveis
+          const updatedSession = {
+            ...session,
+            variables
+          };
+          
+          return updatedSession;
+        }
+        
+        return session;
+      } catch (error) {
+        console.error(`[processRequestNode] Erro ao executar requisição:`, error);
+        
+        // Tratamento detalhado de erro
+        if (axios.isAxiosError(error)) {
+          if (error.response) {
+            // Servidor respondeu com status de erro
+            throw new Error(`Erro ${error.response.status}: ${error.response.statusText || 'Erro desconhecido'}`);
+          } else if (error.request) {
+            // Requisição foi feita mas não houve resposta
+            throw new Error('Não foi recebida resposta do servidor remoto');
+          } else {
+            // Erro na configuração da requisição
+            throw new Error(`Erro na configuração da requisição: ${error.message}`);
+          }
+        }
+        
+        Sentry.captureException(error);
+        throw error;
+      }
+    } catch (error) {
+      console.error(`[processRequestNode] Erro:`, error);
+      Sentry.captureException(error);
+      throw error;
+    }
+  };
+
+  /**
+   * Extrai um valor de um objeto usando um caminho tipo JSONPath
+   * @param {Object} obj - Objeto de onde extrair o valor
+   * @param {string} path - Caminho para o valor (ex: "data[0].customer")
+   * @returns {any} - Valor extraído ou undefined se não encontrado
+   */
+  const extractValueFromPath = (obj, path) => {
+    if (!obj || !path) return undefined;
+    
+    // Dividir o caminho por pontos, mas preservar notação de array
+    const segments = [];
+    let currentSegment = '';
+    let inBrackets = false;
+    
+    for (let i = 0; i < path.length; i++) {
+      const char = path[i];
+      
+      if (char === '.' && !inBrackets) {
+        if (currentSegment) {
+          segments.push(currentSegment);
+          currentSegment = '';
+        }
+      } else if (char === '[') {
+        if (currentSegment) {
+          segments.push(currentSegment);
+          currentSegment = '';
+        }
+        inBrackets = true;
+        currentSegment += char;
+      } else if (char === ']') {
+        currentSegment += char;
+        inBrackets = false;
+      } else {
+        currentSegment += char;
+      }
+    }
+    
+    if (currentSegment) {
+      segments.push(currentSegment);
+    }
+    
+    // Navegar pelo objeto usando os segmentos do caminho
+    let current = obj;
+    
+    for (let segment of segments) {
+      // Verificar se o segmento é um índice de array
+      if (segment.match(/\[\d+\]$/)) {
+        // Extrair o nome da propriedade e o índice
+        const match = segment.match(/^([^\[]+)\[(\d+)\]$/);
+        if (match) {
+          const propName = match[1];
+          const index = parseInt(match[2], 10);
+          
+          // Obter a propriedade do objeto atual
+          current = current[propName];
+          
+          // Verificar se é um array válido
+          if (!Array.isArray(current) || current.length <= index) {
+            return undefined;
+          }
+          
+          // Obter o elemento do array pelo índice
+          current = current[index];
+        } else {
+          // Formato diferente, apenas para índice direto [0]
+          const indexMatch = segment.match(/\[(\d+)\]/);
+          if (indexMatch) {
+            const index = parseInt(indexMatch[1], 10);
+            
+            // Verificar se é um array válido
+            if (!Array.isArray(current) || current.length <= index) {
+              return undefined;
+            }
+            
+            // Obter o elemento do array pelo índice
+            current = current[index];
+          }
+        }
+      } else {
+        // Propriedade normal do objeto
+        if (current === undefined || current === null || typeof current !== 'object') {
+          return undefined;
+        }
+        
+        current = current[segment];
+      }
+      
+      // Se current for undefined ou null, não podemos continuar
+      if (current === undefined || current === null) {
+        return undefined;
+      }
+    }
+    
+    return current;
+  };
+
   return {
     processMessage,
     getActiveFlow,
@@ -1875,6 +2290,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     sendMessage,
     processDelay,
     processOpenAI,
+    processRequestNode,
+    extractValueFromPath,
     updateCustomer,
     checkTriggers,
     findActiveChat,
