@@ -504,19 +504,15 @@ const createNameToIdMap = (items, nameKey = 'name', idKey = 'id') => {
  * Processa chamadas para ferramentas do sistema
  * @param {string} tool - Ferramenta do sistema  a ser processada
  * @param {Object} args - Argumentos da chamada
+ * @param {Object} actionsSystem - Ações disponíveis para a organização
  * @param {Object} session - Sessão atual
- * @param {Function} processUpdateChatAction - Função para processar ação de atualização de chat
- * @param {Function} processStartFlowAction - Função para processar ação de início de fluxo
  * @returns {Object|Array} - Resultado(s) da operação
  */
 export const handleSystemToolCall = async (
   tool, 
   args, 
   actionsSystem,
-  session, 
-  { 
-    processStartFlowAction 
-  }
+  session
 ) => {
   try {
     // console.log(`[handleSystemToolCall] Processando chamada para ferramenta do sistema: ${tool.name}`);
@@ -916,69 +912,6 @@ export const handleSystemToolCall = async (
           message: "Customer name updated successfully.",
           customer: customer
         };
-      }
-      
-      
-      case 'start_flow': {
-        // Verificar se flow_name foi fornecido (obrigatório)
-        if (!args.flow_name) {
-          return {
-            status: "error",
-            message: "Flow name is required."
-          };
-        }
-        
-        // Mapear nome do fluxo para ID
-        // Verificar se existe no cache
-        let flowMap = getCachedMap(session.organization_id, 'flows');
-        
-        // Se não existir no cache, buscar e armazenar
-        if (!flowMap) {
-          const { data: flows } = await supabase
-            .from('flows')
-            .select('id, name')
-            .eq('organization_id', session.organization_id)
-            .eq('is_active', true);
-          
-          if (!flows || flows.length === 0) {
-            console.warn(`[handleSystemToolCall] Nenhum fluxo encontrado para a organização ${session.organization_id}`);
-            return {
-              status: "error",
-              message: "No active flows found for this organization.",
-            };
-          }
-          
-          // Criar e armazenar o mapa no cache
-          flowMap = createNameToIdMap(flows);
-          setCachedMap(session.organization_id, 'flows', flowMap);
-          console.log(`[handleSystemToolCall] Cache de fluxos criado para organização ${session.organization_id}`);
-        } else {
-          console.log(`[handleSystemToolCall] Usando cache de fluxos para organização ${session.organization_id}`);
-        }
-        
-        const flowName = args.flow_name.toLowerCase();
-        
-        if (flowMap[flowName]) {
-          args.flow_id = flowMap[flowName];
-          console.log(`[handleSystemToolCall] Mapeado nome do fluxo "${args.flow_name}" para ID: ${args.flow_id}`);
-        } else {
-          console.warn(`[handleSystemToolCall] Fluxo "${args.flow_name}" não encontrado`);
-          return {
-            status: "error",
-            message: `Flow "${args.flow_name}" not found. Please choose a valid flow.`,
-          };
-        }
-        
-        // Criar uma ação para processamento pelo processStartFlowAction
-        const action = {
-          type: 'start_flow',
-          config: {
-            flowId: args.flow_id
-          }
-        };
-        
-        // Processar a ação
-        return await processStartFlowAction(action, args, session);
       }
       
       case 'transferToTeam': {

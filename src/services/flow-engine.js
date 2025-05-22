@@ -247,8 +247,16 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       while (nextNode && nextNode.type !== 'input') {
         // Executa o nó e obtém a sessão atualizada
+        // console.log(`[continueFlow] Proximo nó a ser executado antes de executar o nó:`, nextNode);
         updatedSession = await executeNode(updatedSession, nextNode);
-        nextNode = await getNextNode(updatedSession.flow, nextNode, message, updatedSession);
+        if (updatedSession && updatedSession.go_to_node && updatedSession.target_node) {
+          nextNode = updatedSession.target_node;
+          delete updatedSession.go_to_node;
+          delete updatedSession.target_node;
+        } else {
+          nextNode = await getNextNode(updatedSession.flow, nextNode, message, updatedSession);
+        }
+        
       }
 
       
@@ -545,6 +553,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
 
       case 'request':
         updatedSession = await processRequestNode(node.data, updatedSession);
+        break;
+
+      case 'jump_to':
+        updatedSession = await processJumpToNode(node.data, updatedSession);  
         break;
     }
 
@@ -1768,6 +1780,13 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     
     if (!variables && !session.customer && !session.chat) return text;
     
+    // Verificar se há variáveis URL-encoded no texto (%7B%7B...%7D%7D)
+    if (text.includes('%7B%7B')) {
+      text = text.replace(/%7B%7B([^}]+)%7D%7D/g, (match, varName) => {
+        return `{{${varName}}}`;
+      });
+    }
+    
     // Pré-processamento do customer para facilitar acesso a contacts e custom fields
     let processedCustomer = null;
     if (session.customer) {
@@ -2021,13 +2040,20 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       const requestConfig = data.request;
       
       // Substituir variáveis em todos os campos da requisição
-      let url = replaceVariables(requestConfig.url, session);
-      
-      // Remover parâmetros da URL se existirem
-      let cleanUrl = url;
-      if (url.includes('?')) {
-        cleanUrl = url.split('?')[0];
+      // Primeiro decodificar URL-encoded variáveis (%7B%7B...%7D%7D para {{...}})
+      let url = requestConfig.url;
+      // Verificar se a URL contém variáveis URL-encoded
+      if (url && url.includes('%7B%7B')) {
+        // Substituir variáveis codificadas antes da substituição normal
+        url = url.replace(/%7B%7B([^}]+)%7D%7D/g, (match, varName) => {
+          return `{{${varName}}}`;
+        });
       }
+      // Agora substituir as variáveis normais
+      url = replaceVariables(url, session);
+      
+      // Não vamos mais separar a URL dos parâmetros, usaremos a URL completa
+      // incluindo os parâmetros de query que já estiverem presentes
       
       // Processar headers
       const headers = {};
@@ -2040,17 +2066,18 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       // Configurar a requisição para o axios
       const axiosConfig = {
         method: requestConfig.method || 'GET',
-        url: cleanUrl,
+        url: url, // Usar a URL completa
         headers: headers,
         timeout: 15000 // 15 segundos por padrão
       };
       
-      // Adicionar parâmetros de query se fornecidos
+      // Adicionar parâmetros de query adicionais se fornecidos
+      // Estes serão mesclados com quaisquer parâmetros já presentes na URL
       if (requestConfig.params && Array.isArray(requestConfig.params) && requestConfig.params.length > 0) {
         axiosConfig.params = {};
         for (const param of requestConfig.params) {
           if (param.key && param.value) {
-            axiosConfig.params[param.key] = replaceVariables(param.value, session);
+            // axiosConfig.params[param.key] = replaceVariables(param.value, session);
           }
         }
       }
@@ -2275,6 +2302,41 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     }
     
     return current;
+  };
+
+  /**
+   * Processa um nó do tipo jump_to, encontrando o nó alvo pelo ID
+   * @param {Object} data - Dados do nó jump_to
+   * @param {Object} session - Sessão atual
+   * @returns {Object} - Sessão atualizada com as flags de redirecionamento
+   */
+  const processJumpToNode = async (data, session) => {
+    try {
+      if (!data.targetNodeId) {
+        const error = new Error('ID do nó alvo não especificado para o nó jump_to');
+        Sentry.captureException(error);
+        throw error;
+      }
+
+      // Buscar o nó alvo na lista de nós do fluxo
+      const targetNode = session.flow.nodes.find(node => node.id === data.targetNodeId);
+      
+      if (!targetNode) {
+        const error = new Error(`Nó alvo com ID ${data.targetNodeId} não encontrado no fluxo`);
+        Sentry.captureException(error);
+        throw error;
+      }
+      
+      // Configurar as flags de redirecionamento
+      return {
+        ...session,
+        go_to_node: true,
+        target_node: targetNode
+      };
+    } catch (error) {
+      Sentry.captureException(error);
+      throw error;
+    }
   };
 
   return {

@@ -238,20 +238,28 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
           if (customTools.includes(tool) && prompt.destinations && prompt.destinations[tool.name]) {
             const actions = prompt.destinations[tool.name];
             result = await handleToolActions(actions, args, session, tool);
-          } 
-          // Para ferramentas do sistema, usar handlers específicos
-          else if (systemTools.includes(tool)) {
+
+            // console.log(`[processAgentIA] Resultado da ferramenta ${tool.name}:`, result);
+
+            //Fazer um loop para verificar se o resultado é de uma ação go_to_flow_node
+            for (const actionResult of result) {
+              if (actionResult && actionResult.go_to_node && actionResult.target_node) {
+                // console.log(`[processAgentIA] Redirecionando para o nó ${actionResult.target_node.id}`);
+                // Retornar informações para que o flow-engine execute o nó de destino
+                return {
+                  ...session,
+                  target_node: actionResult.target_node,
+                  go_to_node: true
+                };
+              }
+            }
+          } else if (systemTools.includes(tool)) { // Para ferramentas do sistema, usar handlers específicos
             // console.log(`[processAgentIA] Actions do sistema:`, prompt.actions);
             result = await handleSystemToolCall(
               tool, 
               args, 
               prompt.actions,
-              session, 
-              {
-                processUpdateCustomerAction,
-                processUpdateChatAction,
-                processStartFlowAction
-              }
+              session
             );
 
             // Verificar se o resultado é de uma ação unknownResponse
@@ -951,8 +959,8 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
     return null;
   }
 
-  console.log('[handleToolActions] Actions:', actions);
-  console.log('[handleToolActions] Args:', args);
+  // console.log('[handleToolActions] Actions:', actions);
+  // console.log('[handleToolActions] Args:', args);
 
   const allResults = [];
 
@@ -1019,8 +1027,8 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
           result = await processUpdateChatAction(action, args, session);
           break;
           
-        case 'start_flow':
-          result = await processStartFlowAction(action, args, session);
+        case 'go_to_flow_node':
+          result = await processGoToFlowNodeAction(action, args, session);
           break;
           
         default:
@@ -1038,17 +1046,6 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
         };
         
         allResults.push(resultWithContext);
-        
-        // Se a ação tem o sinalizador sendMessage ativado, enviar uma mensagem ao usuário
-        // if (action.sendMessage && sendMessage && result.message) {
-        //   if (result.status === "success") {
-        //     await sendMessage(`✅ ${result.message}`);
-        //   } else if (result.status === "error") {
-        //     await sendMessage(`❌ ${result.message}`);
-        //   } else if (result.status === "info") {
-        //     await sendMessage(`ℹ️ ${result.message}`);
-        //   }
-        // }
       }
     } catch (error) {
       console.error(`[handleToolActions] Erro ao executar ação ${action.type}:`, error);
@@ -1062,11 +1059,6 @@ const handleToolActions = async (actions, args, session, tool, sendMessage) => {
         action_name: action.name || action.type,
         tool_name: tool.name
       });
-      
-      // Enviar mensagem de erro se a ação tiver o sinalizador sendMessage ativado
-      // if (action.sendMessage && sendMessage) {
-      //   await sendMessage(`❌ Error executing action: ${error.message}`);
-      // }
     }
   }
   
@@ -3338,120 +3330,73 @@ const processUpdateChatAction = async (action, args, session) => {
 };
 
 /**
- * Processa uma ação para iniciar um novo fluxo
+ * Processa uma ação para ir para um nó específico do fluxo
  * @param {Object} action - Configuração da ação
  * @param {Object} args - Argumentos da ferramenta
  * @param {Object} session - Sessão atual
- * @returns {Object} - Resultado da criação do fluxo
+ * @returns {Object} - Resultado com o nó de destino para execução
  */
-const processStartFlowAction = async (action, args, session) => {
+const processGoToFlowNodeAction = async (action, args, session) => {
   try {
     const config = action.config || {};
-    let flowId = null;
+    let nodeId = null;
     
-    // Determinar o ID do fluxo a ser iniciado (direto ou via mapeamento)
-    if (config.flowId) {
-      flowId = config.flowId;
-    } else if (config.flowMapping && config.flowMapping.variable && config.flowMapping.mapping) {
-      const variableValue = args[config.flowMapping.variable];
-      if (variableValue && config.flowMapping.mapping[variableValue]) {
-        flowId = config.flowMapping.mapping[variableValue];
+    // Determinar o ID do nó (direto ou via mapeamento)
+    if (config.nodeId) {
+      nodeId = config.nodeId;
+    } else if (config.nodeMapping && config.nodeMapping.variable && config.nodeMapping.mapping) {
+      const variableValue = args[config.nodeMapping.variable];
+      if (variableValue && config.nodeMapping.mapping[variableValue]) {
+        nodeId = config.nodeMapping.mapping[variableValue];
       }
     }
     
-    if (!flowId) {
+    if (!nodeId) {
       return {
         status: "error",
-        message: "No flow specified to start."
+        message: "No target node specified."
       };
     }
     
-    // Verificar se o fluxo existe e está ativo
-    const { data: flow, error: flowError } = await supabase
-      .from('flows')
-      .select('*')
-      .eq('id', flowId)
-      .eq('is_active', true)
-      .single();
-    
-    if (flowError || !flow) {
-      if (flowError) {
-        console.error(`[processStartFlowAction] Erro ao buscar fluxo: ${flowError.message}`);
-      } else {
-        console.error(`[processStartFlowAction] Fluxo não encontrado com ID ${flowId}`);
-      }
+    // Verificar se a sessão tem um fluxo associado
+    if (!session.flow || !session.flow.nodes) {
+      console.error(`[processGoToFlowNodeAction] Sessão não tem um fluxo válido associado`);
       return {
-        success: false,
-        instructions: `Please check the flow configuration. The flow with ID ${flowId} was not found or is not active.`
+        status: "error",
+        message: "No valid flow found in the current session."
       };
     }
     
-    // Iniciar um novo fluxo
-    console.log(`[processStartFlowAction] Iniciando fluxo ${flowId} para o cliente ${session.customer_id} no chat ${session.chat_id}`);
-    
-    // Encontrar o nó inicial (geralmente do tipo 'start')
-    const startNode = flow.nodes.find(node => node.id === 'start-node');
-    if (!startNode) {
-      console.error(`[processStartFlowAction] Fluxo ${flowId} não tem nó inicial válido`);
+    // Verificar se o nó existe no fluxo
+    const targetNode = session.flow.nodes.find(node => node.id === nodeId);
+    if (!targetNode) {
+      console.error(`[processGoToFlowNodeAction] Nó com ID ${nodeId} não encontrado no fluxo ${session.flow.id}`);
       return {
-        success: false,
-        instructions: `Please check the flow configuration. The flow ${flowId} does not have a valid start node.`
+        status: "error",
+        message: `Target node ${nodeId} not found in the flow.`
       };
     }
     
-    // Garantir que flow.variables seja um array
-    const defaultVariables = Array.isArray(flow.variables) 
-      ? [...flow.variables] 
-      : Object.entries(flow.variables || {}).map(([name, value]) => ({
-          id: crypto.randomUUID(),
-          name,
-          value
-        }));
-    
-    // Criar uma nova sessão de fluxo
-    const { data: newSession, error } = await supabase
-      .from('flow_sessions')
-      .insert({
-        bot_id: flow.id,
-        chat_id: session.chat_id,
-        customer_id: session.customer_id,
-        organization_id: flow.organization_id,
-        status: 'active',
-        current_node_id: startNode.id,
-        variables: defaultVariables,
-        message_history: []
-      })
-      .select()
-      .single();
-    
-    if (error) {
-      throw error;
-    }
-    
-    console.log(`[processStartFlowAction] Fluxo ${flowId} iniciado com sucesso, sessão ID: ${newSession.id}`);
-    
-    // Buscar informações do cliente
-    const { data: customer } = await supabase
-      .from('customers')
-      .select('name, email, phone')
-      .eq('id', session.customer_id)
-      .single();
+    console.log(`[processGoToFlowNodeAction] Redirecionando para o nó ${nodeId}`);
     
     return {
       status: "success",
-      message: `New automated flow started: ${flow.name || 'Automated Flow'}.`,
+      message: `Flow redirected to node: ${targetNode.data?.label || nodeId}`,
       data: {
-        fluxo: flow.name || 'Fluxo automático',
-        fluxo_id: flow.id,
-        sessao_id: newSession.id,
-        cliente: customer?.name || 'Cliente',
-        data_inicio: new Date().toLocaleString('pt-BR')
+        fluxo: session.flow.name || 'Fluxo automático',
+        fluxo_id: session.flow.id,
+        sessao_id: session.id,
+        no_destino: targetNode.data?.label || nodeId,
+        no_id: nodeId,
+        data_atualizacao: new Date().toLocaleString('pt-BR')
       },
-      instructions: `The automated flow has been started. This process will be conducted by the system and you will receive messages and information requests automatically.`
+      // Importante: adicionar informações para o flow-engine
+      target_node: targetNode,
+      go_to_node: true // Flag para o flow-engine saber que deve executar este nó
     };
     
   } catch (error) {
-    console.error('[processStartFlowAction] Erro:', error);
+    console.error('[processGoToFlowNodeAction] Erro:', error);
     Sentry.captureException(error);
     throw error;
   }
