@@ -244,6 +244,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       }
 
       let nextNode = await getNextNode(updatedSession.flow, currentNode, message, updatedSession);
+      // console.log(`[continueFlow] 1 Proximo nó a ser executado antes de executar o nó:`, nextNode);
 
       while (nextNode && nextNode.type !== 'input') {
         // Executa o nó e obtém a sessão atualizada
@@ -547,8 +548,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
         
         // Verificar se há atualizações de variáveis para aplicar
+        // console.log('updatedSession agent', updatedSession?.variables_update)
         if (updatedSession.variables_update && Object.keys(updatedSession.variables_update).length > 0) {
-          console.log(`[executeNode] Aplicando ${Object.keys(updatedSession.variables_update).length} atualizações de variáveis do agent-ia`);
+          // console.log(`[executeNode] Aplicando ${Object.keys(updatedSession.variables_update).length} atualizações de variáveis do agent-ia`);
           
           // Garantir que as variáveis existam como array
           let variables = Array.isArray(updatedSession.variables) 
@@ -565,7 +567,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                 ...variables[variableIndex],
                 value: varValue
               };
-              console.log(`[executeNode] Variável '${varName}' atualizada para: ${varValue}`);
+              // console.log(`[executeNode] Variável '${varName}' atualizada para: ${varValue}`);
             } else {
               // Criar nova variável
               variables.push({
@@ -573,9 +575,11 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                 name: varName,
                 value: varValue
               });
-              console.log(`[executeNode] Nova variável '${varName}' criada com valor: ${varValue}`);
+              // console.log(`[executeNode] Nova variável '${varName}' criada com valor: ${varValue}`);
             }
           }
+
+          // console.log('executeNode atualização de variáveis', variables)
           
           // Atualizar a sessão com as novas variáveis
           await updateSession(updatedSession.id, { variables });
@@ -2148,6 +2152,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       // Executar a requisição HTTP usando axios
       let response;
       try {
+        // console.log('Fazer requisição com axiosConfig', axiosConfig)
         // Fazer a requisição usando axios
         response = await axios(axiosConfig);
         

@@ -249,7 +249,8 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
                 return {
                   ...session,
                   target_node: actionResult.target_node,
-                  go_to_node: true
+                  go_to_node: true,
+                  variables_update: actionResult.variables_update || {}
                 };
               }
             }
@@ -3360,7 +3361,7 @@ const processGoToFlowNodeAction = async (action, args, session) => {
     
     // Verificar se a sessão tem um fluxo associado
     if (!session.flow || !session.flow.nodes) {
-      console.error(`[processGoToFlowNodeAction] Sessão não tem um fluxo válido associado`);
+      // console.error(`[processGoToFlowNodeAction] Sessão não tem um fluxo válido associado`);
       return {
         status: "error",
         message: "No valid flow found in the current session."
@@ -3370,7 +3371,7 @@ const processGoToFlowNodeAction = async (action, args, session) => {
     // Verificar se o nó existe no fluxo
     const targetNode = session.flow.nodes.find(node => node.id === nodeId);
     if (!targetNode) {
-      console.error(`[processGoToFlowNodeAction] Nó com ID ${nodeId} não encontrado no fluxo ${session.flow.id}`);
+      // console.error(`[processGoToFlowNodeAction] Nó com ID ${nodeId} não encontrado no fluxo ${session.flow.id}`);
       return {
         status: "error",
         message: `Target node ${nodeId} not found in the flow.`
@@ -3380,20 +3381,20 @@ const processGoToFlowNodeAction = async (action, args, session) => {
     // Processar mapeamento de variáveis
     const variablesUpdate = {};
     if (config.variables && Array.isArray(config.variables)) {
-      console.log(`[processGoToFlowNodeAction] Processando ${config.variables.length} mapeamentos de variáveis`);
+      // console.log(`[processGoToFlowNodeAction] Processando ${config.variables.length} mapeamentos de variáveis`);
       
       for (const varMapping of config.variables) {
         if (varMapping.promptVariable && varMapping.flowVariable) {
           const promptValue = args[varMapping.promptVariable];
           if (promptValue !== undefined && promptValue !== null) {
             variablesUpdate[varMapping.flowVariable] = promptValue;
-            console.log(`[processGoToFlowNodeAction] Mapeando: ${varMapping.promptVariable} (${promptValue}) -> ${varMapping.flowVariable}`);
+            // console.log(`[processGoToFlowNodeAction] Mapeando: ${varMapping.promptVariable} (${promptValue}) -> ${varMapping.flowVariable}`);
           }
         }
       }
     }
     
-    console.log(`[processGoToFlowNodeAction] Redirecionando para o nó ${nodeId} com ${Object.keys(variablesUpdate).length} variáveis para atualizar`);
+    // console.log(`[processGoToFlowNodeAction] Redirecionando para o nó ${nodeId} com ${Object.keys(variablesUpdate).length} variáveis para atualizar`);
     
     const result = {
       status: "success",
