@@ -3377,9 +3377,25 @@ const processGoToFlowNodeAction = async (action, args, session) => {
       };
     }
     
-    console.log(`[processGoToFlowNodeAction] Redirecionando para o nó ${nodeId}`);
+    // Processar mapeamento de variáveis
+    const variablesUpdate = {};
+    if (config.variables && Array.isArray(config.variables)) {
+      console.log(`[processGoToFlowNodeAction] Processando ${config.variables.length} mapeamentos de variáveis`);
+      
+      for (const varMapping of config.variables) {
+        if (varMapping.promptVariable && varMapping.flowVariable) {
+          const promptValue = args[varMapping.promptVariable];
+          if (promptValue !== undefined && promptValue !== null) {
+            variablesUpdate[varMapping.flowVariable] = promptValue;
+            console.log(`[processGoToFlowNodeAction] Mapeando: ${varMapping.promptVariable} (${promptValue}) -> ${varMapping.flowVariable}`);
+          }
+        }
+      }
+    }
     
-    return {
+    console.log(`[processGoToFlowNodeAction] Redirecionando para o nó ${nodeId} com ${Object.keys(variablesUpdate).length} variáveis para atualizar`);
+    
+    const result = {
       status: "success",
       message: `Flow redirected to node: ${targetNode.data?.label || nodeId}`,
       data: {
@@ -3394,6 +3410,14 @@ const processGoToFlowNodeAction = async (action, args, session) => {
       target_node: targetNode,
       go_to_node: true // Flag para o flow-engine saber que deve executar este nó
     };
+    
+    // Adicionar variáveis para atualizar se houver alguma
+    if (Object.keys(variablesUpdate).length > 0) {
+      result.variables_update = variablesUpdate;
+      result.data.variables_updated = Object.keys(variablesUpdate).join(', ');
+    }
+    
+    return result;
     
   } catch (error) {
     console.error('[processGoToFlowNodeAction] Erro:', error);

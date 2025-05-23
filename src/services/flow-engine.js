@@ -544,7 +544,44 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         break;
 
       case 'agenteia':
-        updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
+        const updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
+        
+        // Verificar se há atualizações de variáveis para aplicar
+        if (updatedSession.variables_update && Object.keys(updatedSession.variables_update).length > 0) {
+          console.log(`[executeNode] Aplicando ${Object.keys(updatedSession.variables_update).length} atualizações de variáveis do agent-ia`);
+          
+          // Garantir que as variáveis existam como array
+          let variables = Array.isArray(updatedSession.variables) 
+            ? [...updatedSession.variables] 
+            : [];
+          
+          // Aplicar cada atualização de variável
+          for (const [varName, varValue] of Object.entries(updatedSession.variables_update)) {
+            const variableIndex = variables.findIndex(v => v.name === varName);
+            
+            if (variableIndex >= 0) {
+              // Atualizar variável existente
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: varValue
+              };
+              console.log(`[executeNode] Variável '${varName}' atualizada para: ${varValue}`);
+            } else {
+              // Criar nova variável
+              variables.push({
+                id: crypto.randomUUID(),
+                name: varName,
+                value: varValue
+              });
+              console.log(`[executeNode] Nova variável '${varName}' criada com valor: ${varValue}`);
+            }
+          }
+          
+          // Atualizar a sessão com as novas variáveis
+          await updateSession(updatedSession.id, { variables });
+          updatedSession = { ...updatedSession, variables };
+        }
+        
         break;
         
       case 'update_customer':

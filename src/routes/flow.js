@@ -12,13 +12,35 @@ router.post('/:flowId/file', createFileRoute);
 router.delete('/:flowId/file', deleteFileRoute);
 
 /**
+ * Substitui variáveis no formato {{variavel}} pelos valores de teste
+ */
+function replaceVariables(text, variables) {
+  if (!text || typeof text !== 'string') return text;
+  
+  let result = text;
+  
+  variables.forEach(variable => {
+    if (variable.name && variable.testValue !== undefined) {
+      // Usar o valor de teste se disponível, senão usar o valor padrão
+      const value = variable.testValue || variable.value || '';
+      const regex = new RegExp(`{{\\s*${variable.name}\\s*}}`, 'g');
+      result = result.replace(regex, value);
+    }
+  });
+  
+  return result;
+}
+
+/**
  * Rota para testar requisições HTTP a partir do backend
  * Evita problemas de CORS que ocorrem quando as requisições são feitas diretamente do frontend
  */
 async function testNodeRequest(req, res) {
   try {
     // Extrair parâmetros da requisição
-    const { method, url, headers, params, body, bodyType, timeout } = req.body;
+    const { method, url, headers, params, body, bodyType, timeout, variables } = req.body;
+
+    // console.log(req.body)
 
     if (!url) {
       return res.status(400).json({
@@ -27,10 +49,13 @@ async function testNodeRequest(req, res) {
       });
     }
     
+    // Substituir variáveis na URL
+    let processedUrl = replaceVariables(url, variables || []);
+    
     // Remover parâmetros da URL se existirem
-    let cleanUrl = url;
-    if (url.includes('?')) {
-      cleanUrl = url.split('?')[0];
+    let cleanUrl = processedUrl;
+    if (processedUrl.includes('?')) {
+      cleanUrl = processedUrl.split('?')[0];
     }
 
     // Configurar a requisição para o axios
@@ -41,21 +66,36 @@ async function testNodeRequest(req, res) {
       timeout: timeout || 15000 // 15 segundos por padrão
     };
 
-    // Adicionar parâmetros de query se fornecidos
-    if (params && Array.isArray(params) && params.length > 0) {
-      requestConfig.params = {};
-      params.forEach(param => {
-        if (param.key && param.value) {
-          requestConfig.params[param.key] = param.value;
+    // Processar headers substituindo variáveis
+    if (headers && Array.isArray(headers)) {
+      headers.forEach(header => {
+        if (header.key && header.value) {
+          const processedKey = replaceVariables(header.key, variables || []);
+          const processedValue = replaceVariables(header.value, variables || []);
+          requestConfig.headers[processedKey] = processedValue;
         }
       });
     }
 
-    // Adicionar corpo da requisição para métodos não-GET
+    // Adicionar parâmetros de query se fornecidos, substituindo variáveis
+    if (params && Array.isArray(params) && params.length > 0) {
+      requestConfig.params = {};
+      params.forEach(param => {
+        if (param.key && param.value) {
+          const processedKey = replaceVariables(param.key, variables || []);
+          const processedValue = replaceVariables(param.value, variables || []);
+          requestConfig.params[processedKey] = processedValue;
+        }
+      });
+    }
+
+    // Adicionar corpo da requisição para métodos não-GET, substituindo variáveis
     if (method !== 'GET' && bodyType !== 'none' && body) {
+      const processedBody = replaceVariables(body, variables || []);
+      
       if (bodyType === 'json') {
         try {
-          requestConfig.data = JSON.parse(body);
+          requestConfig.data = JSON.parse(processedBody);
         } catch (error) {
           return res.status(400).json({
             success: false,
@@ -64,7 +104,7 @@ async function testNodeRequest(req, res) {
         }
       } else {
         // Para outros tipos de body (form, text, etc.)
-        requestConfig.data = body;
+        requestConfig.data = processedBody;
       }
 
       // Configurar content-type baseado no bodyType
@@ -75,7 +115,7 @@ async function testNodeRequest(req, res) {
       }
     }
 
-    // console.log('Requisição sendo feita com a configuração:', requestConfig);
+    // console.log('Requisição sendo feita com a configuração (após substituição de variáveis):', requestConfig);
 
     // Fazer a requisição usando axios
     const response = await axios(requestConfig);
