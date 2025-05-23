@@ -544,7 +544,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         break;
 
       case 'agenteia':
-        const updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
+        updatedSession = await processAgentIA(node, updatedSession, sendMessage, updateSession);
         
         // Verificar se há atualizações de variáveis para aplicar
         if (updatedSession.variables_update && Object.keys(updatedSession.variables_update).length > 0) {
