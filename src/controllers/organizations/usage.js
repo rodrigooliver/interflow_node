@@ -152,6 +152,8 @@ export const registerLimitsOrganization = async (organizationId, usage) => {
     return { success: true };
 }
 
+
+
 export const registerLimitsOrganizationByPlan = async (organizationId, plan) => {
     if(!organizationId || !plan) {
         Sentry.captureMessage('Missing required fields in registerLimitsOrganizationByPlan', 'warning', {
@@ -188,35 +190,84 @@ export const registerLimitsOrganizationByPlan = async (organizationId, plan) => 
         return { error: planError.message };
     }
 
-    //Fazer a comparação e prevalecer o maior valor
-    const usage = {
+    organizationData.usage = organizationData.usage || {
         users: {
-            used: organizationData.usage.users.used || 0,
-            limit: planData.max_users > organizationData.usage.users?.limit ? planData.max_users : organizationData.usage.users?.limit,
+            used: 0,
+            limit: 0,
         },
         customers: {
-            used: organizationData.usage.customers.used || 0    ,
-            limit: planData.max_customers > organizationData.usage.customers?.limit ? planData.max_customers : organizationData.usage.customers?.limit,
+            used: 0,
+            limit: 0,
         },
         storage: {
-            used: organizationData.usage.storage.used || 0,
-            limit: planData.storage_limit > organizationData.usage.storage?.limit ? planData.storage_limit : organizationData.usage.storage?.limit,
+            used: 0,
+            limit: 0,
         },
         channels: {
-            used: organizationData.usage.channels.used || 0,
-            limit: planData.max_channels > organizationData.usage.channels?.limit ? planData.max_channels : organizationData.usage.channels?.limit,
+            used: 0,
+            limit: 0,
         },
         flows: {
-            used: organizationData.usage.flows.used || 0,
-            limit: planData.max_flows > organizationData.usage.flows?.limit ? planData.max_flows : organizationData.usage.flows?.limit,
+            used: 0,
+            limit: 0,
         },
         teams: {
-            used: organizationData.usage.teams.used || 0,
-            limit: planData.max_teams > organizationData.usage.teams?.limit ? planData.max_teams : organizationData.usage.teams?.limit,
+            used: 0,
+            limit: 0,
         },
         tokens: {
-            used: organizationData.usage.tokens.used || 0,
-            limit: planData.max_tokens > organizationData.usage.tokens?.limit ? planData.max_tokens : organizationData.usage.tokens?.limit,
+            used: 0,
+            limit: 0,
+        },
+    };
+
+    //Fazer a comparação e prevalecer o maior valor
+    const currentUsersLimit = organizationData.usage.users?.limit || 0;
+    const currentCustomersLimit = organizationData.usage.customers?.limit || 0;
+    const currentStorageLimit = organizationData.usage.storage?.limit || 0;
+    const currentChannelsLimit = organizationData.usage.channels?.limit || 0;
+    const currentFlowsLimit = organizationData.usage.flows?.limit || 0;
+    const currentTeamsLimit = organizationData.usage.teams?.limit || 0;
+    const currentTokensLimit = organizationData.usage.tokens?.limit || 0;
+
+    const planUsersLimit = parseInt(planData.max_users) || 0;
+    const planCustomersLimit = parseInt(planData.max_customers) || 0;
+    const planStorageLimit = parseInt(planData.storage_limit) || 0;
+    const planChannelsLimit = parseInt(planData.max_channels) || 0;
+    const planFlowsLimit = parseInt(planData.max_flows) || 0;
+    const planTeamsLimit = parseInt(planData.max_teams) || 0;
+    const planTokensLimit = parseInt(planData.max_tokens) || 0;
+
+
+
+    const usage = {
+        users: {
+            used: organizationData.usage.users?.used || 1,
+            limit: Math.max(planUsersLimit, currentUsersLimit),
+        },
+        customers: {
+            used: organizationData.usage.customers?.used || 0,
+            limit: Math.max(planCustomersLimit, currentCustomersLimit),
+        },
+        storage: {
+            used: organizationData.usage.storage?.used || 0,
+            limit: Math.max(planStorageLimit, currentStorageLimit),
+        },
+        channels: {
+            used: organizationData.usage.channels?.used || 0,
+            limit: Math.max(planChannelsLimit, currentChannelsLimit),
+        },
+        flows: {
+            used: organizationData.usage.flows?.used || 0,
+            limit: Math.max(planFlowsLimit, currentFlowsLimit),
+        },
+        teams: {
+            used: organizationData.usage.teams?.used || 1,
+            limit: Math.max(planTeamsLimit, currentTeamsLimit),
+        },
+        tokens: {
+            used: organizationData.usage.tokens?.used || 0,
+            limit: Math.max(planTokensLimit, currentTokensLimit),
         },
     }
 

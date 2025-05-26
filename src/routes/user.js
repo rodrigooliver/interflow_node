@@ -6,6 +6,8 @@ import Sentry from '../lib/sentry.js';
 import rateLimit from 'express-rate-limit';
 import { updateFirstLoginStatus } from '../controllers/member.js';
 import { startSignupChatFlow } from '../controllers/chat/signup-flow.js';
+import { registerLimitsOrganizationByPlan } from '../controllers/organizations/usage.js';
+
 // Carregar variáveis de ambiente
 dotenv.config();
 
@@ -483,6 +485,9 @@ router.post('/signup', signUpLimiter, async (req, res) => {
         cancel_at_period_end: false,
         billing_period: billingPeriod
       });
+
+    //Atualizar o usage da organização
+    await registerLimitsOrganizationByPlan(orgData.id, planId);
 
     if (subscriptionError) {
       Sentry.captureException(subscriptionError);
