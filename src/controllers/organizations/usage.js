@@ -25,53 +25,80 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
             metadata: metadata || null,
         });
     if (error) {
+        console.log('error', error);
         Sentry.captureException(error, {
             extra: { organizationId, promptId, customerId, chatId, integrationId }
         });
         return { error: error.message };
     }
 
-    //Buscar soma por função get_monthly_token_usage_report
-    const { data: monthlyTokenUsageReport, error: monthlyTokenUsageReportError } = await supabase
-        .rpc('get_monthly_token_usage_report', {
-        p_organization_id: organizationId,
-        p_year: new Date().getFullYear(),
-        p_month: new Date().getMonth() + 1,
-    });
-
-    if (monthlyTokenUsageReportError) {
-        Sentry.captureException(monthlyTokenUsageReportError, {
-            extra: { organizationId, year: new Date().getFullYear(), month: new Date().getMonth() + 1 }
+    if(tokenSource === 'system') {
+       //Buscar soma por função get_monthly_token_usage_report
+        const { data: monthlyTokenUsageReport, error: monthlyTokenUsageReportError } = await supabase
+            .rpc('get_monthly_token_usage_report', {
+            p_organization_id: organizationId,
+            p_year: new Date().getFullYear(),
+            p_month: new Date().getMonth() + 1,
+            p_token_source: tokenSource,
         });
-        return { error: monthlyTokenUsageReportError.message };
-    }
 
-    //Consultar dados da organization
-    const organizationData = await getUsageOrganization(organizationId);
+        // console.log('monthlyTokenUsageReport', monthlyTokenUsageReport);
+        // console.log('monthlyTokenUsageReportError', monthlyTokenUsageReportError);
 
-    if(organizationData.error) {
-        Sentry.captureMessage('Error getting organization usage data', 'error', {
-            extra: { organizationId, error: organizationData.error }
+        if (monthlyTokenUsageReportError) {
+            Sentry.captureException(monthlyTokenUsageReportError, {
+                extra: { organizationId, year: new Date().getFullYear(), month: new Date().getMonth() + 1 }
+            });
+            return { error: monthlyTokenUsageReportError.message };
+        }
+
+        // console.log('monthlyTokenUsageReport[0].total_tokens', monthlyTokenUsageReport[0].total_tokens);
+
+        //Loop para somar os tokens usados
+        let totalTokens = 0;
+        monthlyTokenUsageReport.forEach(item => {
+            totalTokens += item.total_tokens;
         });
-        return { error: organizationData.error };
+
+        // console.log('totalTokens', totalTokens);
+
+        if(totalTokens) {
+            //Consultar dados da organization
+            const organizationData = await getUsageOrganization(organizationId);
+
+            if(organizationData.error) {
+                // console.log('organizationData', organizationData);
+                Sentry.captureMessage('Error getting organization usage data', 'error', {
+                    extra: { organizationId, error: organizationData.error }
+                });
+                return { error: organizationData.error };
+            }
+
+            const usage = {
+                ...organizationData.usage,
+                tokens: {
+                    used: totalTokens,
+                    limit: organizationData.usage.tokens.limit,
+                },
+            }
+
+            // console.log('usage', usage);
+
+            const result = await registerUsageOrganization(organizationId, usage);
+
+            if(result.error) {
+                Sentry.captureMessage('Error registering organization usage', 'error', {
+                    extra: { organizationId, usage, error: result.error }
+                });
+                return { error: result.error };
+            }
+
+        }
+
+        
     }
 
-    const usage = {
-        ...organizationData.usage,
-        tokens: {
-            used: monthlyTokenUsageReport.total_tokens_used,
-            limit: organizationData.usage.tokens.limit,
-        },
-    }
-
-    const result = await registerUsageOrganization(organizationId, usage);
-
-    if(result.error) {
-        Sentry.captureMessage('Error registering organization usage', 'error', {
-            extra: { organizationId, usage, error: result.error }
-        });
-        return { error: result.error };
-    }
+    
 
     return { success: true };
 };

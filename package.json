@@ -28,7 +28,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.10",
     "onesignal-node": "^3.4.0",
-    "openai": "^4.85.2",
+    "openai": "^4.103.0",
     "queue": "^7.0.0",
     "stripe": "^14.17.0"
   },
