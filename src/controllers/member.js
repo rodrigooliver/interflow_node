@@ -222,6 +222,7 @@ export const updateMember = async (req, res) => {
 export const deleteMember = async (req, res) => {
   try {
     const { organizationId, id } = req.params;
+    const { is_superadmin } = req;
     
     // Verificar se o usuário que está fazendo a requisição tem permissão para remover membros
     // Apenas donos da organização podem remover membros
@@ -236,7 +237,7 @@ export const deleteMember = async (req, res) => {
       return res.status(404).json({ error: 'Organização não encontrada ou você não tem acesso' });
     }
 
-    if (currentMember.role !== 'owner') {
+    if (currentMember.role !== 'owner' && !is_superadmin) {
       return res.status(403).json({ error: 'Apenas proprietários podem remover membros' });
     }
 
@@ -303,6 +304,34 @@ export const deleteMember = async (req, res) => {
           // Não lançamos o erro para não interromper o fluxo principal
         }
 
+        // Decrementar contador de usuários na organização
+        try {
+          const { data: currentOrg, error: orgError } = await supabase
+            .from('organizations')
+            .select('usage')
+            .eq('id', organizationId)
+            .single();
+
+          if (!orgError && currentOrg) {
+            const currentUsage = currentOrg.usage || {};
+            const updatedUsage = {
+              ...currentUsage,
+              users: {
+                ...currentUsage.users,
+                used: Math.max(0, (currentUsage.users?.used || 0) - 1) // Garantir que não fique negativo
+              }
+            };
+
+            await supabase
+              .from('organizations')
+              .update({ usage: updatedUsage })
+              .eq('id', organizationId);
+          }
+        } catch (usageError) {
+          console.error('Erro ao atualizar contador de usuários:', usageError);
+          // Não falhar a operação principal por causa do contador
+        }
+
         return res.status(200).json({ 
           success: true, 
           message: 'Membro removido com sucesso e conta excluída permanentemente' 
@@ -310,12 +339,68 @@ export const deleteMember = async (req, res) => {
       } catch (error) {
         console.error('Erro ao excluir usuário:', error);
         Sentry.captureException(error);
+        // Decrementar contador de usuários na organização mesmo com erro na exclusão
+        try {
+          const { data: currentOrg, error: orgError } = await supabase
+            .from('organizations')
+            .select('usage')
+            .eq('id', organizationId)
+            .single();
+
+          if (!orgError && currentOrg) {
+            const currentUsage = currentOrg.usage || {};
+            const updatedUsage = {
+              ...currentUsage,
+              users: {
+                ...currentUsage.users,
+                used: Math.max(0, (currentUsage.users?.used || 0) - 1) // Garantir que não fique negativo
+              }
+            };
+
+            await supabase
+              .from('organizations')
+              .update({ usage: updatedUsage })
+              .eq('id', organizationId);
+          }
+        } catch (usageError) {
+          console.error('Erro ao atualizar contador de usuários:', usageError);
+          // Não falhar a operação principal por causa do contador
+        }
+
         // Mesmo com erro na exclusão do perfil/auth, consideramos sucesso na remoção do membro
         return res.status(200).json({ 
           success: true, 
           message: 'Membro removido com sucesso, mas houve um erro ao excluir a conta permanentemente' 
         });
       }
+    }
+
+    // Decrementar contador de usuários na organização
+    try {
+      const { data: currentOrg, error: orgError } = await supabase
+        .from('organizations')
+        .select('usage')
+        .eq('id', organizationId)
+        .single();
+
+      if (!orgError && currentOrg) {
+        const currentUsage = currentOrg.usage || {};
+        const updatedUsage = {
+          ...currentUsage,
+          users: {
+            ...currentUsage.users,
+            used: Math.max(0, (currentUsage.users?.used || 0) - 1) // Garantir que não fique negativo
+          }
+        };
+
+        await supabase
+          .from('organizations')
+          .update({ usage: updatedUsage })
+          .eq('id', organizationId);
+      }
+    } catch (usageError) {
+      console.error('Erro ao atualizar contador de usuários:', usageError);
+      // Não falhar a operação principal por causa do contador
     }
 
     res.status(200).json({ success: true, message: 'Membro removido com sucesso' });
@@ -330,7 +415,20 @@ export const inviteMember = async (req, res) => {
   try {
     const { organizationId } = req.params;
     const { email, fullName, role, language = 'pt' } = req.body;
+    const { usage } = req;
     const invitedBy = req.profileId; // ID do usuário que está fazendo o convite
+    
+    // Verificar limite de usuários
+    if (usage && usage.users) {
+      const { used, limit } = usage.users;
+      if (used >= limit) {
+        return res.status(400).json({ 
+          error: 'Limite de usuários atingido. Faça upgrade do seu plano para adicionar mais membros.',
+          code: 'USER_LIMIT_REACHED',
+          usage: usage.users
+        });
+      }
+    }
     
     // Obter o ano atual
     const currentYear = new Date().getFullYear();
@@ -483,6 +581,34 @@ export const inviteMember = async (req, res) => {
         }
       }
 
+      // Incrementar contador de usuários na organização para usuário existente
+      try {
+        const { data: currentOrg, error: orgError } = await supabase
+          .from('organizations')
+          .select('usage')
+          .eq('id', organizationId)
+          .single();
+
+        if (!orgError && currentOrg) {
+          const currentUsage = currentOrg.usage || {};
+          const updatedUsage = {
+            ...currentUsage,
+            users: {
+              ...currentUsage.users,
+              used: (currentUsage.users?.used || 0) + 1
+            }
+          };
+
+          await supabase
+            .from('organizations')
+            .update({ usage: updatedUsage })
+            .eq('id', organizationId);
+        }
+      } catch (usageError) {
+        console.error('Erro ao atualizar contador de usuários:', usageError);
+        // Não falhar a operação principal por causa do contador
+      }
+
       return res.status(201).json({ 
         success: true, 
         user: existingUser,
@@ -599,6 +725,34 @@ export const inviteMember = async (req, res) => {
 
     if (memberError) {
       throw memberError;
+    }
+
+    // Incrementar contador de usuários na organização
+    try {
+      const { data: currentOrg, error: orgError } = await supabase
+        .from('organizations')
+        .select('usage')
+        .eq('id', organizationId)
+        .single();
+
+      if (!orgError && currentOrg) {
+        const currentUsage = currentOrg.usage || {};
+        const updatedUsage = {
+          ...currentUsage,
+          users: {
+            ...currentUsage.users,
+            used: (currentUsage.users?.used || 0) + 1
+          }
+        };
+
+        await supabase
+          .from('organizations')
+          .update({ usage: updatedUsage })
+          .eq('id', organizationId);
+      }
+    } catch (usageError) {
+      console.error('Erro ao atualizar contador de usuários:', usageError);
+      // Não falhar a operação principal por causa do contador
     }
 
     res.status(201).json({ 

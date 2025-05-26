@@ -1,6 +1,7 @@
 import { stripe } from '../lib/stripe.js';
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
+import { registerLimitsOrganizationByPlan } from './organizations/usage.js';
 
 // Create checkout session
 export async function createCheckoutSession(req, res) {
@@ -354,12 +355,15 @@ async function handleCheckoutCompleted(session) {
     if (error) {
       Sentry.captureException(error, {
         extra: {
-          organizationId,
-          subscriptionId
+          organizationId: organization_id,
+          subscriptionId: subscriptionId
         }
       });
       throw error;
     }
+
+    registerLimitsOrganizationByPlan(organization_id, plan_id);
+
   } catch (error) {
     Sentry.captureException(error);
     throw error;

@@ -36,3 +36,44 @@ export async function deleteOrganization(organizationId) {
         return { status: 500, error: error.message };
     }
 }
+
+export async function updateOrganizationRoute(req, res) {
+    const { organizationId } = req.params;
+    const result = await updateOrganization(organizationId, req.body);
+    return res.status(result.status).json(result.error ? { error: result.error } : { success: true, data: result.data });
+}
+
+export async function updateOrganization(organizationId, updateData) {
+    try {
+        // Validar dados de entrada
+        const allowedFields = ['name', 'slug', 'email', 'whatsapp', 'logo_url', 'status', 'usage'];
+        const filteredData = {};
+        
+        for (const [key, value] of Object.entries(updateData)) {
+            if (allowedFields.includes(key)) {
+                filteredData[key] = value;
+            }
+        }
+
+        // Adicionar timestamp de atualização
+        filteredData.updated_at = new Date().toISOString();
+
+        // Atualizar organização no banco
+        const { data, error } = await supabase
+            .from('organizations')
+            .update(filteredData)
+            .eq('id', organizationId)
+            .select()
+            .single();
+
+        if (error) {
+            Sentry.captureException(error);
+            return { status: 500, error: error.message };
+        }
+
+        return { status: 200, data };
+    } catch (error) {
+        Sentry.captureException(error);
+        return { status: 500, error: error.message };
+    }
+}

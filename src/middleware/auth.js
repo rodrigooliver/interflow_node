@@ -146,7 +146,7 @@ export async function verifyAuth(req, res, next) {
 
   try {
     if (apiKey) {
-      // Lógica existente para API keys
+      // Lógica para API keys
       const keyHash = crypto
         .createHash('sha256')
         .update(apiKey)
@@ -154,19 +154,36 @@ export async function verifyAuth(req, res, next) {
 
       const { data: apiKeyData } = await supabase
         .from('api_keys')
-        .select('organization_id, profile_id, organization:organizations(settings)')
+        .select('organization_id, profile_id, organization:organizations(settings, usage), profiles(is_superadmin)')
         .eq('key_hash', keyHash)
         .eq('is_active', true)
-        .eq('organization_id', organizationId)
         .single();
 
       if (!apiKeyData) {
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
+      // Verifica se a API key pertence à organização OU se o perfil é superadmin
+      if (apiKeyData.organization_id !== organizationId && !apiKeyData.profiles?.is_superadmin) {
+        return res.status(403).json({ error: 'API key does not have access to this organization' });
+      }
+
       req.organizationId = organizationId;
       req.profileId = apiKeyData.profile_id;
-      req.language = req.language ?? apiKeyData.organization?.settings?.language ?? 'pt';
+      req.is_superadmin = apiKeyData.profiles?.is_superadmin || false;
+      req.usage = apiKeyData.organization?.usage || null;
+      
+      // Se a API key é de superadmin mas não da organização específica, busca as configurações da organização
+      if (apiKeyData.profiles?.is_superadmin && apiKeyData.organization_id !== organizationId) {
+        const { data: organization } = await supabase
+          .from('organizations')
+          .select('settings')
+          .eq('id', organizationId)
+          .single();
+        req.language = req.language ?? organization?.settings?.language ?? 'pt';
+      } else {
+        req.language = req.language ?? apiKeyData.organization?.settings?.language ?? 'pt';
+      }
     } else {
       // Validação do token JWT do Supabase
       const token = authHeader.replace('Bearer ', '');
@@ -177,25 +194,55 @@ export async function verifyAuth(req, res, next) {
       }
 
       try {
-        const { data: membership, error: membershipError } = await supabase
-          .from('organization_members')
-          .select('organization_id, organization:organizations(settings)')
-          .eq('profile_id', user.id)
-          .eq('organization_id', organizationId)
+        // Primeiro verifica se o usuário é superadmin
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, is_superadmin')
+          .eq('id', user.id)
           .single();
 
-        if (membershipError || !membership) {
-          console.log(membershipError);
-          return res.status(403).json({ error: 'User does not have access to this organization' });
+        if (profileError || !profile) {
+          return res.status(403).json({ error: 'User profile not found' });
         }
 
-        req.profileId = user.id;
-        req.organizationId = organizationId;
-        req.language = req.language ?? membership.organization?.settings?.language ?? 'pt';
+        // Se é superadmin, tem acesso a todas as organizações
+        if (profile.is_superadmin) {
+          // Busca as configurações da organização para o idioma
+          const { data: organization } = await supabase
+            .from('organizations')
+            .select('settings, usage')
+            .eq('id', organizationId)
+            .single();
+
+          req.profileId = user.id;
+          req.organizationId = organizationId;
+          req.language = req.language ?? organization?.settings?.language ?? 'pt';
+          req.is_superadmin = true;
+          req.usage = organization?.usage || null;
+        } else {
+          // Se não é superadmin, verifica se é membro da organização
+          const { data: membership, error: membershipError } = await supabase
+            .from('organization_members')
+            .select('organization_id, organization:organizations(settings, usage)')
+            .eq('profile_id', user.id)
+            .eq('organization_id', organizationId)
+            .single();
+
+          if (membershipError || !membership) {
+            console.log(membershipError);
+            return res.status(403).json({ error: 'User does not have access to this organization' });
+          }
+
+          req.profileId = user.id;
+          req.organizationId = organizationId;
+          req.language = req.language ?? membership.organization?.settings?.language ?? 'pt';
+          req.is_superadmin = false;
+          req.usage = membership.organization?.usage || null;
+        }
       } catch (error) {
         Sentry.captureException(error, {
           tags: {
-            location: 'verifyAuth_membership_check',
+            location: 'verifyAuth_access_check',
             organizationId,
             userId: user.id
           }
