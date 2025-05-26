@@ -135,6 +135,8 @@ export async function createCheckoutSession(req, res) {
       customerId = customer.id;
     }
 
+    // stripePriceId = 'price_1R1UQhAJmUEDxpa6798VuIKc'
+
     // Se não existe assinatura, criar uma nova sessão de checkout
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
@@ -145,6 +147,7 @@ export async function createCheckoutSession(req, res) {
         quantity: 1
       }],
       mode: 'subscription',
+      allow_promotion_codes: true,
       subscription_data: {
         metadata: {
           organization_id: organizationId,
