@@ -14,8 +14,11 @@ export const i18nMiddleware = (req, res, next) => {
   }
 
   // Adiciona a função de tradução ao objeto de requisição
-  req.t = (key, customMessage = null) => {
-    if (customMessage) return customMessage;
+  req.t = (key, variables = null) => {
+    // Se variables for uma string, trata como customMessage (comportamento antigo)
+    if (typeof variables === 'string') {
+      return variables;
+    }
     
     const keys = key.split('.');
     let value = translations[req.language];
@@ -25,7 +28,19 @@ export const i18nMiddleware = (req, res, next) => {
       if (!value) return key;
     }
     
-    return value;
+    // Se não há variáveis para substituir, retorna o valor como está
+    if (!variables || typeof variables !== 'object') {
+      return value;
+    }
+    
+    // Substitui as variáveis no formato {{variableName}}
+    let result = value;
+    for (const [varName, varValue] of Object.entries(variables)) {
+      const regex = new RegExp(`{{${varName}}}`, 'g');
+      result = result.replace(regex, varValue);
+    }
+    
+    return result;
   };
   
 

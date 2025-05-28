@@ -9,6 +9,7 @@ import { resolveChatRoute } from '../controllers/chat/resolve-handlers.js';
 import { startFlowRoute } from '../controllers/chat/flow-handlers.js';
 import { deleteChatRoute } from '../controllers/chat/delete-handlers.js';
 import { generateTaskContentRoute } from '../controllers/chat/task-handlers.js';
+import { addCollaboratorRoute, removeCollaboratorRoute, listCollaboratorsRoute } from '../controllers/chat/collaborator-handlers.js';
 const router = express.Router({ mergeParams: true });
 
 // Todas as rotas de canal precisam de autenticação
@@ -28,5 +29,9 @@ router.post('/:chatId/generate-summary', resolveChatRoute);
 router.post('/:chatId/generate-task-content', generateTaskContentRoute);
 router.post('/:chatId/start-flow', startFlowRoute);
 
+// Rotas de colaboradores
+router.post('/:chatId/collaborators', addCollaboratorRoute);
+router.get('/:chatId/collaborators', listCollaboratorsRoute);
+router.delete('/:chatId/collaborators/:collaboratorId', removeCollaboratorRoute);
 
 export default router;
