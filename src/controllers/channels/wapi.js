@@ -70,6 +70,8 @@ export async function handleWapiWebhook(req, res) {
     //Nova versão do webhook
     try {
       // console.log(`webhookData ${action}`, webhookData);
+      if (webhookData.isGroup) return res.json({ success: true });
+      
       const channel = await validateChannel(channelId, 'whatsapp_wapi');
 
       if (!channel) {
@@ -92,8 +94,6 @@ export async function handleWapiWebhook(req, res) {
           if (channel.status === 'inactive') {
             return res.status(404).json({ error: 'Channel not active' });
           }
-
-          if (webhookData.isGroup) return res.json({ success: true });
 
           // Reação feita pelo cliente
           if (webhookData.msgContent && webhookData.msgContent.reactionMessage && webhookData.msgContent.reactionMessage.key && webhookData.msgContent.reactionMessage.text) {
