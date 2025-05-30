@@ -30,7 +30,8 @@
     "onesignal-node": "^3.4.0",
     "openai": "^4.103.0",
     "queue": "^7.0.0",
-    "stripe": "^14.17.0"
+    "stripe": "^14.17.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"

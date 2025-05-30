@@ -11,10 +11,11 @@ import { uploadFile, downloadFileFromUrl } from '../../utils/file-upload.js';
 import { sendChatNotifications } from './notification-helpers.js';
 import { decrypt } from '../../utils/crypto.js';
 
-import { handleSenderMessageWApi, handleDeleteMessageWapiChannel } from '../channels/wapi.js';
+import { handleSenderMessageWApi, handleDeleteMessageWapiChannel, handleSenderUpdateMessageWapiChannel } from '../channels/wapi.js';
 import { handleSenderMessageEmail } from '../../services/email.js';
 import { handleSenderMessageInstagram, handleDeleteMessageInstagram } from '../channels/instagram.js';
 import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
+import { formatWhatsAppToMarkdown } from '../../utils/chat.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
@@ -37,12 +38,13 @@ import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 const CHANNEL_CONFIG = {
   whatsapp_official: {
     identifier: 'whatsapp',
-    handler: handleSenderMessageOfficial,
+    handler: handleSenderMessageOfficial
   },
   whatsapp_wapi: {
     identifier: 'whatsapp',
     handler: handleSenderMessageWApi,
-    deleteHandler: handleDeleteMessageWapiChannel
+    deleteHandler: handleDeleteMessageWapiChannel,
+    updateHandler: handleSenderUpdateMessageWapiChannel
   },
   whatsapp_zapi: {
     identifier: 'whatsapp',
@@ -83,12 +85,12 @@ const normalizeContactId = (id, channelType) => {
     case 'whatsapp_evo': {
       // Remove todos os caracteres não numéricos
       let numbers = id.replace(/\D/g, '');
-      
+
       // Remove @s.whatsapp.net se existir (whatsapp_evo)
       numbers = numbers.split('@')[0];
-      
+
       const variants = new Set(); // Usa Set para evitar duplicatas
-      
+
       // Se começar com 55 e tiver 12 ou 13 dígitos, é um número brasileiro
       if (numbers.startsWith('55') && (numbers.length === 12 || numbers.length === 13)) {
         if (numbers.length === 13) { // tem 9
@@ -103,25 +105,25 @@ const normalizeContactId = (id, channelType) => {
           variants.add(withNine);
         }
       }
-      
+
       // Adiciona versões com e sem + para qualquer número
       variants.add(`+${numbers}`);
       variants.add(numbers);
-      
+
       return Array.from(variants);
     }
-    
+
     case 'instagram':
     case 'facebook': {
       const normalized = id.toLowerCase();
       return [normalized];
     }
-    
+
     case 'email': {
       const normalized = id.toLowerCase().trim();
       return [normalized];
     }
-    
+
     default:
       return [id];
   }
@@ -154,7 +156,35 @@ const normalizeContactId = (id, channelType) => {
  */
 export async function handleIncomingMessage(channel, messageData) {
   const { organization } = channel;
-  
+
+  try {
+    // Verifica se a mensagem já existe quando for messageSent
+    if (messageData.event === 'messageSent' && messageData.fromMe) {
+      const { data: existingMessage, error: findMessageError } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('external_id', messageData.messageId)
+        .single();
+
+      if (findMessageError && findMessageError.code !== 'PGRST116') throw findMessageError;
+
+      if (existingMessage) {
+        const { error: updateError } = await supabase
+          .from('messages')
+          .update({ status: 'sent' })
+          .eq('id', existingMessage.id);
+
+        if (updateError) throw updateError;
+        return;
+      }
+    }
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: { channel, messageData, context: 'handling_existing_message' }
+    });
+    throw error;
+  }
+
   try {
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
@@ -169,7 +199,7 @@ export async function handleIncomingMessage(channel, messageData) {
       const identifierColumn = channelConfig.identifier;
 
       let possibleIds = [];
-      if(channel.type === 'whatsapp_wapi') {
+      if (channel.type === 'whatsapp_wapi') {
         possibleIds = normalizeContactId(messageData.externalId, channel.type);
       } else {
         possibleIds = [messageData.externalId];
@@ -187,17 +217,17 @@ export async function handleIncomingMessage(channel, messageData) {
         .limit(1);
 
       chat = chats?.[0] || null;
-      
+
       if (chat) {
         customer = chat.customers;
-        if(messageData.externalProfilePicture) {
+        if (messageData.externalProfilePicture) {
           // Atualizar o profile_picture do chat
           const { error: updateError } = await supabase
             .from('chats')
             .update({ profile_picture: messageData.externalProfilePicture })
             .eq('id', chat.id);
 
-          if(updateError) {
+          if (updateError) {
             Sentry.captureException(updateError, {
               extra: { channel, messageData, context: 'updating_chat_profile_picture' }
             });
@@ -306,45 +336,24 @@ export async function handleIncomingMessage(channel, messageData) {
         }
       }
     } else {
-      if(chat.is_first_message) {
+      if (chat.is_first_message) {
         isFirstMessage = true;
-      }
-    }
-
-    // Verifica se a mensagem já existe quando for messageSent
-    if (messageData.event === 'messageSent' && messageData.fromMe) {
-      const { data: existingMessage, error: findMessageError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('external_id', messageData.messageId)
-        .single();
-
-      if (findMessageError && findMessageError.code !== 'PGRST116') throw findMessageError;
-
-      if (existingMessage) {
-        const { error: updateError } = await supabase
-          .from('messages')
-          .update({ status: 'sent' })
-          .eq('id', existingMessage.id);
-
-        if (updateError) throw updateError;
-        return;
       }
     }
 
     // Processar anexos se existirem
     let attachments = [];
     let fileRecords = [];
-    
-    if (messageData.attachments?.length > 0 || 
-        messageData.message?.mediaUrl || 
-        (messageData.message?.raw && 
-         (messageData.message.raw.image || 
-          messageData.message.raw.video || 
-          messageData.message.raw.audio || 
-          messageData.message.raw.document || 
+
+    if (messageData.attachments?.length > 0 ||
+      messageData.message?.mediaUrl ||
+      (messageData.message?.raw &&
+        (messageData.message.raw.image ||
+          messageData.message.raw.video ||
+          messageData.message.raw.audio ||
+          messageData.message.raw.document ||
           messageData.message.raw.sticker))) {
-      
+
       try {
         // console.log('[MessageHandlers] Iniciando processamento de mídia:', {
         //   hasAttachments: messageData.attachments?.length > 0,
@@ -354,7 +363,7 @@ export async function handleIncomingMessage(channel, messageData) {
         // });
 
         const mediaResult = await processMessageMedia(messageData, organization.id, chat.id);
-        
+
         // Remover todos os base64 dos metadados
         if (messageData.message.raw) {
           const metadataRaw = { ...messageData.message.raw };
@@ -381,12 +390,12 @@ export async function handleIncomingMessage(channel, messageData) {
             attachments = [mediaResult.attachment];
 
             // Se for um arquivo de áudio, tentar fazer a transcrição
-            if (mediaResult.attachment.type.startsWith('audio') || 
-                mediaResult.attachment.mime_type === 'audio/ogg; codecs=opus') {
+            if (mediaResult.attachment.type.startsWith('audio') ||
+              mediaResult.attachment.mime_type === 'audio/ogg; codecs=opus') {
               try {
                 // Buscar integração OpenAI ativa
                 const openaiIntegration = await getActiveOpenAIIntegration(organization.id);
-                
+
                 if (openaiIntegration) {
                   // Fazer a transcrição
                   const transcription = await transcribeAudio(
@@ -394,14 +403,14 @@ export async function handleIncomingMessage(channel, messageData) {
                     openaiIntegration.api_key,
                     mediaResult.attachment.mime_type
                   );
-                  
+
                   // Adicionar a transcrição aos metadados e remover audioBase64
                   const metadataRaw = { ...messageData.message.raw };
-                  
+
                   // Atualizar o conteúdo da mensagem com a transcrição
                   messageData.message.content = transcription;
                   // messageData.message.type = 'text';
-                  
+
                   messageData.message.raw = {
                     ...metadataRaw,
                     transcription
@@ -470,7 +479,7 @@ export async function handleIncomingMessage(channel, messageData) {
         sender_type: messageData.fromMe ? 'agent' : 'customer',
         status: messageData.fromMe ? 'sent' : 'received',
         external_id: messageData.messageId,
-        ...(messageData.fromMe 
+        ...(messageData.fromMe
           ? {}
           : { sender_customer_id: customer.id }
         ),
@@ -506,11 +515,11 @@ export async function handleIncomingMessage(channel, messageData) {
     if (fileRecords && fileRecords.length > 0) {
       // Definir se é um canal social
       const isSocialChannel = [
-        'whatsapp_official', 
-        'whatsapp_wapi', 
-        'whatsapp_zapi', 
-        'whatsapp_evo', 
-        'instagram', 
+        'whatsapp_official',
+        'whatsapp_wapi',
+        'whatsapp_zapi',
+        'whatsapp_evo',
+        'instagram',
         'facebook'
       ].includes(channel.type);
 
@@ -560,7 +569,7 @@ export async function handleIncomingMessage(channel, messageData) {
     // Atualiza o last_message_id do chat
     const { error: updateError } = await supabase
       .from('chats')
-      .update({ 
+      .update({
         last_message_id: message.id,
         last_message_at: message.created_at,
         unread_count: chat.unread_count ? parseInt(chat.unread_count) + 1 : 1
@@ -575,7 +584,7 @@ export async function handleIncomingMessage(channel, messageData) {
       .select('*')
       .eq('id', chat.id)
       .single();
-    
+
     if (chatError) {
       console.error('Erro ao buscar chat atualizado:', chatError);
     } else {
@@ -585,7 +594,7 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
-    if(!messageData.fromMe) {
+    if (!messageData.fromMe) {
       const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
         // isFirstMessage: true,
         isFirstMessage,
@@ -670,9 +679,9 @@ async function processMessageMedia(messageData, organizationId, chatId) {
           fileName: generatedFileName,
           attachment: {
             url: mediaUrl,
-            type: mimeType.startsWith('image/') ? 'image' : 
-                  mimeType.startsWith('video/') ? 'video' : 
-                  mimeType.startsWith('audio/') ? 'audio' : 'document',
+            type: mimeType.startsWith('image/') ? 'image' :
+              mimeType.startsWith('video/') ? 'video' :
+                mimeType.startsWith('audio/') ? 'audio' : 'document',
             name: generatedFileName,
             mime_type: mimeType
           },
@@ -694,7 +703,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         return result;
       }
     }
-    
+
     // Extrair dados da mídia dos dados brutos se não fornecidos diretamente
     if (!mediaUrl && !mediaBase64) {
       if (raw.image) {
@@ -748,9 +757,9 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         fileName: generatedFileName,
         attachment: {
           url: mediaUrl,
-          type: mimeType.startsWith('image/') ? 'image' : 
-                mimeType.startsWith('video/') ? 'video' : 
-                mimeType.startsWith('audio/') ? 'audio' : 'document',
+          type: mimeType.startsWith('image/') ? 'image' :
+            mimeType.startsWith('video/') ? 'video' :
+              mimeType.startsWith('audio/') ? 'audio' : 'document',
           name: generatedFileName,
           mime_type: mimeType
         },
@@ -771,7 +780,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
 
       return result;
     }
-    
+
     // Converter URL relativa para absoluta se necessário
     if (mediaUrl) {
       // console.log('[MessageHandlers] Processando URL de mídia:', {
@@ -785,15 +794,15 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         const apiUrl = process.env.API_URL || process.env.BACKEND_URL || 'http://localhost:3000';
         // Remover a barra final se a URL base terminar com barra
         const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
-        
+
         // Adicionar barra inicial se a URL não começar com barra
         const urlPath = mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`;
-        
+
         mediaUrl = `${baseUrl}${urlPath}`;
         console.log(`[MessageHandlers] URL convertida para absoluta: ${mediaUrl}`);
       }
     }
-    
+
     // Tentar usar o base64 primeiro se disponível
     if (mediaBase64) {
       // console.log('[MessageHandlers] Processando mídia base64:', {
@@ -812,7 +821,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
           customFolder: 'media',
           chatId: chatId
         });
-        
+
         if (uploadResult.success) {
           // console.log('[MessageHandlers] Upload base64 realizado com sucesso:', {
           //   uploadResult,
@@ -863,19 +872,19 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         // Se falhar, tentaremos outros métodos
       }
     }
-    
+
     // Se não temos buffer do base64, tentar baixar da URL
     if (mediaUrl) {
       try {
         console.log(`Tentando baixar mídia da URL: ${mediaUrl}`);
-        
+
         // Usar a função downloadFileFromUrl para obter o buffer
         const fileBuffer = await downloadFileFromUrl(mediaUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
           }
         });
-        
+
         // Usar a função uploadFile com o buffer obtido
         const uploadResult = await uploadFile({
           fileData: fileBuffer,
@@ -886,7 +895,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
           customFolder: 'media',
           chatId: chatId
         });
-        
+
         if (uploadResult.success) {
           return {
             success: true,
@@ -925,7 +934,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         // Se falhar, tentaremos o próximo método
       }
     }
-    
+
     // Se ainda não temos o buffer, tentar via API do canal
     if (messageData.channel) {
       try {
@@ -935,7 +944,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
           .select('credentials, type')
           .eq('id', messageData.channel.id)
           .single();
-          
+
         if (!channelData) {
           Sentry.captureMessage('Canal não encontrado', {
             level: 'error',
@@ -946,7 +955,7 @@ async function processMessageMedia(messageData, organizationId, chatId) {
           });
           throw new Error('Canal não encontrado');
         }
-        
+
         // Implementar lógica específica para cada tipo de canal
         if (channelData.type === 'whatsapp' && mediaKey && directPath) {
           // Lógica específica para WhatsApp
@@ -964,14 +973,14 @@ async function processMessageMedia(messageData, organizationId, chatId) {
         console.error('Erro ao tentar baixar mídia via API do canal:', channelError);
       }
     }
-    
+
     // Gerar nome de arquivo se não fornecido
     if (!fileName) {
       const fileId = uuidv4();
       const extension = mimeType ? mimeType.split('/')[1] || '' : '';
       fileName = `${fileId}.${extension}`;
     }
-    
+
     // Se não conseguimos obter o buffer da mídia
     Sentry.captureMessage('Não foi possível obter o conteúdo da mídia', {
       level: 'warning',
@@ -1011,72 +1020,65 @@ async function processMessageMedia(messageData, organizationId, chatId) {
 }
 
 /**
- * Atualiza o status de uma mensagem com base em dados de webhook
+ * Atualiza o status de uma mensagem com base em dados normalizados
  * 
- * Esta função é chamada quando um webhook de atualização de status é recebido,
- * permitindo rastrear o progresso da entrega de mensagens (enviada, entregue, lida, falha).
+ * Esta função espera receber dados já normalizados pelos canais específicos.
+ * Os dados devem estar no formato padrão com messageId, status, error, timestamp, etc.
+ * 
+ * Exemplo de normalização que cada canal deve fazer:
+ * ```javascript
+ * function normalizeChannelStatusUpdate(webhookData) {
+ *   return {
+ *     messageId: webhookData.messageId || webhookData.id,
+ *     status: mapChannelStatusToStandard(webhookData.status),
+ *     error: webhookData.error || webhookData.errorMessage || null,
+ *     timestamp: webhookData.timestamp || webhookData.receivedAt || Date.now(),
+ *     metadata: {
+ *       original: webhookData,
+ *       source: 'channel_name'
+ *     }
+ *   };
+ * }
+ * ```
  * 
  * @param {Object} channel - Canal de comunicação
- * @param {Object} messageData - Dados da atualização de status
- * @param {string} messageData.messageId - ID da mensagem a ser atualizada
- * @param {string} messageData.status - Novo status da mensagem
- * @param {string} [messageData.error] - Mensagem de erro, se houver
- * @param {number} [messageData.timestamp] - Timestamp da atualização de status
- * @param {string} [messageData.chat_id] - ID do chat associado à mensagem
- * @param {Object} [messageData.metadata] - Metadados adicionais sobre o status
+ * @param {Object} normalizedData - Dados normalizados da atualização de status
+ * @param {string} normalizedData.messageId - ID da mensagem a ser atualizada
+ * @param {string} normalizedData.status - Novo status da mensagem
+ * @param {string} [normalizedData.error] - Mensagem de erro, se houver
+ * @param {number} [normalizedData.timestamp] - Timestamp da atualização de status
+ * @param {Object} [normalizedData.metadata] - Metadados adicionais do canal
  */
-export async function handleStatusUpdate(channel, messageData) {
+export async function handleStatusUpdate(channel, normalizedData) {
   try {
-    // Tenta encontrar a mensagem pelo ID exato primeiro
-    let { data: message, error: findMessageError } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('external_id', messageData.messageId)
-      .single();
+    // Os dados já vêm normalizados pelos canais específicos
+    const { messageId, status, error, timestamp, metadata } = normalizedData;
 
-    if (findMessageError && findMessageError.code !== 'PGRST116') {
+    // Busca a mensagem pelo ID exato com verificação dupla do canal
+    const { data: message, error: findMessageError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        chat:chats!messages_chat_id_fkey(
+          channel_id
+        )
+      `)
+      .eq('external_id', messageId)
+      .eq('chat.channel_id', channel.id)
+      .not('status', 'eq', 'deleted')
+      .maybeSingle();
+
+
+    if (findMessageError) {
+      console.log('findMessageError', findMessageError);
       Sentry.captureException(findMessageError, {
         extra: {
-          messageId: messageData.messageId,
-          context: 'finding_message_by_external_id'
+          messageId,
+          channelId: channel.id,
+          context: 'finding_message_by_external_id_and_channel'
         }
       });
       throw findMessageError;
-    }
-
-    // Se não encontrar e temos um chat_id, tenta buscar pelo ID no metadata
-    if (!message && messageData.chat_id) {
-      const { data: messages, error: findMessagesError } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('chat_id', messageData.chat_id)
-        .eq('sender_type', 'agent') // Apenas mensagens enviadas pelo agente
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (findMessagesError) {
-        Sentry.captureException(findMessagesError, {
-          extra: {
-            chatId: messageData.chat_id,
-            context: 'finding_messages_by_chat_id'
-          }
-        });
-        throw findMessagesError;
-      }
-
-      if (messages && messages.length > 0) {
-        // Procura por mensagens que possam corresponder ao ID do WhatsApp
-        for (const msg of messages) {
-          // Verifica se o ID está no metadata ou no external_id
-          if ((msg.metadata && 
-               (msg.metadata.messageId === messageData.messageId || 
-                msg.metadata.id === messageData.messageId)) ||
-              msg.external_id === messageData.messageId) {
-            message = msg;
-            break;
-          }
-        }
-      }
     }
 
     if (message) {
@@ -1089,10 +1091,10 @@ export async function handleStatusUpdate(channel, messageData) {
         'read': 4,
         'failed': 5 // O status 'failed' é tratado como caso especial
       };
-      
+
       const currentStatusLevel = statusHierarchy[message.status] || 0;
-      const newStatusLevel = statusHierarchy[messageData.status] || 0;
-      
+      const newStatusLevel = statusHierarchy[status] || 0;
+
       // Verifica se já temos um timestamp para o status atual nos metadados
       let currentStatusTimestamp = null;
       if (message.metadata?.status_timestamps) {
@@ -1111,52 +1113,52 @@ export async function handleStatusUpdate(channel, messageData) {
           }
         }
       }
-      
+
       // Verifica se o novo evento é mais recente que o atual
-      const newEventTimestamp = messageData.timestamp || Date.now();
+      const newEventTimestamp = timestamp || Date.now();
       const isNewerEvent = !currentStatusTimestamp || newEventTimestamp >= currentStatusTimestamp;
-      
+
       // Só atualiza o status se for uma progressão válida ou se for 'failed' ou se for um evento mais recente
-      const shouldUpdateStatus = 
-        messageData.status === 'failed' || // Sempre atualiza para 'failed'
+      const shouldUpdateStatus =
+        status === 'failed' || // Sempre atualiza para 'failed'
         (newStatusLevel > currentStatusLevel) || // Atualiza se for um status "superior"
         (newStatusLevel === currentStatusLevel && isNewerEvent); // Atualiza se for o mesmo status mas mais recente
-      
+
       // Prepara os dados para atualização
       const updateData = {
-        error_message: messageData.error
+        error_message: error
       };
-      
+
       // Só inclui o status se for uma progressão válida
       if (shouldUpdateStatus) {
-        updateData.status = messageData.status;
+        updateData.status = status;
       }
-      
+
       // Prepara os metadados atualizados
-      const statusDate = messageData.timestamp ? new Date(messageData.timestamp).toISOString() : new Date().toISOString();
-      
+      const statusDate = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
+
       // Inicializa ou atualiza os metadados
       const currentMetadata = message.metadata || {};
       const statusTimestamps = currentMetadata.status_timestamps || {};
-      
+
       // Atualiza o timestamp do status atual
-      if (shouldUpdateStatus || !statusTimestamps[messageData.status]) {
-        statusTimestamps[messageData.status] = statusDate;
+      if (shouldUpdateStatus || !statusTimestamps[status]) {
+        statusTimestamps[status] = statusDate;
       }
-      
+
       // Certifica-se de que status_updates seja um array
-      const currentStatusUpdates = Array.isArray(currentMetadata.status_updates) 
-        ? currentMetadata.status_updates 
+      const currentStatusUpdates = Array.isArray(currentMetadata.status_updates)
+        ? currentMetadata.status_updates
         : [];
-        
+
       // Adiciona a nova atualização de status com timestamp
       const newStatusUpdate = {
-        status: messageData.status,
-        timestamp: messageData.timestamp,
+        status,
+        timestamp,
         processed_at: new Date().toISOString(),
-        ...messageData.metadata
+        ...metadata
       };
-      
+
       // Atualiza os metadados
       updateData.metadata = {
         ...currentMetadata,
@@ -1174,7 +1176,7 @@ export async function handleStatusUpdate(channel, messageData) {
           .from('messages')
           .update(updateData)
           .eq('id', message.id);
-          
+
         if (updateError) {
           Sentry.captureException(updateError, {
             extra: {
@@ -1191,12 +1193,12 @@ export async function handleStatusUpdate(channel, messageData) {
           .update({
             last_message_at: new Date().toISOString()
           })
-          .eq('id', message.chat_id);  
+          .eq('id', message.chat_id);
 
         if (updateChatError) {
           Sentry.captureException(updateChatError, {
             extra: {
-              chatId: message.chat_id,  
+              chatId: message.chat_id,
               context: 'updating_chat_last_message_at'
             }
           });
@@ -1206,23 +1208,22 @@ export async function handleStatusUpdate(channel, messageData) {
       Sentry.captureMessage('Mensagem não encontrada para atualização de status', {
         level: 'warning',
         extra: {
-          messageId: messageData.messageId,
-          chatId: messageData.chat_id,
+          messageId,
+          channelId: channel.id,
           context: 'message_not_found_for_status_update'
         }
       });
-      console.log(`Mensagem não encontrada para o ID: ${messageData.messageId}`);
+      // console.log(`Mensagem não encontrada para o ID: ${messageId} no canal: ${channel.id}`);
     }
   } catch (error) {
     Sentry.captureException(error, {
       extra: {
         channel,
-        messageData,
+        normalizedData,
         context: 'handle_status_update'
       }
     });
-    console.error('Error handling status update:', error);
-    throw error;
+    console.error(`Erro em handleStatusUpdate: ${error.message}`);
   }
 }
 
@@ -1250,7 +1251,7 @@ async function shouldDisconnectChannel(channelId) {
       .eq('sent_from_system', true)
       .order('created_at', { ascending: false })
       .limit(8);
-    
+
     if (error) {
       Sentry.captureException(error, {
         extra: {
@@ -1260,7 +1261,7 @@ async function shouldDisconnectChannel(channelId) {
       });
       throw error;
     }
-    
+
     // Se não houver mensagens suficientes para análise
     if (!recentMessages || recentMessages.length < 6) {
       Sentry.captureMessage('Mensagens insuficientes para análise de desconexão', {
@@ -1273,13 +1274,13 @@ async function shouldDisconnectChannel(channelId) {
       });
       return false;
     }
-    
+
     // Conta quantas das últimas mensagens falharam
     const failedCount = recentMessages.filter(msg => msg.status === 'failed').length;
-    
+
     // Se 6 ou mais das últimas 8 mensagens falharam, desconecta o canal
     const shouldDisconnect = failedCount >= 6;
-    
+
     if (shouldDisconnect) {
       Sentry.captureMessage('Canal deve ser desconectado devido a falhas consecutivas', {
         level: 'warning',
@@ -1291,7 +1292,7 @@ async function shouldDisconnectChannel(channelId) {
         }
       });
     }
-    
+
     return shouldDisconnect;
   } catch (error) {
     Sentry.captureException(error, {
@@ -1322,7 +1323,7 @@ async function disconnectChannel(channelId, errorMessage) {
       .select('settings')
       .eq('id', channelId)
       .single();
-    
+
     if (fetchError) {
       Sentry.captureException(fetchError, {
         extra: {
@@ -1332,25 +1333,25 @@ async function disconnectChannel(channelId, errorMessage) {
       });
       throw fetchError;
     }
-    
+
     // Atualiza as configurações com as informações de erro
     const updatedSettings = {
       ...(channelData?.settings || {}),
       last_error: errorMessage,
       last_error_at: new Date().toISOString()
     };
-    
+
     // Marca o canal como desconectado
     const { error: channelUpdateError } = await supabase
       .from('chat_channels')
-      .update({ 
+      .update({
         is_connected: false,
         is_tested: false,
         settings: updatedSettings,
         updated_at: new Date().toISOString()
       })
       .eq('id', channelId);
-    
+
     if (channelUpdateError) {
       Sentry.captureException(channelUpdateError, {
         extra: {
@@ -1396,7 +1397,7 @@ async function disconnectChannel(channelId, errorMessage) {
 export async function sendSystemMessage(messageId, attempt = 1) {
   const MAX_ATTEMPTS = 3;
   const RETRY_DELAY = 4000; // 2 segundos entre tentativas
-  
+
   try {
     // Busca a mensagem com dados do chat e do canal
     const { data: message, error: messageError } = await supabase
@@ -1428,18 +1429,18 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       });
       throw messageError;
     }
-    
+
     const chat = message.chat;
     const channel = chat.channel;
-    
+
     // Verifica se o canal está desconectado
     if (!channel.is_connected) {
       const errorMessage = 'Canal desconectado. Não é possível enviar mensagens.';
-      
+
       // Atualiza status da mensagem para erro
       const { error: updateError } = await supabase
         .from('messages')
-        .update({ 
+        .update({
           status: 'failed',
           error_message: errorMessage
         })
@@ -1469,7 +1470,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
         messageId
       };
     }
-    
+
     const channelConfig = CHANNEL_CONFIG[channel.type];
     if (!channelConfig) {
       Sentry.captureMessage('Handler não encontrado para tipo de canal', {
@@ -1482,7 +1483,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       });
       throw new Error(`Handler not found for channel type: ${channel.type}`);
     }
-    
+
     if (!channelConfig.handler) {
       Sentry.captureMessage('Handler não implementado para tipo de canal', {
         level: 'error',
@@ -1512,7 +1513,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     // Atualiza status da mensagem e external_id
     const { error: updateError } = await supabase
       .from('messages')
-      .update({ 
+      .update({
         status: 'sent',
         external_id: result.messageId,
         error_message: null // Limpa mensagem de erro anterior se existir
@@ -1531,7 +1532,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
     }
 
     return result;
-    
+
   } catch (error) {
     Sentry.captureException(error, {
       extra: {
@@ -1541,15 +1542,15 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       }
     });
     console.log(`Erro ao enviar mensagem (tentativa ${attempt}/${MAX_ATTEMPTS}):`, error);
-    
+
     // Verifica se deve tentar novamente
     if (attempt < MAX_ATTEMPTS) {
-      console.log(`Tentando novamente em ${RETRY_DELAY/1000} segundos...`);
-      
+      console.log(`Tentando novamente em ${RETRY_DELAY / 1000} segundos...`);
+
       // Atualiza status da mensagem para retry
       const { error: retryUpdateError } = await supabase
         .from('messages')
-        .update({ 
+        .update({
           status: 'failed',
           error_message: `Tentativa ${attempt}/${MAX_ATTEMPTS} falhou: ${error.message}`
         })
@@ -1564,7 +1565,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
           }
         });
       }
-      
+
       // Espera antes de tentar novamente
       return new Promise((resolve) => {
         setTimeout(() => {
@@ -1577,7 +1578,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
         }, RETRY_DELAY);
       });
     }
-    
+
     // Se chegou aqui, todas as tentativas falharam
     // Busca novamente a mensagem para obter o ID do canal
     const { data: failedMessage, error: fetchError } = await supabase
@@ -1589,7 +1590,7 @@ export async function sendSystemMessage(messageId, attempt = 1) {
       `)
       .eq('id', messageId)
       .single();
-    
+
     if (fetchError) {
       Sentry.captureException(fetchError, {
         extra: {
@@ -1598,11 +1599,11 @@ export async function sendSystemMessage(messageId, attempt = 1) {
         }
       });
     }
-    
+
     // Atualiza status da mensagem para erro
     const { error: finalUpdateError } = await supabase
       .from('messages')
-      .update({ 
+      .update({
         status: 'failed',
         error_message: `Failed after ${MAX_ATTEMPTS} attempts. Last error: ${error.message}`
       })
@@ -1616,17 +1617,17 @@ export async function sendSystemMessage(messageId, attempt = 1) {
         }
       });
     }
-    
+
     // Verifica se deve desconectar o canal com base no histórico de falhas
     if (failedMessage && failedMessage.chat) {
       const channelId = failedMessage.chat.channel_id;
       const shouldDisconnect = await shouldDisconnectChannel(channelId);
-      
+
       if (shouldDisconnect) {
         await disconnectChannel(channelId, error.message);
       }
     }
-    
+
     // Retorna objeto com erro ao invés de lançar exceção
     return {
       error: error.message,
@@ -1640,11 +1641,11 @@ export async function createMessageRoute(req, res) {
   try {
     // Obter chatId e organizationId dos parâmetros da rota
     const { chatId, organizationId } = req.params;
-    
+
     // Em requisições multipart/form-data, os campos de texto estão em req.body
     const content = req.body.content || null;
     const replyToMessageId = req.body.replyToMessageId || null;
-    
+
     // Extrair o campo metadata se existir
     let metadata = null;
     if (req.body.metadata) {
@@ -1662,7 +1663,7 @@ export async function createMessageRoute(req, res) {
       const urlAttachmentsData = Array.isArray(req.body.url_attachments)
         ? req.body.url_attachments
         : [req.body.url_attachments];
-      
+
       // Processar cada JSON de anexo URL
       for (const urlAttachmentJson of urlAttachmentsData) {
         try {
@@ -1683,7 +1684,7 @@ export async function createMessageRoute(req, res) {
     }
 
     const files = req.files || {};
-    
+
     // Se houver anexos URL, adicioná-los como "arquivos"
     if (urlAttachments.length > 0) {
       if (!files.attachments) {
@@ -1691,7 +1692,7 @@ export async function createMessageRoute(req, res) {
       } else if (!Array.isArray(files.attachments)) {
         files.attachments = [files.attachments];
       }
-      
+
       // Adicionar cada anexo URL à lista de arquivos
       for (const urlAttachment of urlAttachments) {
         files.attachments.push(urlAttachment);
@@ -1746,8 +1747,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       });
       return {
         status: 404,
-        success: false, 
-        error: 'Chat not found or permission denied' 
+        success: false,
+        error: 'Chat not found or permission denied'
       };
     }
 
@@ -1762,8 +1763,8 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       });
       return {
         status: 404,
-        success: false, 
-        error: 'Chat not found or permission denied' 
+        success: false,
+        error: 'Chat not found or permission denied'
       };
     }
 
@@ -1771,15 +1772,15 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     const channelType = chatData.channel_details?.type || 'email';
     const channelConfig = CHANNEL_CONFIG[channelType] || {};
     const isSocialChannel = [
-      'whatsapp_official', 
-      'whatsapp_wapi', 
-      'whatsapp_zapi', 
-      'whatsapp_evo', 
-      'instagram', 
+      'whatsapp_official',
+      'whatsapp_wapi',
+      'whatsapp_zapi',
+      'whatsapp_evo',
+      'instagram',
       'facebook'
     ].includes(channelType);
 
-    
+
     // Se houver userId e uma assinatura de mensagem configurada no canal, processar a assinatura
     let processedContent = content;
     if (userId && chatData.channel_details?.settings?.messageSignature && content) {
@@ -1790,13 +1791,13 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           .select('nickname')
           .eq('id', userId)
           .single();
-        
+
         if (!profileError && profile && profile.nickname) {
           const signature = chatData.channel_details.settings.messageSignature;
-          
+
           // Substituir {{nickname}} pelo nickname do agente
           let formattedSignature = signature.replace(/{{nickname}}/g, profile.nickname);
-          
+
           // Verificar se a assinatura contém {{contentMessage}}
           if (formattedSignature.includes('{{contentMessage}}')) {
             // Substituir {{contentMessage}} pelo conteúdo original
@@ -1818,7 +1819,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         // Em caso de erro, usa o conteúdo original
       }
     }
-    
+
     // Preparar anexos
     const attachments = [];
     const fileRecords = [];
@@ -1830,15 +1831,15 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     // Processar uploads de arquivos
     // console.log('hasFiles', hasFiles);
     if (hasFiles) {
-      const uploadPromises = Array.isArray(files.attachments) 
-        ? files.attachments 
-        : [files.attachments]; 
+      const uploadPromises = Array.isArray(files.attachments)
+        ? files.attachments
+        : [files.attachments];
       // console.log('uploadPromises', uploadPromises);
 
       for (const file of uploadPromises) {
         let uploadResult;
         // Usar a função uploadFile para processar o arquivo
-        if(file.url) {
+        if (file.url) {
           // console.log('file', file);
           uploadResult = {
             attachment: {
@@ -1849,7 +1850,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
               file_size: file.size ?? null
             }
           }
-        } else {  
+        } else {
           uploadResult = await uploadFile({
             fileData: file.data,
             fileName: file.name,
@@ -1859,12 +1860,12 @@ export async function createMessageToSend(chatId, organizationId, content, reply
             customFolder: 'chat-attachments',
             chatId: chatId
           });
-          
+
           if (!uploadResult.success) {
             throw new Error(`Error uploading file: ${uploadResult.error}`);
           }
         }
-        
+
         // Para canais sociais, cada arquivo é uma mensagem separada
         if (isSocialChannel) {
           // Determinar o tipo de mensagem com base no tipo de arquivo
@@ -1890,7 +1891,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           // Para email, adicionar à lista de anexos
           attachments.push(uploadResult.attachment);
         }
-        if(!file.url) {  
+        if (!file.url) {
           // Adicionar o registro do arquivo para inserção posterior
           fileRecords.push(uploadResult.fileRecord);
         }
@@ -1902,7 +1903,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       // Aplicar formatação específica do canal se disponível
       // const formattedContent = channelConfig.formatMessage ? channelConfig.formatMessage(content) : content;
       const formattedContent = processedContent;
-      
+
       if (isSocialChannel && hasFiles) {
         // Para canais sociais com arquivos, adicionar mensagem de texto separada
         messages.push({
@@ -1985,7 +1986,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
 
     // Inserir mensagens no banco
     const messagesData = [];
-    
+
     // Cadastrar e enviar mensagens uma por uma
     for (const message of messages) {
       try {
@@ -2051,11 +2052,11 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         // Atualiza o last_message_id do chat
         await supabase
           .from('chats')
-            .update({ 
-              last_message_id: messageData.id,
-              last_message_at: new Date().toISOString()
-            })
-            .eq('id', chatId);
+          .update({
+            last_message_id: messageData.id,
+            last_message_at: new Date().toISOString()
+          })
+          .eq('id', chatId);
 
         // Envia a mensagem imediatamente após cadastro, não espera o resultado
         await sendSystemMessage(messageData.id);
@@ -2082,11 +2083,11 @@ export async function createMessageToSend(chatId, organizationId, content, reply
 
     // Atualiza o last_message_id do chat apos os envios
     const lastMessage = messagesData[messagesData.length - 1];
-    
+
     if (lastMessage) {
       await supabase
         .from('chats')
-        .update({ 
+        .update({
           unread_count: 0,
           last_message_id: lastMessage.id,
           last_message_at: new Date().toISOString()
@@ -2111,10 +2112,10 @@ export async function createMessageToSend(chatId, organizationId, content, reply
       }
     });
     console.error('Erro no createMessageRoute:', error);
-    return { 
+    return {
       status: 500,
-      success: false, 
-      error: 'Internal server error' 
+      success: false,
+      error: 'Internal server error'
     }
   }
 }
@@ -2132,7 +2133,7 @@ async function getActiveOpenAIIntegration(organizationId) {
       .eq('organization_id', organizationId)
       .eq('type', 'openai')
       .eq('status', 'active')
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!integration) return null;
@@ -2163,10 +2164,10 @@ async function transcribeAudio(audioUrl, apiKey, mimeType = 'audio/ogg; codecs=o
   try {
     // Baixar o arquivo de áudio
     const audioBuffer = await downloadFileFromUrl(audioUrl);
-    
+
     // Criar um FormData para enviar o arquivo
     const formData = new FormData();
-    
+
     // Determinar a extensão do arquivo baseado no mime_type
     let fileExtension = 'ogg';
     if (mimeType.includes('mp3')) {
@@ -2176,7 +2177,7 @@ async function transcribeAudio(audioUrl, apiKey, mimeType = 'audio/ogg; codecs=o
     } else if (mimeType.includes('m4a')) {
       fileExtension = 'm4a';
     }
-    
+
     // Adicionar o arquivo e os parâmetros conforme a documentação da OpenAI
     formData.append('file', audioBuffer, {
       filename: `audio.${fileExtension}`,
@@ -2229,6 +2230,8 @@ export async function deleteMessageRoute(req, res) {
         *,
         chat:chats!messages_chat_id_fkey (
           external_id,
+          metadata,
+          last_message_id,
           channel:chat_channels!chats_channel_id_fkey (*)
         )
       `)
@@ -2254,35 +2257,36 @@ export async function deleteMessageRoute(req, res) {
       throw updateError;
     }
 
-    // // Se a mensagem deletada for a última mensagem do chat
-    // if (chat.last_message_id === messageId) {
-    //   // Busca a mensagem anterior não deletada
-    //   const { data: previousMessage, error: previousError } = await supabase
-    //     .from('messages')
-    //     .select('id, created_at')
-    //     .eq('chat_id', chatId)
-    //     .neq('status', 'deleted')
-    //     .order('created_at', { ascending: false })
-    //     .limit(1)
-    //     .single();
+    
+    // Se a mensagem deletada for a última mensagem do chat
+    if (message.chat.last_message_id === messageId) {
+      // Busca a mensagem anterior não deletada
 
-    //   if (previousError && previousError.code !== 'PGRST116') {
-    //     throw previousError;
-    //   }
+       // Prepara metadata do chat com a última reação
+       const updatedChatMetadata = {
+        ...(message.chat.metadata || {}),
+        last_message: {
+          type: 'deleted',
+          timestamp: new Date().toISOString(),
+          message_id: message.id
+        }
+      };
 
-    //   // Atualiza o last_message_id do chat
-    //   const { error: chatUpdateError } = await supabase
-    //     .from('chats')
-    //     .update({ 
-    //       last_message_id: previousMessage?.id || null,
-    //       last_message_at: previousMessage?.created_at || null
-    //     })
-    //     .eq('id', chatId);
+      // Atualiza o last_message_id do chat
+      const { error: chatUpdateError } = await supabase
+        .from('chats')
+        .update({ 
+          last_message_id: null,
+          last_message_at: new Date().toISOString(),
+          metadata: updatedChatMetadata
+        })
+        .eq('id', chatId);
 
-    //   if (chatUpdateError) {
-    //     throw chatUpdateError;
-    //   }
-    // }
+      if (chatUpdateError) {
+        console.error('Erro ao atualizar o chat:', chatUpdateError);
+        throw chatUpdateError;
+      }
+    }
 
     // Se a mensagem tiver um external_id e o canal suportar deleção de mensagens
     if (message.external_id && message.chat?.channel) {
@@ -2333,7 +2337,7 @@ export async function deleteMessageRoute(req, res) {
 export async function handleChannelDeletion(channel, messageData) {
   const channelConfig = CHANNEL_CONFIG[channel.type];
   // console.log(channelConfig?.deleteHandler)
-  
+
   if (!channelConfig?.deleteHandler) {
     return true;
   }
@@ -2349,5 +2353,506 @@ export async function handleChannelDeletion(channel, messageData) {
       }
     });
     throw error;
+  }
+}
+
+export async function updateMessageRoute(req, res) {
+  try {
+    const { chatId, messageId, organizationId } = req.params;
+    const { content } = req.body;
+
+    // Validação básica
+    if (!content || !content.trim()) {
+      return res.status(400).json({
+        error: 'Content is required',
+        message: 'O conteúdo da mensagem é obrigatório'
+      });
+    }
+
+    // Verificar se a mensagem existe e pertence à organização
+    const { data: existingMessage, error: findError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        chat:chats!messages_chat_id_fkey!inner(
+          organization_id,
+          id,
+          external_id,
+          channel:chat_channels!chats_channel_id_fkey (
+            *
+          )
+        )
+      `)
+      .eq('id', messageId)
+      .eq('chats.id', chatId)
+      .eq('chats.organization_id', organizationId)
+      .single();
+
+    if (findError || !existingMessage) {
+      return res.status(404).json({
+        error: 'Message not found',
+        message: findError || 'Mensagem não encontrada'
+      });
+    }
+
+    // Verificar se a mensagem pode ser editada (apenas mensagens de texto enviadas pelos usuários)
+    if (existingMessage.type !== 'text' || existingMessage.sender_type !== 'agent') {
+      return res.status(400).json({
+        error: 'Message cannot be edited',
+        message: 'Esta mensagem não pode ser editada'
+      });
+    }
+
+    if(!existingMessage.chat.channel){
+      return res.status(400).json({
+        error: 'Channel not found',
+        message: 'Canal não encontrado'
+      });
+    }
+
+    // Verificar limite de tempo para edição (15 minutos)
+    const messageTime = new Date(existingMessage.created_at);
+    const currentTime = new Date();
+    const timeDifference = currentTime - messageTime;
+    const fifteenMinutes = 15 * 60 * 1000; // 15 minutos em milissegundos
+
+    if (timeDifference > fifteenMinutes) {
+      return res.status(400).json({
+        error: 'Edit time expired',
+        message: 'O tempo limite para editar esta mensagem expirou'
+      });
+    }
+
+    //Verificar se o canal suporta edição de mensagens
+    const channelConfig = CHANNEL_CONFIG[existingMessage.chat.channel.type];
+    if (!channelConfig?.updateHandler) {
+      return res.status(400).json({
+        error: 'Channel does not support message editing',
+        message: 'Este canal não suporta edição de mensagens'
+      });
+    }
+
+    if(!existingMessage.chat.external_id) {
+      return res.status(400).json({
+        error: 'Channel does not support message editing',
+        message: 'Este canal não suporta edição de mensagens'
+      });
+    }
+
+    try {
+        //Atualizar a mensagem no canal
+      const response = await channelConfig.updateHandler(existingMessage.chat.channel, existingMessage.chat.external_id, existingMessage.external_id, content.trim());
+      res.json({
+        success: true,
+        message: 'Mensagem atualizada com sucesso'
+      });
+    } catch (error) {
+      Sentry.captureException(error, {
+        extra: {
+          organizationId: req.user?.organizationId,
+          chatId: req.params?.chatId,
+          messageId: req.params?.messageId
+        }
+      });
+      return res.status(500).json({
+        error: 'Failed to update message',
+        message: `${JSON.stringify(error)}`
+      });
+    }
+
+    // // Atualizar a mensagem
+    // const { data: updatedMessage, error: updateError } = await supabase
+    //   .from('messages')
+    //   .update({
+    //     content: content.trim(),
+    //     edited_at: new Date().toISOString(),
+    //     updated_at: new Date().toISOString()
+    //   })
+    //   .eq('id', messageId)
+    //   .select('*')
+    //   .single();
+
+    // if (updateError) {
+    //   console.error('Erro ao atualizar mensagem:', updateError);
+    //   return res.status(500).json({
+    //     error: 'Failed to update message',
+    //     message: 'Erro interno do servidor ao atualizar mensagem'
+    //   });
+    // }
+
+    
+
+  } catch (error) {
+    console.error('Erro na função updateMessageRoute:', error);
+    Sentry.captureException(error, {
+      extra: { 
+        organizationId: req.user?.organizationId,
+        chatId: req.params?.chatId,
+        messageId: req.params?.messageId
+      }
+    });
+
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Erro interno do servidor'
+    });
+  }
+}
+
+
+/**
+ * Função para atualizar uma mensagem editada pela api do canal
+ * @param {*} channel 
+ * @param {*} originalMessageId 
+ * @param {*} newContent 
+ * @returns 
+ */
+export async function handleUpdateEditedMessage(channel, originalMessageId, newContent) {
+  try {
+    // Verifica se existe a estrutura de protocolo de mensagem editada
+    if (!originalMessageId || !newContent) {
+      console.error('Dados insuficientes para processar mensagem editada V2025.1:', {
+        originalMessageId,
+        newContent
+      });
+      return;
+    }
+
+    // Busca a mensagem usando uma query mais robusta
+    const { data: message, error: findError } = await supabase
+      .from('messages')
+      .select(`
+        id,
+        external_id,
+        content,
+        chat_id,
+        organization_id,
+        metadata,
+        chat:chats!messages_chat_id_fkey!inner (
+          channel_id
+        )
+      `)
+      .eq('external_id', originalMessageId)
+      .eq('chat.channel_id', channel.id)
+      .single();
+
+    if (findError) {
+      console.error('Mensagem não encontrada para edição:', originalMessageId, findError);
+      Sentry.captureException(findError, {
+        extra: {
+          webhookData,
+          channelId: channel.id,
+          originalMessageId,
+          context: 'find_message_for_edit_v2025_1'
+        }
+      });
+      return;
+    }
+
+    if (message) {
+      // Formata o conteúdo usando o mesmo formatador das mensagens recebidas
+      const formattedContent = formatWhatsAppToMarkdown(newContent);
+
+      // Prepara os metadados atualizados com informações da edição
+      const updatedMetadata = {
+        ...(message.metadata || {}),
+        edited: true,
+        editedAt: new Date().toISOString(),
+        previousContent: message.content
+      };
+
+      // Atualiza a mensagem com o novo conteúdo e metadados
+      const { error: updateError } = await supabase
+        .from('messages')
+        .update({
+          content: formattedContent,
+          metadata: updatedMetadata
+        })
+        .eq('id', message.id);
+
+      if (updateError) {
+        console.error('Erro ao atualizar mensagem editada:', updateError);
+        Sentry.captureException(updateError, {
+          extra: {
+            messageId: message.id,
+            originalMessageId,
+            newContent: formattedContent,
+            context: 'updating_message_edited_v2025_1'
+          }
+        });
+      } else {
+        // Atualiza o timestamp da última atividade no chat
+        const { error: updateChatError } = await supabase
+          .from('chats')
+          .update({
+            last_message_at: new Date().toISOString()
+          })
+          .eq('id', message.chat_id);
+
+        if (updateChatError) {
+          console.error('Erro ao atualizar timestamp do chat:', updateChatError);
+          Sentry.captureException(updateChatError, {
+            extra: {
+              chatId: message.chat_id,
+              context: 'updating_chat_timestamp_after_edit_v2025_1'
+            }
+          });
+        }
+      }
+    } else {
+      console.warn(`Mensagem ${originalMessageId} não encontrada no banco de dados para ser editada`);
+    }
+  } catch (error) {
+    console.error('Erro ao processar mensagem editada V2025.1:', error);
+    Sentry.captureException(error, {
+      extra: {
+        webhookData,
+        channelId: channel.id,
+        context: 'handle_update_edited_message_v2025_1'
+      }
+    });
+  }
+}
+
+/**
+ * Atualiza o status de uma mensagem para "deleted" quando recebido evento de mensagem apagada de uma api do canal
+ * @param {*} channel - Canal de comunicação
+ * @param {*} messageId - ID da mensagem apagada
+ * @returns 
+ */
+export async function handleUpdateDeletedMessage(channel, messageId) {
+
+  if(!channel) {
+    console.error('Canal não encontrado para mensagem apagada');
+    return;
+  }
+
+  if (!messageId) {
+    console.error('ID da mensagem não encontrado para mensagem apagada');
+    return;
+  }
+
+  // Encontra a mensagem pelo ID externo
+  const { data: message, error: findError } = await supabase
+    .from('messages')
+    .select(`
+        id,
+        organization_id,
+        chat_id,
+        content,
+        metadata,
+        chat:chat_id (
+          channel_id,
+          metadata,
+          unread_count
+        )
+      `)
+    .eq('external_id', messageId)
+    .eq('chat.channel_id', channel.id)
+    .single();
+
+  if (findError) {
+    console.error('Erro ao buscar mensagem para atualizar status de apagada:', findError);
+    return;
+  }
+
+  if (message) {
+    // Prepara os metadados atualizados
+    const updatedMetadata = {
+      ...(message.metadata || {}),
+      deleted: true,
+      deletedAt: new Date().toISOString(),
+      previousContent: message.content
+    };
+
+    // Atualiza o status e metadados da mensagem
+    const { error: updateError } = await supabase
+      .from('messages')
+      .update({
+        status: 'deleted',
+        metadata: updatedMetadata
+      })
+      .eq('id', message.id);
+
+    if (updateError) {
+      Sentry.captureException(updateError, {
+        extra: {
+          messageId: message.id,
+          context: 'updating_deleted_message_status'
+        }
+      });
+    }
+
+    // Prepara metadata do chat com a última reação
+    const updatedChatMetadata = {
+      ...(message.chat.metadata || {}),
+      last_message: {
+        type: 'deleted',
+        timestamp: new Date().toISOString(),
+        message_id: message.id
+      }
+    };
+
+    // Atualiza o timestamp do último contato no chat
+    const { error: updateChatError } = await supabase
+      .from('chats')
+      .update({
+        last_message_id: null,
+        last_message_at: new Date().toISOString(),
+        metadata: updatedChatMetadata,
+        unread_count: (message.chat.unread_count ? message.chat.unread_count - 1 : 0)
+      })
+      .eq('id', message.chat_id);
+
+    if (updateChatError) {
+      Sentry.captureException(updateChatError, {
+        extra: {
+          chatId: message.chat_id,
+          context: 'updating_chat_after_deleted_message'
+        }
+      });
+    }
+  }
+}
+
+
+/**
+ * Atualiza uma mensagem com uma reação
+ * @param {Object} channel - Canal de comunicação
+ * @param {String} messageExternalId - ID da mensagem referenciada
+ * @param {String} reaction - Reação
+ * @param {String} senderId - ID do remetente
+ * @param {String} senderName - Nome do remetente
+ * @param {String} senderProfilePicture - URL da imagem do perfil do remetente
+ */
+export async function handleUpdateMessageReaction(channel, messageExternalId, reaction, senderId, senderName, senderProfilePicture) {
+  try {
+    // Verifica se existe a estrutura de reação e ID da mensagem referenciada
+    if (!messageExternalId) {
+      console.error('ID da mensagem referenciada não encontrado para reação V2025.1');
+      return;
+    }
+
+    if(!reaction) {
+      console.error('Reação não encontrada para atualização');
+      return;
+    }
+
+    if(!senderId) {
+      senderId = 'unknown_sender';
+    }
+
+    const { data: message, error: findError } = await supabase
+      .from('messages')
+      .select(`
+          id,
+          organization_id,
+          chat_id,
+          metadata,
+          content,
+          type,
+          chat:chat_id (
+            channel_id
+          )
+        `)
+      .eq('external_id', messageExternalId)
+      .eq('chat.channel_id', channel.id)
+      .single();
+
+    if (findError) {
+      console.error('Erro ao buscar mensagem para reação V2025.1:', findError);
+      Sentry.captureException(findError, {
+        extra: {
+          messageExternalId,
+          channelId: channel.id,
+          messageExternalId,
+          context: 'find_message_for_reaction_v2025_1'
+        }
+      });
+      return;
+    }
+
+    if (message) {
+      // Prepara os metadados atualizados com a reação
+      const updatedMetadata = {
+        ...(message.metadata || {}),
+        reactions: {
+          ...(message.metadata?.reactions || {}),
+          [senderId]: {
+            reaction: reaction,
+            timestamp: new Date().toISOString(),
+            senderName: senderName || null,
+            senderProfilePicture: senderProfilePicture || null
+          }
+        }
+      };
+
+      // Atualiza os metadados da mensagem
+      const { error: updateError } = await supabase
+        .from('messages')
+        .update({
+          metadata: updatedMetadata
+        })
+        .eq('id', message.id);
+
+      if (updateError) {
+        Sentry.captureException(updateError, {
+          extra: {
+            messageId: message.id,
+            context: 'updating_message_reaction_v2025_1'
+          }
+        });
+      }
+
+      // Atualiza o timestamp do último contato no chat
+      const { data: chatData, error: getChatError } = await supabase
+        .from('chats')
+        .select('metadata')
+        .eq('id', message.chat_id)
+        .single();
+
+      if (!getChatError && chatData) {
+        // Prepara metadata do chat com a última reação
+        const updatedChatMetadata = {
+          ...(chatData.metadata || {}),
+          last_message: {
+            type: 'reaction',
+            reaction: reaction,
+            timestamp: new Date().toISOString(),
+            senderName: senderName,
+            senderProfilePicture: senderProfilePicture,
+            message_id: message.id,
+            message_content: message.content,
+            message_type: message.type
+          }
+        };
+
+        const { error: updateChatError } = await supabase
+          .from('chats')
+          .update({
+            last_message_at: new Date().toISOString(),
+            last_message_id: null,
+            metadata: updatedChatMetadata
+          })
+          .eq('id', message.chat_id);
+
+        if (updateChatError) {
+          Sentry.captureException(updateChatError, {
+            extra: {
+              chatId: message.chat_id,
+              context: 'updating_chat_reaction_v2025_1'
+            }
+          });
+        }
+      }
+    }
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        context: 'handle_update_message_reaction_v2025_1'
+      }
+    });
+    console.error('Erro ao processar reação V2025.1:', error);
   }
 }

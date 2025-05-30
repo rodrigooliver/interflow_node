@@ -3,6 +3,38 @@ import { validateChannel } from '../webhooks/utils.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 
+/**
+ * Normaliza dados de status do Facebook para formato padrão
+ * 
+ * @param {Object} webhookData - Dados brutos do webhook Facebook
+ * @returns {Object} - Dados normalizados para handleStatusUpdate
+ */
+function normalizeFacebookStatusUpdate(webhookData) {
+  // Mapear status específicos do Facebook para status padronizados se necessário
+  const mapFacebookStatusToStandard = (facebookStatus) => {
+    const statusMap = {
+      'sent': 'sent',
+      'delivered': 'delivered', 
+      'read': 'read',
+      'failed': 'failed',
+      'pending': 'pending',
+      'error': 'failed'
+    };
+    return statusMap[facebookStatus] || facebookStatus || 'unknown';
+  };
+
+  return {
+    messageId: webhookData.messageId || webhookData.id,
+    status: mapFacebookStatusToStandard(webhookData.status),
+    error: webhookData.error || webhookData.errorMessage || null,
+    timestamp: webhookData.timestamp || webhookData.moment || Date.now(),
+    metadata: {
+      original: webhookData,
+      source: 'facebook'
+    }
+  };
+}
+
 export async function handleFacebookWebhook(req, res) {
   const { channelId } = req.params;
   const webhookData = req.body;
@@ -27,7 +59,8 @@ export async function handleFacebookWebhook(req, res) {
         });
         break;
       case 'status':
-        await handleStatusUpdate(channel, webhookData);
+        const normalizedStatusData = normalizeFacebookStatusUpdate(webhookData);
+        await handleStatusUpdate(channel, normalizedStatusData);
         break;
       case 'delivery':
         // Handle message delivery confirmation

@@ -1,5 +1,3 @@
-
-
 import { handleIncomingMessage, handleStatusUpdate } from '../chat/message-handlers.js';
 import { validateChannel } from '../webhooks/utils.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
@@ -208,6 +206,41 @@ function parseWhatsAppMessageId(wamid) {
 }
 
 /**
+ * Normaliza dados de status do WhatsApp Official para formato padrão
+ * 
+ * @param {Object} statusUpdate - Dados de status do WhatsApp Official
+ * @param {Object} additionalData - Dados adicionais como chat_id, etc.
+ * @returns {Object} - Dados normalizados para handleStatusUpdate
+ */
+function normalizeWhatsAppOfficialStatusUpdate(statusUpdate, additionalData = {}) {
+  // Mapear status específicos do WhatsApp Official para status padronizados
+  const mapWhatsAppStatusToStandard = (whatsappStatus) => {
+    const statusMap = {
+      'sent': 'sent',
+      'delivered': 'delivered', 
+      'read': 'read',
+      'failed': 'failed',
+      'pending': 'pending'
+    };
+    return statusMap[whatsappStatus] || whatsappStatus || 'unknown';
+  };
+
+  return {
+    messageId: statusUpdate.id || statusUpdate.messageId,
+    status: mapWhatsAppStatusToStandard(statusUpdate.status),
+    error: statusUpdate.errors?.[0]?.title || additionalData.error || null,
+    timestamp: statusUpdate.timestamp ? statusUpdate.timestamp * 1000 : Date.now(),
+    metadata: {
+      original: statusUpdate,
+      source: 'whatsapp_official',
+      additionalData,
+      recipient_id: statusUpdate.recipient_id,
+      pricing: statusUpdate.pricing
+    }
+  };
+}
+
+/**
  * Processa eventos de status de mensagens do WhatsApp
  * 
  * @param {Object} channel - Canal de comunicação
@@ -221,60 +254,17 @@ async function processWhatsAppStatus(channel, statusUpdate) {
     // Analisa o ID da mensagem
     const messageIdInfo = parseWhatsAppMessageId(statusUpdate.id);
     
-    // Mapeia o status do WhatsApp para o formato interno
-    let mappedStatus;
-    switch (statusUpdate.status) {
-      case 'sent':
-        mappedStatus = 'sent';
-        break;
-      case 'delivered':
-        mappedStatus = 'delivered';
-        break;
-      case 'read':
-        mappedStatus = 'read';
-        break;
-      case 'failed':
-        mappedStatus = 'failed';
-        break;
-      default:
-        mappedStatus = statusUpdate.status;
-    }
-    
-    // Extrai informações adicionais
-    const recipientId = statusUpdate.recipient_id;
-    const conversationId = statusUpdate.conversation?.id;
-    const errorInfo = statusUpdate.errors ? JSON.stringify(statusUpdate.errors) : null;
-    
-    // Verifica se o timestamp é válido
-    let timestamp = null;
-    if (statusUpdate.timestamp) {
-      // Converte para milissegundos se for um timestamp Unix em segundos
-      if (statusUpdate.timestamp.toString().length === 10) {
-        timestamp = parseInt(statusUpdate.timestamp) * 1000;
-      } else {
-        timestamp = parseInt(statusUpdate.timestamp);
-      }
-      
-      // Verifica se o timestamp é válido
-      if (isNaN(timestamp) || timestamp <= 0) {
-        console.warn('Timestamp inválido:', statusUpdate.timestamp);
-        timestamp = Date.now(); // Usa o timestamp atual como fallback
-      }
-    } else {
-      timestamp = Date.now();
-    }
-    
     // Busca o chat associado a este número de telefone
     const { data: chat } = await supabase
       .from('chats')
       .select('id')
       .eq('channel_id', channel.id)
-      .eq('external_id', recipientId)
+      .eq('external_id', statusUpdate.recipient_id)
       .order('created_at', { ascending: false })
       .limit(1);
     
     if (!chat || chat.length === 0) {
-      console.warn(`Chat não encontrado para o número ${recipientId}`);
+      console.warn(`Chat não encontrado para o número ${statusUpdate.recipient_id}`);
     }
     
     // Verifica se já processamos este status para esta mensagem
@@ -302,25 +292,14 @@ async function processWhatsAppStatus(channel, statusUpdate) {
     }
     
     // Atualiza o status da mensagem no sistema
-    await handleStatusUpdate(channel, {
-      messageId: statusUpdate.id,
-      status: mappedStatus,
-      error: errorInfo,
-      timestamp: timestamp,
-      chat_id: chat?.[0]?.id, // Passa o ID do chat se encontrado
-      metadata: {
-        conversation_id: conversationId,
-        recipient_id: recipientId,
-        message_id_info: messageIdInfo,
-        original_status: statusUpdate.status,
-        pricing: statusUpdate.pricing,
-        processed_at: new Date().toISOString(),
-        webhook_timestamp: statusUpdate.timestamp,
-        channel_type: 'whatsapp_official',
-        channel_id: channel.id,
-        organization_id: channel.organization_id
-      }
+    const normalizedStatusData = normalizeWhatsAppOfficialStatusUpdate(statusUpdate, {
+      chat_id: chat?.[0]?.id,
+      message_id_info: messageIdInfo,
+      channel_id: channel.id,
+      organization_id: channel.organization_id
     });
+    
+    await handleStatusUpdate(channel, normalizedStatusData);
     
     return true;
   } catch (error) {

@@ -207,6 +207,38 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
   }
 }
 
+/**
+ * Normaliza dados de status do Instagram para formato padrão
+ * 
+ * @param {Object} statusData - Dados de status do Instagram
+ * @returns {Object} - Dados normalizados para handleStatusUpdate
+ */
+function normalizeInstagramStatusUpdate(statusData) {
+  // Mapear status específicos do Instagram para status padronizados se necessário
+  const mapInstagramStatusToStandard = (instagramStatus) => {
+    const statusMap = {
+      'sent': 'sent',
+      'delivered': 'delivered', 
+      'read': 'read',
+      'failed': 'failed',
+      'pending': 'pending',
+      'error': 'failed'
+    };
+    return statusMap[instagramStatus] || instagramStatus || 'unknown';
+  };
+
+  return {
+    messageId: statusData.messageId || statusData.message_id || statusData.id,
+    status: mapInstagramStatusToStandard(statusData.status),
+    error: statusData.error || statusData.errorMessage || null,
+    timestamp: statusData.timestamp || statusData.created_time || Date.now(),
+    metadata: {
+      original: statusData,
+      source: 'instagram'
+    }
+  };
+}
+
 export async function handleInstagramWebhook(req, res) {
   const webhookData = req.body;
 
@@ -261,12 +293,13 @@ export async function handleInstagramWebhook(req, res) {
           // Se for uma atualização de status de leitura
           if (isRead) {
             // console.log('👀 Processando atualização de status de leitura:', messagingData.read);
-            await handleStatusUpdate(channel, {
+            const normalizedStatusData = normalizeInstagramStatusUpdate({
               messageId: messagingData.read.mid,
               status: 'read',
               timestamp: messagingData.timestamp || Date.now(),
               fromMe: true
             });
+            await handleStatusUpdate(channel, normalizedStatusData);
             continue;
           }
 

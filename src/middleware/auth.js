@@ -154,7 +154,7 @@ export async function verifyAuth(req, res, next) {
 
       const { data: apiKeyData } = await supabase
         .from('api_keys')
-        .select('organization_id, profile_id, organization:organizations(settings, usage), profiles(is_superadmin)')
+        .select('organization_id, profile_id, organization:organizations(*), profiles(is_superadmin)')
         .eq('key_hash', keyHash)
         .eq('is_active', true)
         .single();
@@ -169,6 +169,7 @@ export async function verifyAuth(req, res, next) {
       }
 
       req.organizationId = organizationId;
+      req.organization = apiKeyData.organization;
       req.profileId = apiKeyData.profile_id;
       req.is_superadmin = apiKeyData.profiles?.is_superadmin || false;
       req.usage = apiKeyData.organization?.usage || null;
@@ -210,12 +211,13 @@ export async function verifyAuth(req, res, next) {
           // Busca as configurações da organização para o idioma
           const { data: organization } = await supabase
             .from('organizations')
-            .select('settings, usage')
+            .select('*')
             .eq('id', organizationId)
             .single();
 
           req.profileId = user.id;
           req.organizationId = organizationId;
+          req.organization = organization;
           req.language = req.language ?? organization?.settings?.language ?? 'pt';
           req.is_superadmin = true;
           req.usage = organization?.usage || null;
@@ -223,7 +225,7 @@ export async function verifyAuth(req, res, next) {
           // Se não é superadmin, verifica se é membro da organização
           const { data: membership, error: membershipError } = await supabase
             .from('organization_members')
-            .select('organization_id, organization:organizations(settings, usage)')
+            .select('organization_id, organization:organizations(*)')
             .eq('profile_id', user.id)
             .eq('organization_id', organizationId)
             .single();
@@ -235,6 +237,7 @@ export async function verifyAuth(req, res, next) {
 
           req.profileId = user.id;
           req.organizationId = organizationId;
+          req.organization = membership.organization;
           req.language = req.language ?? membership.organization?.settings?.language ?? 'pt';
           req.is_superadmin = false;
           req.usage = membership.organization?.usage || null;
