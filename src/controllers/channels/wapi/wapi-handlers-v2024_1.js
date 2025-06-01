@@ -484,15 +484,15 @@ export async function handleSenderMessageWApiV2024_1(channel, messageData) {
 export async function updateWebhookV2024_1(channel) {
   try {
     // console.log('channel.credentials', channel.credentials);
-    if(!channel.credentials.apiHost) {
+    if (!channel.credentials.apiHost) {
       throw new Error('Não existe host para ativar o webhook');
     }
 
-    if(!channel.credentials.apiConnectionKey) {
+    if (!channel.credentials.apiConnectionKey) {
       throw new Error('Não existe connectionKey para ativar o webhook');
     }
 
-    if(!channel.credentials.apiToken) {
+    if (!channel.credentials.apiToken) {
       throw new Error('Não existe token para ativar o webhook');
     }
 
@@ -623,7 +623,7 @@ export async function generateQrCodeV2024_1(channel) {
     // Descriptografar credenciais antes of use
     const decryptedCredentials = decryptCredentials(channel.credentials);
 
-    if(!decryptedCredentials.apiHost || !decryptedCredentials.apiConnectionKey || !decryptedCredentials.apiToken) {
+    if (!decryptedCredentials.apiHost || !decryptedCredentials.apiConnectionKey || !decryptedCredentials.apiToken) {
       throw new Error('Credenciais inválidas');
     }
 
@@ -895,7 +895,7 @@ export async function deleteInterflowChannelV2024_1(channel) {
   try {
     const credentials = decryptCredentials(channel.credentials);
 
-    if(!credentials.apiHost || !credentials.apiConnectionKey || !credentials.apiToken) {
+    if (!credentials.apiHost || !credentials.apiConnectionKey || !credentials.apiToken) {
       throw new Error('Credenciais inválidas');
     }
 
@@ -904,7 +904,7 @@ export async function deleteInterflowChannelV2024_1(channel) {
       const accountId = decrypt(channel.settings.interflowData.accountId);
 
       try {
-        if(channel.is_connected) {  
+        if (channel.is_connected) {
           // Primeiro desconecta a instância
           const disconnectResponse = await fetch(`https://${channel.credentials.apiHost}/instance/logout?connectionKey=${credentials.apiConnectionKey}`, {
             method: 'DELETE',
@@ -1131,3 +1131,54 @@ export async function restartWapiInstanceV2024_1(channel) {
   }
 }
 
+/**
+ * Valida um número de WhatsApp na W-API v2024.1
+ * @param {*} channelData 
+ * @param {*} phoneNumber 
+ * @returns 
+ */
+export async function validateWhatsAppNumberV2024_1(channelData, phoneNumber) {
+  try {
+    const credentials = decryptCredentials(channelData.credentials);
+
+    if (!credentials.apiHost || !credentials.apiConnectionKey || !credentials.apiToken) {
+      throw new Error('Credenciais inválidas');
+    }
+
+    const baseUrl = `https://${credentials.apiHost}`;
+
+    // Verificar número na API W-API usando o endpoint correto
+    // GET https://HOST/contacts/onwhatsapp?connectionKey=CONNECTIONKEY&phoneNumber=5599992249708
+    const response = await fetch(`${baseUrl}/contacts/onwhatsapp?connectionKey=${credentials.apiConnectionKey}&phoneNumber=${phoneNumber}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${credentials.apiToken}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Erro na resposta da W-API:', errorData);
+      return {
+        isValid: false,
+        error: 'Erro ao verificar número na API'
+      };
+    }
+
+    const data = await response.json();
+    const isValid = data.exists === true;
+
+    return {
+      isValid: isValid,
+      data: {
+        outputPhone: data.inputPhone
+      }
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channelData.id
+      }
+    });
+  }
+}

@@ -25,7 +25,8 @@ import {
   createInterflowChannelV2024_1,
   deleteInterflowChannelV2024_1,
   disconnectWapiInstanceV2024_1,
-  restartWapiInstanceV2024_1
+  restartWapiInstanceV2024_1,
+  validateWhatsAppNumberV2024_1
 } from './wapi/wapi-handlers-v2024_1.js';
 import {
   normalizeWapiMessageV2025_1,
@@ -37,7 +38,8 @@ import {
   createInterflowChannelV2025_1,
   deleteInterflowChannelV2025_1,
   disconnectWapiInstanceV2025_1,
-  restartWapiInstanceV2025_1
+  restartWapiInstanceV2025_1,
+  validateWhatsAppNumberV2025_1
 } from './wapi/wapi-handlers-v2025_1.js';
 import { registerUsageOrganizationByChannel } from '../organizations/usage.js';
 
@@ -1155,7 +1157,7 @@ export async function validateWhatsAppNumber(channel, phoneNumber) {
     // Buscar credenciais do canal
     const { data: channelData, error: channelError } = await supabase
       .from('chat_channels')
-      .select('credentials, type')
+      .select('credentials, type, settings')
       .eq('id', channel.id)
       .single();
 
@@ -1174,40 +1176,21 @@ export async function validateWhatsAppNumber(channel, phoneNumber) {
       return { isValid: true };
     }
 
-    // Descriptografar credenciais
-    const credentials = decryptCredentials(channelData.credentials);
-    const baseUrl = `https://${credentials.apiHost}`;
-
-    // Verificar número na API W-API usando o endpoint correto
-    // GET https://HOST/contacts/onwhatsapp?connectionKey=CONNECTIONKEY&phoneNumber=5599992249708
-    const response = await fetch(`${baseUrl}/contacts/onwhatsapp?connectionKey=${credentials.apiConnectionKey}&phoneNumber=${phoneNumber}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${credentials.apiToken}`
-      }
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Erro na resposta da W-API:', errorData);
+    if(channelData.settings.version === '2025_1') {
+      //CONEXÃO V2025_1
+      const result = await validateWhatsAppNumberV2025_1(channelData, phoneNumber);
       return {
-        isValid: false,
-        error: 'Erro ao verificar número na API'
+        isValid: result.isValid,
+        data: result.data
+      };
+    } else {
+      //CONEXÃO V2024_1
+      const result = await validateWhatsAppNumberV2024_1(channelData, phoneNumber);
+      return {
+        isValid: result.isValid,
+        data: result.data
       };
     }
-
-    const data = await response.json();
-
-    // A resposta da API contém um campo 'exists' que indica se o número é um WhatsApp válido
-    return {
-      isValid: data.exists === true,
-      data: {
-        exists: data.exists,
-        inputPhone: data.inputPhone,
-        outputPhone: data.outputPhone,
-        profilePictureUrl: data.profilePictureUrl
-      }
-    };
   } catch (error) {
     console.error('Erro ao validar número WhatsApp:', error);
     Sentry.captureException(error, {

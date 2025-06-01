@@ -1446,3 +1446,56 @@ export async function restartWapiInstanceV2025_1(channel) {
     throw error;
   }
 }
+
+export async function validateWhatsAppNumberV2025_1(channel, phoneNumber) {
+  try {
+    const credentials = channel.credentials;
+    const instanceId = credentials.instanceId || null;
+    const apiToken = credentials.apiToken ? decrypt(credentials.apiToken) : null;
+
+    const baseUrl = 'https://api.w-api.app/v1';
+
+    const body = {
+      phones: [phoneNumber]
+    };
+
+    const response = await fetch(`${baseUrl}/contacts/phone-exists-batch?instanceId=${instanceId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiToken}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to validate WhatsApp number');
+      Sentry.captureException(error, {
+        extra: {
+          channelId: channel.id,
+          instanceId,
+          phoneNumber,
+          errorData
+        }
+      });
+      throw error;
+    }
+
+    const responseData = await response.json();
+
+    return {
+      isValid: responseData.results[0].exists || false,
+      data: {
+        outputPhone: responseData.results[0].outputPhone ?? null
+      }
+    };
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id
+      }
+    });
+    throw error;
+  }
+}
