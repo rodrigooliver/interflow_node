@@ -1,7 +1,7 @@
-import { 
-  handleIncomingMessage, 
-  handleStatusUpdate, 
-  handleUpdateEditedMessage, 
+import {
+  handleIncomingMessage,
+  handleStatusUpdate,
+  handleUpdateEditedMessage,
   handleUpdateDeletedMessage,
   handleUpdateMessageReaction
 } from '../chat/message-handlers.js';
@@ -10,10 +10,10 @@ import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { formatWhatsAppToMarkdown } from '../../utils/chat.js';
-import { 
-  handleQrCodeGenerated, 
-  handleQrCodeLimitReached, 
-  handleConnectedInstance, 
+import {
+  handleQrCodeGenerated,
+  handleQrCodeLimitReached,
+  handleConnectedInstance,
   handleDisconnectedInstance,
 } from './channels-handlers.js';
 import {
@@ -27,10 +27,10 @@ import {
   disconnectWapiInstanceV2024_1,
   restartWapiInstanceV2024_1
 } from './wapi/wapi-handlers-v2024_1.js';
-import { 
-  normalizeWapiMessageV2025_1, 
-  normalizeWapiStatusUpdateV2025_1, 
-  handleSenderMessageWApiV2025_1, 
+import {
+  normalizeWapiMessageV2025_1,
+  normalizeWapiStatusUpdateV2025_1,
+  handleSenderMessageWApiV2025_1,
   handleSendUpdateMessageWapiChannelV2025_1,
   handleDeleteMessageWapiChannelV2025_1,
   generateQrCodeV2025_1,
@@ -39,6 +39,7 @@ import {
   disconnectWapiInstanceV2025_1,
   restartWapiInstanceV2025_1
 } from './wapi/wapi-handlers-v2025_1.js';
+import { registerUsageOrganizationByChannel } from '../organizations/usage.js';
 
 
 
@@ -65,13 +66,13 @@ export async function handleWapiWebhook(req, res) {
 
 
   // console.log(`webhookData`, webhookData);
-  
+
   if (action && (action === 'onConnected' || action === 'onDisconnected' || action === 'onMessageDelivered' || action === 'onMessageReceived' || action === 'onPresence' || action === 'onStatus')) {
     //Nova versão do webhook
     try {
       // console.log(`webhookData ${action}`, webhookData);
       if (webhookData.isGroup) return res.json({ success: true });
-      
+
       const channel = await validateChannel(channelId, 'whatsapp_wapi');
 
       if (!channel) {
@@ -80,12 +81,12 @@ export async function handleWapiWebhook(req, res) {
 
       switch (action) {
         case 'onConnected': // Ao conectar o whatsapp na instância
-          if(webhookData.connected) {
+          if (webhookData.connected) {
             await handleConnectedInstance(channel, webhookData.connectedPhone);
           }
           break;
         case 'onDisconnected': //Ao desconectar da instância
-          if(webhookData.disconnected && channel.is_connected) {
+          if (webhookData.disconnected && channel.is_connected) {
             await handleDisconnectedInstance(channel);
           }
           break;
@@ -111,7 +112,7 @@ export async function handleWapiWebhook(req, res) {
           }
 
           //Edição feita pelo cliente
-          if(webhookData.msgContent && webhookData.msgContent?.editedMessage) {
+          if (webhookData.msgContent && webhookData.msgContent?.editedMessage) {
             const originalMessageId = webhookData.msgContent.editedMessage.message?.protocolMessage?.key?.id;
             let newContent = webhookData.msgContent.editedMessage.message?.protocolMessage?.editedMessage?.conversation;
             newContent = formatWhatsAppToMarkdown(newContent);
@@ -120,7 +121,7 @@ export async function handleWapiWebhook(req, res) {
           }
 
           //Exclusão feita pelo cliente
-          if(webhookData.msgContent && webhookData.msgContent.protocolMessage && webhookData.msgContent.protocolMessage?.type === 'REVOKE') {
+          if (webhookData.msgContent && webhookData.msgContent.protocolMessage && webhookData.msgContent.protocolMessage?.type === 'REVOKE') {
             const originalMessageId = webhookData.msgContent.protocolMessage.key.id;
             await handleUpdateDeletedMessage(channel, originalMessageId);
             break;
@@ -223,7 +224,7 @@ export async function handleWapiWebhook(req, res) {
           await handleUpdateDeletedMessage(channel, messageId); //Atualiza o status da mensagem para "deleted" quando recebido evento de mensagem apagada
           break;
         case 'reactedMessage':
-          if(webhookData.reactionMessage?.referencedMessage?.messageId && webhookData.reactionMessage?.reaction) {
+          if (webhookData.reactionMessage?.referencedMessage?.messageId && webhookData.reactionMessage?.reaction) {
             await handleUpdateMessageReaction(channel, webhookData.reactionMessage.referencedMessage.messageId, webhookData.reactionMessage.reaction, webhookData.sender?.id, webhookData.sender?.pushName, webhookData.sender?.profilePicture);
           }
           break;
@@ -231,7 +232,7 @@ export async function handleWapiWebhook(req, res) {
           await handleQrCodeGenerated(channel, webhookData.qrCode);
           break;
         case 'connectedInstance':
-          if(webhookData.connected) {
+          if (webhookData.connected) {
             await handleConnectedInstance(channel, webhookData.connectedPhone);
           }
           break;
@@ -353,7 +354,7 @@ export async function handleDeleteMessageWapiChannel(channel, messageData) {
       return handleDeleteMessageWapiChannelV2024_1(channel, messageData);
     }
 
-    
+
   } catch (error) {
     console.error('Erro ao deletar mensagem WAPI:', error);
     Sentry.captureException(error);
@@ -542,10 +543,10 @@ export async function testWapiConnection(req, res) {
 export async function generateQrCodeRoute(req, res) {
   const { channelId } = req.params;
   try {
-     // Get channel details with explicit error handling for no rows
-     const { data: channels, error: queryError } = await supabase
-     .from('chat_channels')
-     .select(`
+    // Get channel details with explicit error handling for no rows
+    const { data: channels, error: queryError } = await supabase
+      .from('chat_channels')
+      .select(`
        id,
        name,
        type,
@@ -559,8 +560,8 @@ export async function generateQrCodeRoute(req, res) {
          name
        )
      `)
-     .eq('id', channelId)
-     .eq('type', 'whatsapp_wapi');
+      .eq('id', channelId)
+      .eq('type', 'whatsapp_wapi');
 
     if (queryError) throw queryError;
 
@@ -571,7 +572,7 @@ export async function generateQrCodeRoute(req, res) {
 
     const channel = channels[0];
 
-    if(channel.settings.version && channel.settings.version === '2025_1') {
+    if (channel.settings.version && channel.settings.version === '2025_1') {
       const qrCode = await generateQrCodeV2025_1(channel);
       return res.json({
         success: true,
@@ -617,8 +618,8 @@ export async function resetWapiConnection(req, res) {
       });
     }
 
-    if(channel.is_connected) {
-      if(channel.settings.version === '2025_1') {
+    if (channel.is_connected) {
+      if (channel.settings.version === '2025_1') {
         await restartWapiInstanceV2025_1(channel);
       } else {
         await restartWapiInstanceV2024_1(channel);
@@ -680,7 +681,7 @@ export async function disconnectWapiInstance(req, res) {
       });
     }
 
-    if(channel.settings.version === '2025_1') {
+    if (channel.settings.version === '2025_1') {
       //CONEXÃO V2025_1
       await disconnectWapiInstanceV2025_1(channel);
     } else {
@@ -773,6 +774,9 @@ export async function createWapiChannel(req, res) {
       .single();
 
     if (error) throw error;
+
+    //Contabilizar usage
+    registerUsageOrganizationByChannel(organizationId);
 
     return res.json({
       success: true,
@@ -885,8 +889,8 @@ export async function createInterflowChannel(req, res) {
     }
 
     // Verificar se WAPI_TOKEN_V2025_1 está definido
-    if(process.env.WAPI_TOKEN_V2025_1) {
-    // if(1 == 2) {
+    if (process.env.WAPI_TOKEN_V2025_1) {
+      // if(1 == 2) {
       //CONEXÃO V2025_1
       const response = await createInterflowChannelV2025_1(organizationId, name, organization.name);
       return res.json({
@@ -940,10 +944,12 @@ export async function createInterflowChannel(req, res) {
   }
 }
 
-export async function deleteWapiChannel(req, res) {
-  const { organizationId, channelId } = req.params;
-
+export async function deleteWapiChannel(channelId, organizationId) {
   try {
+    if (!channelId || !organizationId) {
+      throw new Error('ID do canal e ID da organização são obrigatórios');
+    }
+
     // Buscar o canal
     const { data: channel, error: fetchError } = await supabase
       .from('chat_channels')
@@ -953,11 +959,9 @@ export async function deleteWapiChannel(req, res) {
       .single();
 
     if (fetchError || !channel) {
-      return res.status(404).json({
-        success: false,
-        error: 'Canal não encontrado'
-      });
+      throw new Error('Canal não encontrado');
     }
+
     //Não excluir caso tenha um chat vinculado
     const { data: chats, error: chatsError } = await supabase
       .from('chats')
@@ -973,41 +977,14 @@ export async function deleteWapiChannel(req, res) {
 
     // Se o canal foi testado, precisamos excluir na API
     if (channel.is_tested) {
-
-      if(channel.settings.version === '2025_1') {
+      if (channel.settings.version === '2025_1') {
         //CONEXÃO V2025_1
-        const response = await deleteInterflowChannelV2025_1(channel);
+        await deleteInterflowChannelV2025_1(channel);
       } else {
         //CONEXÃO V2024_1
-        const response = await deleteInterflowChannelV2024_1(channel);
+        await deleteInterflowChannelV2024_1(channel);
       }
     }
-    //Atualizar lastMessageId in chats to null
-    // const { error: updateLastMessageIdError } = await supabase
-    //   .from('chats')
-    //   .update({
-    //     last_message_id: null
-    //   })
-    //   .eq('channel_id', channelId);
-    //   if (updateLastMessageIdError) throw updateLastMessageIdError;
-
-    //   //Excluir mensagens do chat
-    // const { error: deleteMessagesError } = await supabase
-    //   .from('messages')
-    //   .select('id, chat_id, chats!messages_chat_id_fkey!inner(id)')
-    //   .delete()
-    //   .eq('chat_id', channelId);
-
-    //   if (deleteMessagesError) throw deleteMessagesError;
-
-
-    // // Excluir os chats associados ao canal
-    // const { error: deleteChatsError } = await supabase
-    //   .from('chats')
-    //   .delete()
-    //   .eq('channel_id', channelId);
-
-    // if (deleteChatsError) throw deleteChatsError;
 
     // Excluir o canal do banco de dados
     const { error: deleteError } = await supabase
@@ -1017,22 +994,13 @@ export async function deleteWapiChannel(req, res) {
 
     if (deleteError) throw deleteError;
 
-    return res.json({
-      success: true
-    });
-
+    return true;
   } catch (error) {
     Sentry.captureException(error, {
-      extra: {
-        organizationId,
-        channelId
-      }
+      extra: { channelId }
     });
     console.error('Error deleting WApi channel:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    throw error;
   }
 }
 
@@ -1299,7 +1267,7 @@ export async function clearExpiredQrCode(req, res) {
 
     console.log(`QR code limpo com sucesso para o canal: ${channelId}`);
 
-    return res.json({ 
+    return res.json({
       success: true,
       message: 'QR code expirado limpo com sucesso'
     });
@@ -1348,7 +1316,7 @@ export async function migrateChannelToNewVersion(channelId, organizationId) {
       };
     }
 
-    if(channel.is_tested || channel.is_connected) {
+    if (channel.is_tested || channel.is_connected) {
       //Desconectar da versão antiga
       await deleteInterflowChannelV2024_1(channel);
     }
@@ -1373,7 +1341,7 @@ export async function migrateChannelToNewVersion(channelId, organizationId) {
         context: 'migrate_channel'
       }
     });
-    
+
     console.error('Erro ao migrar canal:', error);
     throw error;
   }

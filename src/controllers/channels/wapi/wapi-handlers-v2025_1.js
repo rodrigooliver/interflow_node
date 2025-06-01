@@ -4,6 +4,7 @@ import { decrypt, encrypt } from '../../../utils/crypto.js';
 import { supabase } from '../../../lib/supabase.js';
 import { handleUpdateDeletedMessage } from '../../chat/message-handlers.js';
 import { v4 as uuidv4 } from 'uuid';
+import { registerUsageOrganizationByChannel } from '../../organizations/usage.js';
 
 /**
  * Normaliza dados de mensagem do WAPI V2 para formato padrão
@@ -1121,6 +1122,9 @@ export async function createInterflowChannelV2025_1(organizationId, name, organi
       }
 
       channel = channelCreated;
+
+      registerUsageOrganizationByChannel(organizationId);
+        
     }
 
     if (channel) {
@@ -1301,6 +1305,13 @@ export async function disconnectWapiInstanceV2025_1(channel) {
 
     if (!response.ok) {
       const errorData = await response.json();
+      
+      // Verificar se o erro é sobre instância já desconectada
+      if (errorData.message && errorData.message.includes('Instância não está online para realizar logout')) {
+        console.log('Instância já estava desconectada, considerando como sucesso');
+        return true;
+      }
+      
       const error = new Error(errorData.message || 'Failed to disconnect WApi instance');
       Sentry.captureException(error, {
         extra: {
@@ -1314,6 +1325,12 @@ export async function disconnectWapiInstanceV2025_1(channel) {
     const responseData = await response.json();
 
     if (responseData.error) {
+      // Verificar se o erro é sobre instância já desconectada
+      if (responseData.message && responseData.message.includes('Instância não está online para realizar logout')) {
+        console.log('Instância já estava desconectada, considerando como sucesso');
+        return true;
+      }
+      
       const error = new Error(responseData.message || 'Failed to disconnect WApi instance');
       Sentry.captureException(error, {
         extra: {
@@ -1327,6 +1344,12 @@ export async function disconnectWapiInstanceV2025_1(channel) {
     return true;
 
   } catch (error) {
+    // Verificar se o erro é sobre instância já desconectada
+    if (error.message && error.message.includes('Instância não está online para realizar logout')) {
+      console.log('Instância já estava desconectada, considerando como sucesso');
+      return true;
+    }
+    
     Sentry.captureException(error, {
       extra: {
         channelId: channel.id

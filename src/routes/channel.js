@@ -1,12 +1,22 @@
 import express from 'express';
 import Sentry from '../lib/sentry.js';
-import { testWapiConnection, generateQrCodeRoute, resetWapiConnection, disconnectWapiInstance, createWapiChannel, updateWapiChannel, createInterflowChannel, deleteWapiChannel, clearExpiredQrCode, migrateChannelToNewVersion } from '../controllers/channels/wapi.js';
+import { 
+  testWapiConnection, 
+  generateQrCodeRoute, 
+  resetWapiConnection, 
+  disconnectWapiInstance, 
+  createWapiChannel, 
+  updateWapiChannel, 
+  createInterflowChannel, 
+  clearExpiredQrCode, 
+  migrateChannelToNewVersion
+} from '../controllers/channels/wapi.js';
 import { testEmailConnection } from '../services/email.js';
 import { verifyAuth, verifyPublicAuth } from '../middleware/auth.js';
 import { deleteInstagramChannel } from '../controllers/channels/instagram.js';
 import { handleWhatsAppConnect, getWhatsAppTemplates, createWhatsAppTemplate, updateWhatsAppTemplate, deleteWhatsAppTemplate } from '../controllers/channels/whatsapp-official.js';
 import { processWhatsAppStep } from '../controllers/channels/whatsapp-embedded.js';
-import { transferChats } from '../controllers/channels/channels-handlers.js';
+import { transferChats, deleteChannelRoute } from '../controllers/channels/channels-handlers.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -15,12 +25,13 @@ router.use(verifyAuth);
 
 router.post('/transfer/:channelId', transferChats);
 
+router.delete('/:channelId', deleteChannelRoute);
+
 // WhatsApp WApi routes
 router.post('/wapi/test', testWapiConnection);
 router.post('/wapi/interflow', createInterflowChannel);
 // router.post('/wapi', createWapiChannel);
 router.put('/wapi/:channelId', updateWapiChannel);
-router.delete('/wapi/:channelId', deleteWapiChannel);
 router.post('/wapi/:channelId/qr', generateQrCodeRoute);
 router.post('/wapi/:channelId/clear-qr', clearExpiredQrCode);
 router.post('/wapi/:channelId/reset', resetWapiConnection);

@@ -1,5 +1,37 @@
 import Sentry from '../../lib/sentry.js';
 import { supabase } from '../../lib/supabase.js';
+import { deleteWapiChannel } from './wapi.js';
+import { registerUsageOrganizationByChannel } from '../organizations/usage.js';
+
+/* 
+* Tipos de mensagens suportadas por canal:
+* - whatsapp_official: texto, imagem, vídeo, áudio, documento e templates
+* - whatsapp_wapi: texto, imagem, vídeo, áudio, documento
+* - instagram: texto, imagem, vídeo
+* - email: texto com formatação HTML, anexos
+*/
+const CHANNEL_CONFIG = {
+  whatsapp_official: {
+  },
+  whatsapp_wapi: {
+    deleteHandler: deleteWapiChannel
+  },
+  whatsapp_zapi: {
+  },
+  whatsapp_evo: {
+
+  },
+  instagram: {
+
+  },
+  facebook: {
+
+  },
+  email: {
+
+  }
+};
+
 
 /**
  * Transfere todos os chats de um canal para outro
@@ -219,6 +251,86 @@ export async function handleDisconnectedInstance(channel) {
       }
     });
     console.error('Error handling disconnected instance:', error);
+    throw error;
+  }
+}
+
+/**
+ * Deleta um canal
+ * @param {*} req 
+ * @param {*} res 
+ * @returns 
+ */
+export async function deleteChannelRoute(req, res) {
+  const { channelId, organizationId } = req.params;
+
+  try {
+    await deleteChannel(channelId, organizationId);
+
+    res.json({
+      success: true,
+      message: 'Canal deletado com sucesso'
+    });
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId
+      }
+    });
+    // console.error('Error deleting channel:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+}
+
+export async function deleteChannel(channelId, organizationId) {
+  try {
+    if (!channelId || !organizationId) {
+      throw new Error('ID do canal e ID da organização são obrigatórios');
+    }
+
+    //consultardados do canal
+    const { data: channel, error: channelError } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .eq('id', channelId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (channelError) throw channelError;
+
+    //Não excluir caso tenha um chat vinculado
+    const { data: chats, error: chatsError } = await supabase
+      .from('chats')
+      .select('id')
+      .eq('channel_id', channelId);
+    if (chatsError) throw chatsError;
+    if (chats.length > 0) {
+      throw new Error('Não é possível excluir o canal, pois existem chats vinculados a ele');
+    }
+
+    //Verificar se tipo de canal tem handleDelete
+    if (CHANNEL_CONFIG[channel.type] && CHANNEL_CONFIG[channel.type].deleteHandler) {
+      await CHANNEL_CONFIG[channel.type].deleteHandler(channelId, organizationId);
+    }
+
+    const { error: deleteError } = await supabase
+      .from('chat_channels')
+      .delete()
+      .eq('id', channelId);
+
+    if (deleteError) throw deleteError;
+
+    registerUsageOrganizationByChannel(organizationId);
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId
+      }
+    });
+    // console.error('Error deleting channel:', error);
     throw error;
   }
 }

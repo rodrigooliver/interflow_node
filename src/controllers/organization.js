@@ -27,8 +27,7 @@ export async function getPartnerOrganization(req, res) {
         whatsapp,
         created_at,
         updated_at,
-        storage_limit,
-        storage_used,
+        usage,
         seller_id,
         indication_id,
         support_id
@@ -37,6 +36,7 @@ export async function getPartnerOrganization(req, res) {
       .eq('status', 'active');
 
     if (error) {
+      console.log('error', error);
       Sentry.captureException(error);
       return res.status(500).json({ error: 'Erro ao buscar organizações de parceiros' });
     }

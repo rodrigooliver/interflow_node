@@ -13,12 +13,16 @@ export async function deleteOrganization(organizationId) {
 
         //Verificar se possui channel ativo e desconectar no api
 
-        // const { data: channel, error: channelError } = await supabase
-        //     .from('chat_channels')
-        //     .select('*')
-        //     .eq('organization_id', organizationId)
-        //     .eq('is_connected', true)
-        //     .single();
+        const { data: channel, error: channelError } = await supabase
+            .from('chat_channels')
+            .select('*')
+            .eq('organization_id', organizationId)
+            .eq('is_connected', true);
+
+        if( channel.length > 0 ) {
+            Sentry.captureException(channelError);
+            return { status: 500, error: 'Organização possui canais conectados' };
+        }
 
         // Chamar a função RPC do Supabase em vez da API direta
         const { data, error } = await supabase.rpc('delete_organization', {

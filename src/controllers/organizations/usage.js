@@ -3,7 +3,7 @@ import Sentry from '../../lib/sentry.js';
 
 //Registrar o uso de tokens
 export const registerTokenUsage = async ({ organizationId, promptId, customerId, chatId, integrationId, tokenSource = 'system', modelName, inputTokens, outputTokens, costUsd, metadata }) => {
-    if(!organizationId || !inputTokens || !outputTokens) {
+    if (!organizationId || !inputTokens || !outputTokens) {
         Sentry.captureMessage('Missing required fields in registerTokenUsage', 'warning', {
             extra: { organizationId, inputTokens, outputTokens }
         });
@@ -32,15 +32,15 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
         return { error: error.message };
     }
 
-    if(tokenSource === 'system') {
-       //Buscar soma por função get_monthly_token_usage_report
+    if (tokenSource === 'system') {
+        //Buscar soma por função get_monthly_token_usage_report
         const { data: monthlyTokenUsageReport, error: monthlyTokenUsageReportError } = await supabase
             .rpc('get_monthly_token_usage_report', {
-            p_organization_id: organizationId,
-            p_year: new Date().getFullYear(),
-            p_month: new Date().getMonth() + 1,
-            p_token_source: tokenSource,
-        });
+                p_organization_id: organizationId,
+                p_year: new Date().getFullYear(),
+                p_month: new Date().getMonth() + 1,
+                p_token_source: tokenSource,
+            });
 
         // console.log('monthlyTokenUsageReport', monthlyTokenUsageReport);
         // console.log('monthlyTokenUsageReportError', monthlyTokenUsageReportError);
@@ -62,11 +62,11 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
 
         // console.log('totalTokens', totalTokens);
 
-        if(totalTokens) {
+        if (totalTokens) {
             //Consultar dados da organization
             const organizationData = await getUsageOrganization(organizationId);
 
-            if(organizationData.error) {
+            if (organizationData.error) {
                 // console.log('organizationData', organizationData);
                 Sentry.captureMessage('Error getting organization usage data', 'error', {
                     extra: { organizationId, error: organizationData.error }
@@ -86,7 +86,7 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
 
             const result = await registerUsageOrganization(organizationId, usage);
 
-            if(result.error) {
+            if (result.error) {
                 Sentry.captureMessage('Error registering organization usage', 'error', {
                     extra: { organizationId, usage, error: result.error }
                 });
@@ -95,13 +95,63 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
 
         }
 
-        
+
     }
 
-    
+
 
     return { success: true };
 };
+
+export const registerUsageOrganizationByChannel = async (organizationId) => {
+    if (!organizationId) {
+        Sentry.captureMessage('Missing required fields in registerUsageOrganizationByChannel', 'warning', {
+            extra: { organizationId }
+        });
+        console.log('Missing required fields in registerUsageOrganizationByChannel');
+        return { error: 'Missing required fields' };
+    }
+
+    try {
+        //Consultar organization
+        const organizationData = await getUsageOrganization(organizationId);
+
+        //Consultar quantidade de canais conectados
+        const { data: channelData, error: channelError, count } = await supabase
+            .from('chat_channels')
+            .select('*', { count: 'exact' })
+            .eq('organization_id', organizationId);
+
+        if (channelError) {
+            Sentry.captureException(channelError);
+            return { error: channelError.message };
+        }
+
+        //Atualizar usage
+        const usage = {
+            ...organizationData.usage,
+            channels: {
+                used: count,
+                limit: organizationData.usage.channels.limit,
+            },
+        }
+
+        const result = await registerUsageOrganization(organizationId, usage);
+
+        if (result.error) {
+            Sentry.captureMessage('Error registering organization usage', 'error', {
+                extra: { organizationId, usage, error: result.error }
+            });
+            return { error: result.error };
+        }
+
+        return { success: true, channels: count };
+    } catch (error) {
+        console.log('error', error);
+        Sentry.captureException(error);
+        return { error: error.message };
+    }
+}
 
 /**
  * Busca o uso da organization
@@ -110,7 +160,7 @@ export const registerTokenUsage = async ({ organizationId, promptId, customerId,
  * @returns {Object} - Objeto com o erro caso ocorra
  */
 export const getUsageOrganization = async (organizationId) => {
-    if(!organizationId) {
+    if (!organizationId) {
         Sentry.captureMessage('Organization ID is required in getUsageOrganization', 'warning');
         return { error: 'Organization ID is required' };
     }
@@ -138,7 +188,7 @@ export const getUsageOrganization = async (organizationId) => {
  * @returns {Object} - Objeto com o erro caso ocorra
  */
 export const registerUsageOrganization = async (organizationId, usage) => {
-    if(!organizationId || !usage) {
+    if (!organizationId || !usage) {
         Sentry.captureMessage('Missing required fields in registerUsageOrganization', 'warning', {
             extra: { organizationId, usage }
         });
@@ -159,7 +209,7 @@ export const registerUsageOrganization = async (organizationId, usage) => {
 }
 
 export const registerLimitsOrganization = async (organizationId, usage) => {
-    if(!organizationId || !usage) {
+    if (!organizationId || !usage) {
         Sentry.captureMessage('Missing required fields in registerLimitsOrganization', 'warning', {
             extra: { organizationId, usage }
         });
@@ -182,7 +232,7 @@ export const registerLimitsOrganization = async (organizationId, usage) => {
 
 
 export const registerLimitsOrganizationByPlan = async (organizationId, plan) => {
-    if(!organizationId || !plan) {
+    if (!organizationId || !plan) {
         Sentry.captureMessage('Missing required fields in registerLimitsOrganizationByPlan', 'warning', {
             extra: { organizationId, plan }
         });
@@ -210,7 +260,7 @@ export const registerLimitsOrganizationByPlan = async (organizationId, plan) => 
         .eq('id', plan)
         .single();
 
-    if(planError) {
+    if (planError) {
         Sentry.captureException(planError, {
             extra: { organizationId, plan }
         });

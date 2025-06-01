@@ -4,6 +4,7 @@ import { supabase } from '../../../lib/supabase.js';
 import { decrypt, encrypt } from '../../../utils/crypto.js';
 import { decryptCredentials } from '../wapi.js';
 import { formatMarkdownForWhatsApp } from '../../../utils/chat.js';
+import { registerUsageOrganizationByChannel } from '../../organizations/usage.js';
 
 /**
  * Normaliza dados de mensagem do WAPI para formato padrão
@@ -828,6 +829,9 @@ export async function createInterflowChannelV2024_1(organizationId, name, organi
       .single();
 
     if (error) throw error;
+
+    //Contabilizar usage
+    registerUsageOrganizationByChannel(organizationId);
 
     // Configurar webhook após criar o canal
     // await updateWebhookV2024_1({
