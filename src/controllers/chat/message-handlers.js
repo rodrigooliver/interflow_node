@@ -2570,7 +2570,6 @@ export async function handleUpdateEditedMessage(channel, originalMessageId, newC
       console.error('Mensagem não encontrada para edição:', originalMessageId, findError);
       Sentry.captureException(findError, {
         extra: {
-          webhookData,
           channelId: channel.id,
           originalMessageId,
           context: 'find_message_for_edit_v2025_1'
@@ -2636,7 +2635,6 @@ export async function handleUpdateEditedMessage(channel, originalMessageId, newC
     console.error('Erro ao processar mensagem editada V2025.1:', error);
     Sentry.captureException(error, {
       extra: {
-        webhookData,
         channelId: channel.id,
         context: 'handle_update_edited_message_v2025_1'
       }
