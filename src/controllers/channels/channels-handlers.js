@@ -285,6 +285,12 @@ export async function deleteChannelRoute(req, res) {
   }
 }
 
+/**
+ * Deleta um canal
+ * @param {*} channelId 
+ * @param {*} organizationId 
+ * @returns 
+ */
 export async function deleteChannel(channelId, organizationId) {
   try {
     if (!channelId || !organizationId) {

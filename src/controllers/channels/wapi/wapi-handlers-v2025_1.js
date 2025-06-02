@@ -190,6 +190,48 @@ export async function normalizeWapiMessageV2025_1(webhookData, channel = null) {
   } else if (webhookData.msgContent?.listResponseMessage) {
     messageType = 'text';
     messageContent = webhookData.msgContent.listResponseMessage.title || '';
+  } else if (webhookData.msgContent?.locationMessage) {
+    messageType = 'location';
+    messageContent = '';
+    
+    // Extrair dados de localização
+    const locationData = webhookData.msgContent.locationMessage;
+    
+    // Remover jpegThumbnail dos dados brutos para evitar duplicação
+    const cleanedWebhookData = {
+      ...webhookData,
+      msgContent: {
+        ...webhookData.msgContent,
+        locationMessage: {
+          ...locationData,
+          jpegThumbnail: undefined // Remove para evitar duplicação
+        }
+      }
+    };
+    
+    // Adicionar dados de localização diretamente nos campos da mensagem
+    return {
+      messageId: webhookData.messageId,
+      timestamp: webhookData.moment,
+      from: {
+        id: webhookData.sender.id,
+        name: webhookData.sender.pushName,
+        profilePicture: webhookData.sender.profilePicture
+      },
+      to: recipient,
+      ...externalData, // Adiciona os campos externos
+      message: {
+        type: messageType,
+        content: messageContent,
+        latitude: locationData.degreesLatitude,
+        longitude: locationData.degreesLongitude,
+        jpegThumbnail: locationData.jpegThumbnail || null,
+        raw: cleanedWebhookData          // Dados brutos sem jpegThumbnail duplicado
+      },
+      isGroup: webhookData.isGroup,
+      fromMe: webhookData.fromMe,
+      responseExternalId: responseExternalId // Adiciona o ID da mensagem de referência quando for resposta
+    };
   }
 
   return {

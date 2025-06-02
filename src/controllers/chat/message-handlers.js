@@ -133,12 +133,21 @@ const normalizeContactId = (id, channelType) => {
  * Processa mensagens recebidas em formato padronizado
  * 
  * Esta função lida com mensagens recebidas de diferentes canais de comunicação,
- * incluindo mensagens com anexos de mídia (imagens, vídeos, áudios, documentos).
+ * incluindo mensagens com anexos de mídia (imagens, vídeos, áudios, documentos)
+ * e mensagens de localização.
  * 
  * Suporta recebimento de mídia via:
  * - URLs diretas
  * - Dados base64 (especialmente útil para webhooks do WAPI)
  * - Download via API do canal quando necessário
+ * 
+ * Tipos de mensagens suportadas:
+ * - text: mensagens de texto simples
+ * - image: imagens com caption opcional
+ * - video: vídeos com caption opcional
+ * - audio: áudios (com transcrição automática se OpenAI estiver configurado)
+ * - document: documentos e arquivos
+ * - location: mensagens de localização com latitude, longitude e thumbnail opcional
  * 
  * @param {Object} channel - Canal de comunicação
  * @param {Object} messageData - Dados normalizados da mensagem
@@ -148,11 +157,14 @@ const normalizeContactId = (id, channelType) => {
  * @param {string} messageData.externalName - Nome do contato externo
  * @param {string} messageData.externalProfilePicture - URL da foto do contato externo
  * @param {Object} messageData.message - Dados da mensagem
- * @param {string} messageData.message.type - Tipo da mensagem (text, image, etc)
+ * @param {string} messageData.message.type - Tipo da mensagem (text, image, video, audio, document, location)
  * @param {string} messageData.message.content - Conteúdo da mensagem
  * @param {Object} messageData.message.raw - Dados brutos originais
+ * @param {number} [messageData.message.latitude] - Latitude da localização (para tipo location)
+ * @param {number} [messageData.message.longitude] - Longitude da localização (para tipo location)
+ * @param {string} [messageData.message.jpegThumbnail] - Thumbnail da localização em base64 (opcional)
  * @param {boolean} messageData.fromMe - Se foi uma mensagem enviada por mim
- * @param {boolean} messageData.attachments - Uma lista de arquivo com url e type, onde não cadastra no banco de daoos, somente aproveita a url
+ * @param {boolean} messageData.attachments - Uma lista de arquivo com url e type, onde não cadastra no banco de dados, somente aproveita a url
  */
 export async function handleIncomingMessage(channel, messageData) {
   const { organization } = channel;
@@ -468,6 +480,21 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
+    // Preparar metadados da mensagem
+    let messageMetadata = messageData.message.raw || {};
+
+    // Se for uma mensagem de localização, adicionar dados de localização aos metadados
+    if (messageData.message.type === 'location') {
+      messageMetadata = {
+        ...messageMetadata,
+        location: {
+          latitude: messageData.message.latitude,
+          longitude: messageData.message.longitude,
+          ...(messageData.message.jpegThumbnail && { jpegThumbnail: messageData.message.jpegThumbnail })
+        }
+      };
+    }
+
     // Cadastra a mensagem recebida
     const { data: message, error: messageError } = await supabase
       .from('messages')
@@ -484,32 +511,13 @@ export async function handleIncomingMessage(channel, messageData) {
           : { sender_customer_id: customer.id }
         ),
         ...(responseMessageId ? { response_message_id: responseMessageId } : {}),
-        metadata: messageData.message.raw,
+        metadata: messageMetadata,
         attachments: attachments.length > 0 ? attachments : undefined
       })
       .select()
       .single();
 
     if (messageError) throw messageError;
-
-    // //Atualizar o message_id em cada attachments
-    // for (let i = 0; i < attachments.length; i++) {
-    //   const { error: updateError } = await supabase
-    //     .from('attachments')
-    //     .update({ message_id: message.id })
-    //     .eq('id', attachments[i].id);
-
-    //   if (updateError) {
-    //     Sentry.captureException(updateError, {
-    //       extra: {
-    //         messageId: message.id,
-    //         attachmentId: attachments[i].id,
-    //         context: 'updating_attachment_message_id'
-    //       }
-    //     });
-    //     console.error('Erro ao atualizar message_id no attachment:', updateError);
-    //   }
-    // }
 
     // Registrar arquivos vinculados à mensagem
     if (fileRecords && fileRecords.length > 0) {
