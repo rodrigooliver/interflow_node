@@ -599,6 +599,10 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
       case 'jump_to':
         updatedSession = await processJumpToNode(node.data, updatedSession);  
         break;
+      
+      case 'system_message':
+        await processSystemMessageNode(node.data, updatedSession);
+        break;
     }
 
     // Atualizar histórico de mensagens
@@ -2149,16 +2153,40 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         }
       }
       
-      // Executar a requisição HTTP usando axios
+      // Executar a requisição HTTP com retry usando axios
       let response;
-      try {
-        // console.log('Fazer requisição com axiosConfig', axiosConfig)
-        // Fazer a requisição usando axios
-        response = await axios(axiosConfig);
-        
+      let lastError;
+      const maxRetries = 2;
+      const retryDelay = 5000; // 5 segundos
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // console.log(`[processRequestNode] Tentativa ${attempt} de ${maxRetries} para requisição: ${axiosConfig.method} ${axiosConfig.url}`);
+          
+          // Fazer a requisição usando axios
+          response = await axios(axiosConfig);
+          
+          // Se chegou aqui, a requisição foi bem-sucedida
+          // console.log(`[processRequestNode] Requisição bem-sucedida na tentativa ${attempt}`);
+          break;
+          
+        } catch (error) {
+          lastError = error;
+          console.error(`[processRequestNode] Erro na tentativa ${attempt}:`, error.message);
+          
+          // Se não é a última tentativa, aguarda antes de tentar novamente
+          if (attempt < maxRetries) {
+            console.log(`[processRequestNode] Aguardando ${retryDelay}ms antes da próxima tentativa...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+          }
+        }
+      }
+      
+      // Se temos uma resposta bem-sucedida, processa normalmente
+      if (response) {
         // Parsear a resposta como JSON
         const responseData = response.data;
-        // console.log(`[processRequestNode] Resposta recebida:`, responseData);
+        // console.log(`[processRequestNode] Resposta recebida com sucesso`);
         
         // Processar mapeamentos de variáveis, se houver
         if (requestConfig.variableMappings && requestConfig.variableMappings.length > 0) {
@@ -2205,7 +2233,7 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
                   });
                 }
               } else {
-                // console.log(`[processRequestNode] Caminho ${mapping.jsonPath} não encontrado na resposta`);
+                console.log(`[processRequestNode] Caminho ${mapping.jsonPath} não encontrado na resposta`);
               }
             }
           }
@@ -2223,30 +2251,144 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         }
         
         return session;
-      } catch (error) {
-        console.error(`[processRequestNode] Erro ao executar requisição:`, error);
+      } else {
+        // Se chegamos aqui, todas as tentativas falharam
+        console.error(`[processRequestNode] Todas as ${maxRetries} tentativas falharam. Definindo variáveis como vazias para continuar o fluxo.`);
         
-        // Tratamento detalhado de erro
-        if (axios.isAxiosError(error)) {
-          if (error.response) {
-            // Servidor respondeu com status de erro
-            throw new Error(`Erro ${error.response.status}: ${error.response.statusText || 'Erro desconhecido'}`);
-          } else if (error.request) {
-            // Requisição foi feita mas não houve resposta
-            throw new Error('Não foi recebida resposta do servidor remoto');
-          } else {
-            // Erro na configuração da requisição
-            throw new Error(`Erro na configuração da requisição: ${error.message}`);
+        // Processar mapeamentos de variáveis definindo-as como vazias
+        if (requestConfig.variableMappings && requestConfig.variableMappings.length > 0) {
+          console.log(`[processRequestNode] Definindo ${requestConfig.variableMappings.length} variáveis como vazias devido ao erro`);
+          
+          // Verificar se session.variables é um array ou um objeto e converte para array se necessário
+          let variables = [];
+          
+          if (Array.isArray(session.variables)) {
+            variables = [...session.variables];
+          } else if (session.variables && typeof session.variables === 'object') {
+            // Converte de objeto para array
+            variables = Object.entries(session.variables).map(([name, value]) => ({
+              id: crypto.randomUUID(),
+              name,
+              value
+            }));
+          }
+          
+          // Definir cada variável mapeada como vazia
+          for (const mapping of requestConfig.variableMappings) {
+            if (mapping.variable) {
+              console.log(`[processRequestNode] Definindo variável ${mapping.variable} como vazia`);
+              
+              // Verificar se a variável já existe
+              const variableIndex = variables.findIndex(v => v.name === mapping.variable);
+              
+              if (variableIndex >= 0) {
+                // Atualizar a variável existente como vazia
+                variables[variableIndex] = {
+                  ...variables[variableIndex],
+                  value: ''
+                };
+              } else {
+                // Criar uma nova variável vazia
+                variables.push({
+                  id: crypto.randomUUID(),
+                  name: mapping.variable,
+                  value: ''
+                });
+              }
+            }
+          }
+          
+          // Atualizar as variáveis na sessão
+          await updateSession(session.id, { variables });
+          
+          // Criar uma cópia atualizada da sessão com as variáveis vazias
+          const updatedSession = {
+            ...session,
+            variables
+          };
+          
+          return updatedSession;
+        }
+        
+        // Log do erro para monitoramento, mas não trava o fluxo
+        if (lastError) {
+          if (axios.isAxiosError(lastError)) {
+            if (lastError.response) {
+              console.error(`[processRequestNode] Erro final ${lastError.response.status}: ${lastError.response.statusText || 'Erro desconhecido'}`);
+            } else if (lastError.request) {
+              console.error('[processRequestNode] Erro final: Não foi recebida resposta do servidor remoto');
+            } else {
+              console.error(`[processRequestNode] Erro final na configuração da requisição: ${lastError.message}`);
+            }
+          }
+          
+          // Registrar no Sentry mas sem travar o fluxo
+          Sentry.captureException(lastError);
+        }
+        
+        return session;
+      }
+    } catch (error) {
+      console.error(`[processRequestNode] Erro inesperado:`, error);
+      
+      // Em caso de erro inesperado (não relacionado à requisição HTTP), 
+      // também define as variáveis como vazias para não travar o fluxo
+      if (data.request?.variableMappings && data.request.variableMappings.length > 0) {
+        console.log(`[processRequestNode] Definindo ${data.request.variableMappings.length} variáveis como vazias devido ao erro inesperado`);
+        
+        // Verificar se session.variables é um array ou um objeto e converte para array se necessário
+        let variables = [];
+        
+        if (Array.isArray(session.variables)) {
+          variables = [...session.variables];
+        } else if (session.variables && typeof session.variables === 'object') {
+          // Converte de objeto para array
+          variables = Object.entries(session.variables).map(([name, value]) => ({
+            id: crypto.randomUUID(),
+            name,
+            value
+          }));
+        }
+        
+        // Definir cada variável mapeada como vazia
+        for (const mapping of data.request.variableMappings) {
+          if (mapping.variable) {
+            console.log(`[processRequestNode] Definindo variável ${mapping.variable} como vazia (erro inesperado)`);
+            
+            // Verificar se a variável já existe
+            const variableIndex = variables.findIndex(v => v.name === mapping.variable);
+            
+            if (variableIndex >= 0) {
+              // Atualizar a variável existente como vazia
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: ''
+              };
+            } else {
+              // Criar uma nova variável vazia
+              variables.push({
+                id: crypto.randomUUID(),
+                name: mapping.variable,
+                value: ''
+              });
+            }
           }
         }
         
-        Sentry.captureException(error);
-        throw error;
+        // Atualizar as variáveis na sessão
+        await updateSession(session.id, { variables });
+        
+        // Criar uma cópia atualizada da sessão com as variáveis vazias
+        const updatedSession = {
+          ...session,
+          variables
+        };
+        
+        return updatedSession;
       }
-    } catch (error) {
-      console.error(`[processRequestNode] Erro:`, error);
+      
       Sentry.captureException(error);
-      throw error;
+      return session;
     }
   };
 
@@ -2381,6 +2523,60 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     }
   };
 
+  /**
+   * Processa um nó do tipo system_message, registrando uma mensagem de contexto do sistema
+   * @param {Object} data - Dados do nó system_message
+   * @param {Object} session - Sessão atual
+   */
+  const processSystemMessageNode = async (data, session) => {
+    try {
+      if (!data.text) {
+        console.log('[processSystemMessageNode] Nenhum texto fornecido para a mensagem do sistema');
+        return;
+      }
+
+      // Processa o texto da mensagem, substituindo variáveis
+      const processedText = replaceVariables(data.text, session);
+      
+      if (!processedText || processedText.trim() === '') {
+        console.log('[processSystemMessageNode] Texto processado está vazio');
+        return;
+      }
+
+      // Registra a mensagem do sistema no banco de dados
+      const { data: systemMessage, error } = await supabase
+        .from('messages')
+        .insert({
+          content: processedText,
+          sender_type: 'system',
+          chat_id: session.chat_id,
+          organization_id: session.chat?.organization_id,
+          created_at: new Date().toISOString(),
+          type: 'text',
+          metadata: {
+            flow_session_id: session.id,
+            node_type: 'system_message',
+            processed_at: new Date().toISOString()
+          }
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[processSystemMessageNode] Erro ao inserir mensagem do sistema:', error);
+        throw error;
+      }
+
+      console.log(`[processSystemMessageNode] Mensagem do sistema registrada com sucesso: ID ${systemMessage.id}`);
+      
+      return systemMessage;
+    } catch (error) {
+      console.error('[processSystemMessageNode] Erro ao processar nó de mensagem do sistema:', error);
+      Sentry.captureException(error);
+      throw error;
+    }
+  };
+
   return {
     processMessage,
     getActiveFlow,
@@ -2399,7 +2595,8 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
     updateCustomer,
     checkTriggers,
     findActiveChat,
-    handleSessionTimeout
+    handleSessionTimeout,
+    processSystemMessageNode
   };
 }; 
 

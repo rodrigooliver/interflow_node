@@ -173,6 +173,8 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 
     // console.log(`[AgentIA] Ferramentas do sistema:`, systemTools);
 
+    // console.log(`[AgentIA] Messages: ${JSON.stringify(messages)}`);
+
     // Fazer chamada para o OpenAI
     const completion = await openai.chat.completions.create({
       model: prompt.model || 'gpt-4o',
@@ -191,11 +193,17 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
     if (choice.message.tool_calls) {
       console.log(`[processAgentIA] Ferramentas encontradas: ${choice.message.tool_calls.length}`);
       let toolResults = [];
+      let redirectionResult = null; // Para armazenar resultado de redirecionamento
+      let pauseResult = null; // Para armazenar resultado de pausa
+      let hasRedirection = false; // Flag para detectar se alguma ferramenta tem redirecionamento
+      let hasPause = false; // Flag para detectar se alguma ferramenta tem pausa
       
       for (const toolCall of choice.message.tool_calls) {
         // Primeiro, tentar encontrar a ferramenta entre as ferramentas personalizadas
         let tool = customTools.find(t => t.name === toolCall.function.name);
-        console.log(`[processAgentIA] Ferramenta personalizada encontrada: ${tool ? tool.name : 'Não encontrada'}`);
+        if(tool) {
+          console.log(`[processAgentIA] Ferramenta personalizada encontrada: ${tool.name}`);
+        }
         
         // Se não encontrar nas ferramentas personalizadas, procurar nas ferramentas do sistema
         if (!tool) {
@@ -241,17 +249,19 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 
             // console.log(`[processAgentIA] Resultado da ferramenta ${tool.name}:`, result);
 
-            //Fazer um loop para verificar se o resultado é de uma ação go_to_flow_node
-            for (const actionResult of result) {
-              if (actionResult && actionResult.go_to_node && actionResult.target_node) {
-                // console.log(`[processAgentIA] Redirecionando para o nó ${actionResult.target_node.id}`);
-                // Retornar informações para que o flow-engine execute o nó de destino
-                return {
-                  ...session,
-                  target_node: actionResult.target_node,
-                  go_to_node: true,
-                  variables_update: actionResult.variables_update || {}
-                };
+            // Verificar se algum resultado é de redirecionamento
+            if (result && Array.isArray(result)) {
+              for (const actionResult of result) {
+                if (actionResult && actionResult.go_to_node && actionResult.target_node && !redirectionResult) {
+                  hasRedirection = true;
+                  redirectionResult = {
+                    ...session,
+                    target_node: actionResult.target_node,
+                    go_to_node: true,
+                    variables_update: actionResult.variables_update || {}
+                  };
+                  console.log(`[processAgentIA] Redirecionamento detectado na ferramenta ${tool.name}`);
+                }
               }
             }
           } else if (systemTools.includes(tool)) { // Para ferramentas do sistema, usar handlers específicos
@@ -263,35 +273,19 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
               session
             );
 
-            // Verificar se o resultado é de uma ação unknownResponse
+            // Verificar se o resultado é de uma ação unknownResponse que deve pausar
             if (result && result.actions_taken && result.actions_taken.type === 'unknownResponse') {
               // Verificar se deve pausar o agente
-              if (result.should_pause === true) {
-                await pauseFlow(session);
+              if (result.should_pause === true && !pauseResult) {
+                hasPause = true;
+                pauseResult = result;
+                console.log(`[processAgentIA] Pausa detectada na ferramenta ${tool.name}`);
               }
-              // Se tryToAnswer é false, não vamos continuar e retornamos a sessão atualizada sem fazer a requisição de follow-up
-              if (result.actions_taken.try_to_answer !== true) {
-                // console.log(`[processAgentIA] Não gerar follow-up devido à configuração tryToAnswer=false`);
-                 // Se tiver especificado um nome de variável para salvar a resposta, setar como ''
-                if (node.data.agenteia.variableName) {
-                  // Atualiza a sessão como vazio 
-                  const variables = Array.isArray(session.variables) 
-                    ? [...session.variables] 
-                    : [];
-                  const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
-                  if (variableIndex >= 0) {
-                    variables[variableIndex] = {
-                      ...variables[variableIndex],
-                      value: ''
-                    };
-                  }
-                  await updateSession(session.id, { variables });
-                  return {
-                    ...session,
-                    variables
-                  };
-                }
-                return session;
+              // Se tryToAnswer é false, não continuar com follow-up
+              if (result.actions_taken.try_to_answer !== true && !pauseResult) {
+                hasPause = true;
+                pauseResult = result;
+                console.log(`[processAgentIA] Pausa detectada na ferramenta ${tool.name} (tryToAnswer=false)`);
               }
             }
           }
@@ -299,14 +293,48 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
           // Atualizar variáveis com os argumentos
           await updateSessionVariablesFromArgs(args, session, updateSession);
           
-          // Store tool result for later contextualization
-          if (result) {
+          // Store tool result for later contextualization APENAS se não houver redirecionamento ou pausa
+          if (result && !hasRedirection && !hasPause) {
             toolResults.push({
               tool: tool.name,
               tool_call_id: toolCall.id,
               result
             });
           }
+        }
+      }
+      
+      // APÓS processar todas as tool_calls, verificar se há redirecionamento ou pausa
+      if (redirectionResult) {
+        console.log(`[processAgentIA] Redirecionamento detectado após processar todas as ferramentas - não enviando follow-up`);
+        return redirectionResult;
+      }
+      
+      if (pauseResult) {
+        console.log(`[processAgentIA] Pausa detectada após processar todas as ferramentas - não enviando follow-up`);
+        await pauseFlow(session);
+        
+        if (pauseResult.actions_taken.try_to_answer !== true) {
+          // Se tiver especificado um nome de variável para salvar a resposta, setar como ''
+          if (node.data.agenteia.variableName) {
+            // Atualiza a sessão como vazio 
+            const variables = Array.isArray(session.variables) 
+              ? [...session.variables] 
+              : [];
+            const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
+            if (variableIndex >= 0) {
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: ''
+              };
+            }
+            await updateSession(session.id, { variables });
+            return {
+              ...session,
+              variables
+            };
+          }
+          return session;
         }
       }
       
@@ -370,53 +398,100 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
         
         // Send new request to the model to contextualize the results
         console.log(`[AgentIA] Sending tool results for contextualization`);
-        const followUpCompletion = await openai.chat.completions.create({
-          model: prompt.model || 'gpt-4o',
-          messages: followUpMessages,
-          temperature: prompt.temperature || 0.7,
-          // max_tokens: prompt.max_tokens || 150
-        });
         
-        // Obter a resposta contextualizada
-        const contextualizedResponse = followUpCompletion.choices[0].message.content;
+        try {
+          const followUpCompletion = await openai.chat.completions.create({
+            model: prompt.model || 'gpt-4o',
+            messages: followUpMessages,
+            temperature: prompt.temperature || 0.7,
+            // max_tokens: prompt.max_tokens || 150
+          });
+          
+          // Obter a resposta contextualizada
+          const contextualizedResponse = followUpCompletion.choices[0].message.content;
 
-        
-        // Se tiver especificado um nome de variável para salvar a resposta
-        if (node.data.agenteia.variableName) {
-          // Atualiza a sessão com a nova variável
-          const variables = Array.isArray(session.variables) 
-            ? [...session.variables] 
-            : [];
           
-          const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
-          
-          if (variableIndex >= 0) {
-            variables[variableIndex] = {
-              ...variables[variableIndex],
-              value: contextualizedResponse
+          // Se tiver especificado um nome de variável para salvar a resposta
+          if (node.data.agenteia.variableName) {
+            // Atualiza a sessão com a nova variável
+            const variables = Array.isArray(session.variables) 
+              ? [...session.variables] 
+              : [];
+            
+            const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
+            
+            if (variableIndex >= 0) {
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: contextualizedResponse
+              };
+            } else {
+              variables.push({
+                id: crypto.randomUUID(),
+                name: node.data.agenteia.variableName,
+                value: contextualizedResponse
+              });
+            }
+            
+            await updateSession(session.id, { variables });
+            
+            // Atualiza a sessão em memória também
+            return {
+              ...session,
+              variables
             };
-          } else {
-            variables.push({
-              id: crypto.randomUUID(),
-              name: node.data.agenteia.variableName,
-              value: contextualizedResponse
-            });
+          }
+        } catch (followUpError) {
+          console.error('[processAgentIA] Erro no follow-up da OpenAI:', followUpError);
+          Sentry.captureException(followUpError, {
+            tags: {
+              type: 'openai_followup_error',
+              model: prompt.model || 'gpt-4o'
+            },
+            extra: {
+              toolCallsCount: choice.message.tool_calls.length,
+              toolResultsCount: toolResults.length
+            }
+          });
+          
+          // Se tiver especificado um nome de variável para salvar a resposta, setar como vazio
+          if (node.data.agenteia.variableName) {
+            const variables = Array.isArray(session.variables) 
+              ? [...session.variables] 
+              : [];
+            
+            const variableIndex = variables.findIndex(v => v.name === node.data.agenteia.variableName);
+            
+            if (variableIndex >= 0) {
+              variables[variableIndex] = {
+                ...variables[variableIndex],
+                value: ''
+              };
+            } else {
+              variables.push({
+                id: crypto.randomUUID(),
+                name: node.data.agenteia.variableName,
+                value: ''
+              });
+            }
+            
+            await updateSession(session.id, { variables });
+            
+            return {
+              ...session,
+              variables
+            };
           }
           
-          await updateSession(session.id, { variables });
-          
-          // Atualiza a sessão em memória também
-          return {
-            ...session,
-            variables
-          };
+          // Continua o fluxo normalmente mesmo com erro no follow-up
+          console.log('[processAgentIA] Continuando fluxo apesar do erro no follow-up da OpenAI');
         }
-        
-        return session;
       }
       
       // Se não houver resultados a serem contextualizados, apenas retorna a sessão atualizada
       return session;
+    } else {
+      console.log(`[processAgentIA] Não há tool calls`);
     }
 
     // Se for resposta textual
@@ -795,7 +870,7 @@ const prepareContextMessages = async (prompt, session) => {
       content = `[Sticker]` + (msg.attachments?.[0]?.name ? ` - ${msg.attachments?.[0]?.name}` : '');
     } else if(msg.type === 'location') {
       content = `[Location]` + (msg.content ? ` - ${msg.content}` : '');
-    } else if(msg.type === 'instructions_model' && content) {
+    } else if(msg.type === 'instructions_model' && msg.content) {
       content = `[Instructions to model: ${msg.content}]`;
     } else if(msg.type === 'team_transferred') {
       content = `[Team transferred]`;

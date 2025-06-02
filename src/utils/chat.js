@@ -43,7 +43,7 @@ export const formatMarkdownForWhatsApp = (text) => {
       
       // Listas
       .replace(/^[\*\-]\s+(.*?)$/gm, '• $1') // * item ou - item -> • item
-      .replace(/^\d+\.\s+(.*?)$/gm, '$1')    // 1. item -> item
+      // .replace(/^\d+\.\s+(.*?)$/gm, '$1')    // 1. item -> item
       
       // Citações
       .replace(/^>\s+(.*?)$/gm, '_"$1"_');   // > citação -> _"citação"_

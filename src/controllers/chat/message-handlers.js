@@ -594,7 +594,7 @@ export async function handleIncomingMessage(channel, messageData) {
       }
     }
 
-    if (!messageData.fromMe) {
+    if (!messageData.fromMe && (messageData.message.content || messageData.attachments?.length)) {
       const flowEngine = createFlowEngine(organization, channel, customer, chat.id, {
         // isFirstMessage: true,
         isFirstMessage,
