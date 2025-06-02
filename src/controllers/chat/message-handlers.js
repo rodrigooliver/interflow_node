@@ -1191,7 +1191,7 @@ export async function handleStatusUpdate(channel, normalizedData) {
         const { error: updateChatError } = await supabase
           .from('chats')
           .update({
-            last_message_at: new Date().toISOString()
+            last_customer_message_at: new Date().toISOString() //Atualiza a data da última mensagem do cliente
           })
           .eq('id', message.chat_id);
 
