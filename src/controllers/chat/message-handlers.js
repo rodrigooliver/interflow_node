@@ -1054,20 +1054,26 @@ export async function handleStatusUpdate(channel, normalizedData) {
     // Os dados já vêm normalizados pelos canais específicos
     const { messageId, status, error, timestamp, metadata } = normalizedData;
 
-    // Busca a mensagem pelo ID exato com verificação dupla do canal
-    const { data: message, error: findMessageError } = await supabase
-      .from('messages')
-      .select(`
-        *,
-        chat:chats!messages_chat_id_fkey(
-          channel_id
-        )
-      `)
-      .eq('external_id', messageId)
-      .eq('chat.channel_id', channel.id)
-      .not('status', 'eq', 'deleted')
-      .maybeSingle();
+    // Função auxiliar para buscar a mensagem
+    const findMessage = async () => {
+      const { data: message, error: findMessageError } = await supabase
+        .from('messages')
+        .select(`
+          *,
+          chat:chats!messages_chat_id_fkey!inner(
+            channel_id
+          )
+        `)
+        .eq('external_id', messageId)
+        .eq('chat.channel_id', channel.id)
+        .not('status', 'eq', 'deleted')
+        .maybeSingle();
 
+      return { message, findMessageError };
+    };
+
+    // Primeira tentativa de buscar a mensagem
+    let { message, findMessageError } = await findMessage();
 
     if (findMessageError) {
       console.log('findMessageError', findMessageError);
@@ -1079,6 +1085,30 @@ export async function handleStatusUpdate(channel, normalizedData) {
         }
       });
       throw findMessageError;
+    }
+
+    // Se não encontrou a mensagem na primeira tentativa, aguardar 5 segundos e tentar novamente
+    if (!message) {
+      // console.log(`Mensagem ${messageId} não encontrada na primeira tentativa, aguardando 5 segundos para segunda tentativa...`);
+      
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Aguarda 5 segundos
+      
+      // Segunda tentativa
+      const secondAttempt = await findMessage();
+      message = secondAttempt.message;
+      findMessageError = secondAttempt.findMessageError;
+
+      if (findMessageError) {
+        console.log('findMessageError segunda tentativa', findMessageError);
+        Sentry.captureException(findMessageError, {
+          extra: {
+            messageId,
+            channelId: channel.id,
+            context: 'finding_message_by_external_id_and_channel_second_attempt'
+          }
+        });
+        throw findMessageError;
+      }
     }
 
     if (message) {
@@ -1205,15 +1235,15 @@ export async function handleStatusUpdate(channel, normalizedData) {
         }
       }
     } else {
-      Sentry.captureMessage('Mensagem não encontrada para atualização de status', {
+      Sentry.captureMessage('Mensagem não encontrada para atualização de status após duas tentativas', {
         level: 'warning',
         extra: {
           messageId,
           channelId: channel.id,
-          context: 'message_not_found_for_status_update'
+          context: 'message_not_found_for_status_update_after_retry'
         }
       });
-      // console.log(`Mensagem não encontrada para o ID: ${messageId} no canal: ${channel.id}`);
+      console.log(`Mensagem não encontrada para o ID: ${messageId} no canal: ${channel.id} após duas tentativas`);
     }
   } catch (error) {
     Sentry.captureException(error, {
