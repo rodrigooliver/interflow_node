@@ -894,7 +894,7 @@ export async function createInterflowChannel(req, res) {
     if (process.env.WAPI_TOKEN_V2025_1) {
       // if(1 == 2) {
       //CONEXÃO V2025_1
-      const response = await createInterflowChannelV2025_1(organizationId, name, organization.name);
+      const response = await createInterflowChannelV2025_1(organizationId, name, organization.name, null, req.body.settings?.rejectCalls, req.body.settings?.rejectCallsMessage);
       return res.json({
         success: response.success,
         error: response.error,

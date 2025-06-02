@@ -947,7 +947,7 @@ export async function generateQrCodeV2025_1(channel) {
  * @param {*} name 
  * @returns 
  */
-export async function createInterflowChannelV2025_1(organizationId, name, organizationName, channelIdUpdate = null) {
+export async function createInterflowChannelV2025_1(organizationId, name, organizationName, channelIdUpdate = null, rejectCalls = false, rejectCallsMessage = '') {
   try {
     if (!process.env.WAPI_TOKEN_V2025_1) {
       return {
@@ -975,8 +975,8 @@ export async function createInterflowChannelV2025_1(organizationId, name, organi
       },
       body: JSON.stringify({
         instanceName: `${organizationName}: ${name}`,
-        rejectCalls: true,
-        callMessage: 'Não liga mais',
+        rejectCalls: rejectCalls,
+        callMessage: rejectCallsMessage,
         webhookConnectedUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onConnected`,
         webhookDeliveryUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onMessageDelivered`,
         webhookDisconnectedUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onDisconnected`,
