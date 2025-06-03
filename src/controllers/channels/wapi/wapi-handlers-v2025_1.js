@@ -192,7 +192,7 @@ export async function normalizeWapiMessageV2025_1(webhookData, channel = null) {
     messageContent = webhookData.msgContent.listResponseMessage.title || '';
   } else if (webhookData.msgContent?.locationMessage) {
     messageType = 'location';
-    messageContent = `Localização: ${webhookData.msgContent.locationMessage.degreesLatitude}, ${webhookData.msgContent.locationMessage.degreesLongitude}`; //Salvar latitude e longitude
+    messageContent = `📍 ${webhookData.msgContent.locationMessage.degreesLatitude}, ${webhookData.msgContent.locationMessage.degreesLongitude}`; //Salvar latitude e longitude
     
     // Extrair dados de localização
     const locationData = webhookData.msgContent.locationMessage;
