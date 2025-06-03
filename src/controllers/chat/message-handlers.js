@@ -1062,9 +1062,9 @@ export async function handleStatusUpdate(channel, normalizedData) {
     // Os dados já vêm normalizados pelos canais específicos
     const { messageId, status, error, timestamp, metadata } = normalizedData;
 
-    // Função auxiliar para buscar a mensagem
-    const findMessage = async () => {
-      const { data: message, error: findMessageError } = await supabase
+    // Função auxiliar para buscar mensagens (múltiplas se existirem)
+    const findMessages = async () => {
+      const { data: messages, error: findMessagesError } = await supabase
         .from('messages')
         .select(`
           *,
@@ -1075,171 +1075,202 @@ export async function handleStatusUpdate(channel, normalizedData) {
         .eq('external_id', messageId)
         .eq('chat.channel_id', channel.id)
         .not('status', 'eq', 'deleted')
-        .maybeSingle();
+        .order('created_at', { ascending: false }); // Ordena pelas mais recentes primeiro
 
-      return { message, findMessageError };
+      return { messages, findMessagesError };
     };
 
-    // Primeira tentativa de buscar a mensagem
-    let { message, findMessageError } = await findMessage();
+    // Primeira tentativa de buscar as mensagens
+    let { messages, findMessagesError } = await findMessages();
 
-    if (findMessageError) {
-      console.log('findMessageError', findMessageError);
-      Sentry.captureException(findMessageError, {
+    if (findMessagesError) {
+      console.log('findMessagesError', findMessagesError);
+      Sentry.captureException(findMessagesError, {
         extra: {
           messageId,
           channelId: channel.id,
-          context: 'finding_message_by_external_id_and_channel'
+          context: 'finding_messages_by_external_id_and_channel'
         }
       });
-      throw findMessageError;
+      throw findMessagesError;
     }
 
-    // Se não encontrou a mensagem na primeira tentativa, aguardar 5 segundos e tentar novamente
-    if (!message) {
+    // Se não encontrou mensagens na primeira tentativa, aguardar 5 segundos e tentar novamente
+    if (!messages || messages.length === 0) {
       // console.log(`Mensagem ${messageId} não encontrada na primeira tentativa, aguardando 5 segundos para segunda tentativa...`);
       
       await new Promise(resolve => setTimeout(resolve, 5000)); // Aguarda 5 segundos
       
       // Segunda tentativa
-      const secondAttempt = await findMessage();
-      message = secondAttempt.message;
-      findMessageError = secondAttempt.findMessageError;
+      const secondAttempt = await findMessages();
+      messages = secondAttempt.messages;
+      findMessagesError = secondAttempt.findMessagesError;
 
-      if (findMessageError) {
-        console.log('findMessageError segunda tentativa', findMessageError);
-        Sentry.captureException(findMessageError, {
+      if (findMessagesError) {
+        console.log('findMessagesError segunda tentativa', findMessagesError);
+        Sentry.captureException(findMessagesError, {
           extra: {
             messageId,
             channelId: channel.id,
-            context: 'finding_message_by_external_id_and_channel_second_attempt'
+            context: 'finding_messages_by_external_id_and_channel_second_attempt'
           }
         });
-        throw findMessageError;
+        throw findMessagesError;
       }
     }
 
-    if (message) {
-      // Verifica se o novo status representa uma progressão válida
-      const statusHierarchy = {
-        'pending': 0,
-        'retry': 1,
-        'sent': 2,
-        'delivered': 3,
-        'read': 4,
-        'failed': 5 // O status 'failed' é tratado como caso especial
-      };
-
-      const currentStatusLevel = statusHierarchy[message.status] || 0;
-      const newStatusLevel = statusHierarchy[status] || 0;
-
-      // Verifica se já temos um timestamp para o status atual nos metadados
-      let currentStatusTimestamp = null;
-      if (message.metadata?.status_timestamps) {
-        const timestampStr = message.metadata.status_timestamps[message.status];
-        if (timestampStr) {
-          try {
-            currentStatusTimestamp = new Date(timestampStr).getTime();
-          } catch (e) {
-            Sentry.captureException(e, {
-              extra: {
-                timestampStr,
-                context: 'parsing_status_timestamp'
-              }
-            });
-            console.warn(`Erro ao converter timestamp: ${timestampStr}`, e);
+    if (messages && messages.length > 0) {
+      // Log se múltiplas mensagens foram encontradas
+      if (messages.length > 1) {
+        console.log(`Encontradas ${messages.length} mensagens com external_id ${messageId} no canal ${channel.id}`);
+        Sentry.captureMessage('Múltiplas mensagens encontradas para mesmo external_id', {
+          level: 'warning',
+          extra: {
+            messageId,
+            channelId: channel.id,
+            messageCount: messages.length,
+            messageIds: messages.map(m => m.id),
+            context: 'multiple_messages_found'
           }
-        }
+        });
       }
 
-      // Verifica se o novo evento é mais recente que o atual
-      const newEventTimestamp = timestamp || Date.now();
-      const isNewerEvent = !currentStatusTimestamp || newEventTimestamp >= currentStatusTimestamp;
+      // Processar cada mensagem encontrada
+      for (const message of messages) {
+        try {
+          // Verifica se o novo status representa uma progressão válida
+          const statusHierarchy = {
+            'pending': 0,
+            'retry': 1,
+            'sent': 2,
+            'delivered': 3,
+            'read': 4,
+            'failed': 5 // O status 'failed' é tratado como caso especial
+          };
 
-      // Só atualiza o status se for uma progressão válida ou se for 'failed' ou se for um evento mais recente
-      const shouldUpdateStatus =
-        status === 'failed' || // Sempre atualiza para 'failed'
-        (newStatusLevel > currentStatusLevel) || // Atualiza se for um status "superior"
-        (newStatusLevel === currentStatusLevel && isNewerEvent); // Atualiza se for o mesmo status mas mais recente
+          const currentStatusLevel = statusHierarchy[message.status] || 0;
+          const newStatusLevel = statusHierarchy[status] || 0;
 
-      // Prepara os dados para atualização
-      const updateData = {
-        error_message: error
-      };
+          // Verifica se já temos um timestamp para o status atual nos metadados
+          let currentStatusTimestamp = null;
+          if (message.metadata?.status_timestamps) {
+            const timestampStr = message.metadata.status_timestamps[message.status];
+            if (timestampStr) {
+              try {
+                currentStatusTimestamp = new Date(timestampStr).getTime();
+              } catch (e) {
+                Sentry.captureException(e, {
+                  extra: {
+                    timestampStr,
+                    context: 'parsing_status_timestamp'
+                  }
+                });
+                console.warn(`Erro ao converter timestamp: ${timestampStr}`, e);
+              }
+            }
+          }
 
-      // Só inclui o status se for uma progressão válida
-      if (shouldUpdateStatus) {
-        updateData.status = status;
-      }
+          // Verifica se o novo evento é mais recente que o atual
+          const newEventTimestamp = timestamp || Date.now();
+          const isNewerEvent = !currentStatusTimestamp || newEventTimestamp >= currentStatusTimestamp;
 
-      // Prepara os metadados atualizados
-      const statusDate = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
+          // Só atualiza o status se for uma progressão válida ou se for 'failed' ou se for um evento mais recente
+          const shouldUpdateStatus =
+            status === 'failed' || // Sempre atualiza para 'failed'
+            (newStatusLevel > currentStatusLevel) || // Atualiza se for um status "superior"
+            (newStatusLevel === currentStatusLevel && isNewerEvent); // Atualiza se for o mesmo status mas mais recente
 
-      // Inicializa ou atualiza os metadados
-      const currentMetadata = message.metadata || {};
-      const statusTimestamps = currentMetadata.status_timestamps || {};
+          // Prepara os dados para atualização
+          const updateData = {
+            error_message: error
+          };
 
-      // Atualiza o timestamp do status atual
-      if (shouldUpdateStatus || !statusTimestamps[status]) {
-        statusTimestamps[status] = statusDate;
-      }
+          // Só inclui o status se for uma progressão válida
+          if (shouldUpdateStatus) {
+            updateData.status = status;
+          }
 
-      // Certifica-se de que status_updates seja um array
-      const currentStatusUpdates = Array.isArray(currentMetadata.status_updates)
-        ? currentMetadata.status_updates
-        : [];
+          // Prepara os metadados atualizados
+          const statusDate = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
 
-      // Adiciona a nova atualização de status com timestamp
-      const newStatusUpdate = {
-        status,
-        timestamp,
-        processed_at: new Date().toISOString(),
-        ...metadata
-      };
+          // Inicializa ou atualiza os metadados
+          const currentMetadata = message.metadata || {};
+          const statusTimestamps = currentMetadata.status_timestamps || {};
 
-      // Atualiza os metadados
-      updateData.metadata = {
-        ...currentMetadata,
-        status_timestamps: statusTimestamps,
-        status_updates: [
-          ...currentStatusUpdates,
-          newStatusUpdate
-        ]
-      };
+          // Atualiza o timestamp do status atual
+          if (shouldUpdateStatus || !statusTimestamps[status]) {
+            statusTimestamps[status] = statusDate;
+          }
 
-      // Verifica se há algo para atualizar
-      if (Object.keys(updateData).length > 1 || shouldUpdateStatus) { // Sempre tem pelo menos error_message
-        // Atualiza a mensagem no banco de dados
-        const { error: updateError } = await supabase
-          .from('messages')
-          .update(updateData)
-          .eq('id', message.id);
+          // Certifica-se de que status_updates seja um array
+          const currentStatusUpdates = Array.isArray(currentMetadata.status_updates)
+            ? currentMetadata.status_updates
+            : [];
 
-        if (updateError) {
-          Sentry.captureException(updateError, {
+          // Adiciona a nova atualização de status com timestamp
+          const newStatusUpdate = {
+            status,
+            timestamp,
+            processed_at: new Date().toISOString(),
+            ...metadata
+          };
+
+          // Atualiza os metadados
+          updateData.metadata = {
+            ...currentMetadata,
+            status_timestamps: statusTimestamps,
+            status_updates: [
+              ...currentStatusUpdates,
+              newStatusUpdate
+            ]
+          };
+
+          // Verifica se há algo para atualizar
+          if (Object.keys(updateData).length > 1 || shouldUpdateStatus) { // Sempre tem pelo menos error_message
+            // Atualiza a mensagem no banco de dados
+            const { error: updateError } = await supabase
+              .from('messages')
+              .update(updateData)
+              .eq('id', message.id);
+
+            if (updateError) {
+              Sentry.captureException(updateError, {
+                extra: {
+                  messageId: message.id,
+                  updateData,
+                  context: 'updating_message_status'
+                }
+              });
+              console.error(`Erro ao atualizar status da mensagem: ${updateError.message}`);
+            }
+
+            const { error: updateChatError } = await supabase
+              .from('chats')
+              .update({
+                last_customer_message_at: new Date().toISOString() //Atualiza a data da última mensagem do cliente
+              })
+              .eq('id', message.chat_id);
+
+            if (updateChatError) {
+              Sentry.captureException(updateChatError, {
+                extra: {
+                  chatId: message.chat_id,
+                  context: 'updating_chat_last_message_at'
+                }
+              });
+            }
+          }
+        } catch (messageError) {
+          console.error(`Erro ao processar mensagem ${message.id}:`, messageError);
+          Sentry.captureException(messageError, {
             extra: {
               messageId: message.id,
-              updateData,
-              context: 'updating_message_status'
+              externalId: messageId,
+              channelId: channel.id,
+              context: 'processing_individual_message_status_update'
             }
           });
-          console.error(`Erro ao atualizar status da mensagem: ${updateError.message}`);
-        }
-
-        const { error: updateChatError } = await supabase
-          .from('chats')
-          .update({
-            last_customer_message_at: new Date().toISOString() //Atualiza a data da última mensagem do cliente
-          })
-          .eq('id', message.chat_id);
-
-        if (updateChatError) {
-          Sentry.captureException(updateChatError, {
-            extra: {
-              chatId: message.chat_id,
-              context: 'updating_chat_last_message_at'
-            }
-          });
+          // Continua processando as outras mensagens mesmo se uma falhar
         }
       }
     } else {
