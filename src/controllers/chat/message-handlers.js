@@ -16,6 +16,7 @@ import { handleSenderMessageEmail } from '../../services/email.js';
 import { handleSenderMessageInstagram, handleDeleteMessageInstagram } from '../channels/instagram.js';
 import { handleSenderMessageOfficial } from '../channels/whatsapp-official.js';
 import { formatWhatsAppToMarkdown } from '../../utils/chat.js';
+import { registerUsageOrganizationByCustomer } from '../organizations/usage.js';
 // import { handleSenderMessageZApi } from '../../services/channels/z-api.js';
 // import { handleSenderMessageEvolution } from '../../services/channels/evolution.js';
 // import { handleSenderMessageFacebook } from '../../services/channels/facebook.js';
@@ -293,6 +294,8 @@ export async function handleIncomingMessage(channel, messageData) {
                 .single();
 
               if (createError) throw createError;
+
+              registerUsageOrganizationByCustomer(organization.id);
 
               //Criar novo customer_contact
               const { error: insertError } = await supabase

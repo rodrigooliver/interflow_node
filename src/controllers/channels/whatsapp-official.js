@@ -5,6 +5,7 @@ import Sentry from '../../lib/sentry.js';
 import { supabase } from '../../lib/supabase.js';
 import axios from 'axios';
 import {  formatMarkdownForWhatsApp, formatWhatsAppToMarkdown} from '../../utils/chat.js';
+import { registerUsageOrganizationByCustomer } from '../organizations/usage.js';
 
 async function getWhatsAppUserInfo(phoneNumber, accessToken) {
   try {
@@ -92,6 +93,9 @@ async function findOrCreateChat(channel, senderId, contactName) {
 
       if (customerError) throw customerError;
       customerId = newCustomer.id;
+
+      //Contabilizar usage de organization
+      registerUsageOrganizationByCustomer(channel.organization_id);
     }
 
     // Criar novo chat

@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
+import { registerUsageOrganizationByCustomer } from '../organizations/usage.js';
 
 export async function findExistingChat(channelId, customerId) {
   try {
@@ -114,6 +115,9 @@ export async function findOrCreateCustomer(organization, contactInfo) {
           throw createError;
         }
 
+        //contabilizar usage de organization
+        registerUsageOrganizationByCustomer(organization.id);
+
         return newCustomers[0];
       }
       throw findError;
@@ -140,6 +144,9 @@ export async function findOrCreateCustomer(organization, contactInfo) {
       });
       throw createError;
     }
+
+    //contabilizar usage de organization
+    registerUsageOrganizationByCustomer(organization.id);
 
     return newCustomers[0];
   } catch (error) {

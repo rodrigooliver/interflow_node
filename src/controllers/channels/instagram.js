@@ -4,6 +4,7 @@ import { encrypt, decrypt } from '../../utils/crypto.js';
 import { supabase } from '../../lib/supabase.js';
 import Sentry from '../../lib/sentry.js';
 import { formatMarkdownForWhatsApp, formatWhatsAppToMarkdown } from '../../utils/chat.js';
+import { registerUsageOrganizationByCustomer } from '../organizations/usage.js';
 
 async function getInstagramUserInfo(userId, accessToken) {
   try {
@@ -168,6 +169,11 @@ async function findOrCreateChat(channel, externalId, accessToken, isEcho = false
       .insert(customerData)
       .select()
       .single();
+
+    if (customerError) throw customerError;
+
+    //contabilizar usage de organization
+    registerUsageOrganizationByCustomer(channel.organization_id);
 
     // Adicionar contato do Instagram para o novo cliente
     await supabase
