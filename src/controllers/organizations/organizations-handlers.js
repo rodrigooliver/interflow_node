@@ -255,7 +255,8 @@ export async function createOrganization(signupData) {
     billingPeriod = 'monthly',
     referral = null,
     language = 'pt',
-    startFlow = false
+    startFlow = false,
+    indicationId = null
   } = signupData;
 
   try {
@@ -351,7 +352,7 @@ export async function createOrganization(signupData) {
         email,
         whatsapp: whatsapp ? `${countryCode}${whatsapp.replace(/\D/g, '')}` : null,
         referrer_id: referral?.id || null,
-        indication_id: referral?.user_id || null,
+        indication_id: indicationId || referral?.user_id || null,
         settings: {
           language: language
         }
