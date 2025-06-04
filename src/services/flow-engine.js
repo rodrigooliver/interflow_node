@@ -331,7 +331,6 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           const directUrlRegex = /(https?:\/\/[^\s\[\]()]+\.(jpg|jpeg|png|gif|webp|svg|bmp|mp3|wav|ogg|m4a|aac|mp4|webm|mov|avi|mkv|pdf|doc|docx|txt|rtf|xls|xlsx|ppt|pptx)(\?[^\s\[\]()]*)?)/gi;
           
           const parts = [];
-          let processedText = text;
           let lastIndex = 0;
           
           // Primeiro, processar links de referência
@@ -348,227 +347,157 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
             });
           }
           
-          // Processar cada match de referência
-          for (const refMatch of referenceMatches) {
-            // Adiciona o texto antes do link de referência
-            if (refMatch.startIndex > lastIndex) {
+          // Se há links de referência, processar primeiro eles e depois o texto restante
+          if (referenceMatches.length > 0) {
+            // Processar cada match de referência
+            for (const refMatch of referenceMatches) {
+              // Adiciona o texto antes do link de referência
+              if (refMatch.startIndex > lastIndex) {
+                parts.push({
+                  type: 'text',
+                  content: text.slice(lastIndex, refMatch.startIndex)
+                });
+              }
+              
+              // Para links de referência, usar a URL da imagem (segundo parâmetro)
+              const mediaType = identifyMediaType(refMatch.imageUrl);
+              parts.push({
+                type: 'link',
+                content: refMatch.text,
+                url: refMatch.imageUrl, // Usar a URL da imagem
+                mediaType: mediaType
+              });
+              
+              lastIndex = refMatch.endIndex;
+            }
+            
+            // Adicionar o texto restante após os links de referência
+            if (lastIndex < text.length) {
+              const remainingText = text.slice(lastIndex);
+              
+              // Se ainda há texto restante, processar links normais e URLs diretas nele
+              if (remainingText.trim()) {
+                const normalParts = processTextForLinksAndUrls(remainingText, normalLinkRegex, directUrlRegex);
+                parts.push(...normalParts);
+              }
+            }
+          } else {
+            // Se não há links de referência, processar todo o texto para links normais e URLs diretas
+            const normalParts = processTextForLinksAndUrls(text, normalLinkRegex, directUrlRegex);
+            parts.push(...normalParts);
+          }
+          
+          return parts;
+        };
+
+        // Função auxiliar para processar texto em busca de links normais e URLs diretas
+        const processTextForLinksAndUrls = (text, normalLinkRegex, directUrlRegex) => {
+          const parts = [];
+          let lastIndex = 0;
+          
+          // Coletar todos os matches (normais e diretos) com suas posições
+          const allMatches = [];
+          
+          // Coletar matches de links normais
+          normalLinkRegex.lastIndex = 0;
+          let normalMatch;
+          while ((normalMatch = normalLinkRegex.exec(text)) !== null) {
+            allMatches.push({
+              type: 'normal',
+              startIndex: normalMatch.index,
+              endIndex: normalMatch.index + normalMatch[0].length,
+              text: normalMatch[1],
+              url: normalMatch[2],
+              fullMatch: normalMatch[0]
+            });
+          }
+          
+          // Coletar matches de URLs diretas
+          directUrlRegex.lastIndex = 0;
+          let directMatch;
+          while ((directMatch = directUrlRegex.exec(text)) !== null) {
+            // Verificar se esta URL não está dentro de um link Markdown já capturado
+            const isInsideMarkdown = allMatches.some(match => 
+              directMatch.index >= match.startIndex && directMatch.index < match.endIndex
+            );
+            
+            if (!isInsideMarkdown) {
+              allMatches.push({
+                type: 'direct',
+                startIndex: directMatch.index,
+                endIndex: directMatch.index + directMatch[0].length,
+                url: directMatch[1],
+                fullMatch: directMatch[0]
+              });
+            }
+          }
+          
+          // Se não há matches, retornar o texto como uma única parte
+          if (allMatches.length === 0) {
+            if (text.trim()) {
               parts.push({
                 type: 'text',
-                content: text.slice(lastIndex, refMatch.startIndex)
+                content: text
               });
             }
-            
-            // Para links de referência, usar a URL da imagem (segundo parâmetro)
-            const mediaType = identifyMediaType(refMatch.imageUrl);
-            parts.push({
-              type: 'link',
-              content: refMatch.text,
-              url: refMatch.imageUrl, // Usar a URL da imagem
-              mediaType: mediaType
-            });
-            
-            lastIndex = refMatch.endIndex;
+            return parts;
           }
           
-          // Adicionar o texto restante
-          if (lastIndex < text.length) {
-            const remainingText = text.slice(lastIndex);
-            
-            // Se ainda há texto restante, processar links normais e URLs diretas nele
-            if (remainingText.trim()) {
-              const normalParts = [];
-              let normalLastIndex = 0;
-              
-              // Primeiro, coletar todos os matches (normais e diretos) com suas posições
-              const allMatches = [];
-              
-              // Coletar matches de links normais
-              normalLinkRegex.lastIndex = 0;
-              let normalMatch;
-              while ((normalMatch = normalLinkRegex.exec(remainingText)) !== null) {
-                allMatches.push({
-                  type: 'normal',
-                  startIndex: normalMatch.index,
-                  endIndex: normalMatch.index + normalMatch[0].length,
-                  text: normalMatch[1],
-                  url: normalMatch[2],
-                  fullMatch: normalMatch[0]
-                });
-              }
-              
-              // Coletar matches de URLs diretas
-              directUrlRegex.lastIndex = 0;
-              let directMatch;
-              while ((directMatch = directUrlRegex.exec(remainingText)) !== null) {
-                // Verificar se esta URL não está dentro de um link Markdown já capturado
-                const isInsideMarkdown = allMatches.some(match => 
-                  directMatch.index >= match.startIndex && directMatch.index < match.endIndex
-                );
-                
-                if (!isInsideMarkdown) {
-                  allMatches.push({
-                    type: 'direct',
-                    startIndex: directMatch.index,
-                    endIndex: directMatch.index + directMatch[0].length,
-                    url: directMatch[1],
-                    fullMatch: directMatch[0]
-                  });
-                }
-              }
-              
-              // Ordenar matches por posição
-              allMatches.sort((a, b) => a.startIndex - b.startIndex);
-              
-              // Processar matches ordenados
-              for (const match of allMatches) {
-                // Adicionar texto antes do match
-                if (match.startIndex > normalLastIndex) {
-                  const textContent = remainingText.slice(normalLastIndex, match.startIndex);
-                  if (textContent.trim()) {
-                    normalParts.push({
-                      type: 'text',
-                      content: textContent
-                    });
-                  }
-                }
-                
-                // Adicionar o link
-                if (match.type === 'normal') {
-                  normalParts.push({
-                    type: 'link',
-                    content: match.text,
-                    url: match.url,
-                    mediaType: identifyMediaType(match.url)
-                  });
-                } else { // direct
-                  // Para URLs diretas, usar parte do nome do arquivo como texto
-                  const urlParts = match.url.split('/');
-                  const fileName = urlParts[urlParts.length - 1].split('?')[0]; // Remove query params
-                  
-                  normalParts.push({
-                    type: 'link',
-                    content: fileName || 'Arquivo',
-                    url: match.url,
-                    mediaType: identifyMediaType(match.url)
-                  });
-                }
-                
-                normalLastIndex = match.endIndex;
-              }
-              
-              // Adiciona o texto restante após todos os matches
-              if (normalLastIndex < remainingText.length) {
-                const textContent = remainingText.slice(normalLastIndex);
-                if (textContent.trim()) {
-                  normalParts.push({
-                    type: 'text',
-                    content: textContent
-                  });
-                }
-              }
-              
-              // Adiciona as partes normais aos resultados
-              parts.push(...normalParts);
-            }
-          }
+          // Ordenar matches por posição
+          allMatches.sort((a, b) => a.startIndex - b.startIndex);
           
-          // Se não houve matches de referência, processar como links normais e URLs diretas
-          if (referenceMatches.length === 0) {
-            lastIndex = 0;
-            
-            // Coletar todos os matches (normais e diretos) com suas posições
-            const allMatches = [];
-            
-            // Coletar matches de links normais
-            normalLinkRegex.lastIndex = 0;
-            let normalMatch;
-            while ((normalMatch = normalLinkRegex.exec(text)) !== null) {
-              allMatches.push({
-                type: 'normal',
-                startIndex: normalMatch.index,
-                endIndex: normalMatch.index + normalMatch[0].length,
-                text: normalMatch[1],
-                url: normalMatch[2],
-                fullMatch: normalMatch[0]
-              });
-            }
-            
-            // Coletar matches de URLs diretas
-            directUrlRegex.lastIndex = 0;
-            let directMatch;
-            while ((directMatch = directUrlRegex.exec(text)) !== null) {
-              // Verificar se esta URL não está dentro de um link Markdown já capturado
-              const isInsideMarkdown = allMatches.some(match => 
-                directMatch.index >= match.startIndex && directMatch.index < match.endIndex
-              );
-              
-              if (!isInsideMarkdown) {
-                allMatches.push({
-                  type: 'direct',
-                  startIndex: directMatch.index,
-                  endIndex: directMatch.index + directMatch[0].length,
-                  url: directMatch[1],
-                  fullMatch: directMatch[0]
-                });
-              }
-            }
-            
-            // Ordenar matches por posição
-            allMatches.sort((a, b) => a.startIndex - b.startIndex);
-            
-            // Processar matches ordenados
-            for (const match of allMatches) {
-              // Adicionar texto antes do match
-              if (match.startIndex > lastIndex) {
-                const textContent = text.slice(lastIndex, match.startIndex);
-                if (textContent.trim()) {
-                  parts.push({
-                    type: 'text',
-                    content: textContent
-                  });
-                }
-              }
-              
-              // Adicionar o link
-              if (match.type === 'normal') {
-                parts.push({
-                  type: 'link',
-                  content: match.text,
-                  url: match.url,
-                  mediaType: identifyMediaType(match.url)
-                });
-              } else { // direct
-                // Para URLs diretas, usar parte do nome do arquivo como texto
-                const urlParts = match.url.split('/');
-                const fileName = urlParts[urlParts.length - 1].split('?')[0]; // Remove query params
-                
-                parts.push({
-                  type: 'link',
-                  content: fileName || 'Arquivo',
-                  url: match.url,
-                  mediaType: identifyMediaType(match.url)
-                });
-              }
-              
-              // Atualizar lastIndex considerando pontuação após o link
-              const afterLink = text.slice(match.endIndex);
-              const punctuationMatch = afterLink.match(/^[.,!?;:]/);
-              if (punctuationMatch) {
-                lastIndex = match.endIndex + punctuationMatch[0].length;
-              } else {
-                lastIndex = match.endIndex;
-              }
-            }
-            
-            // Adiciona o texto restante após todos os matches
-            if (lastIndex < text.length) {
-              const textContent = text.slice(lastIndex);
+          // Processar matches ordenados
+          for (const match of allMatches) {
+            // Adicionar texto antes do match
+            if (match.startIndex > lastIndex) {
+              const textContent = text.slice(lastIndex, match.startIndex);
               if (textContent.trim()) {
                 parts.push({
                   type: 'text',
                   content: textContent
                 });
               }
+            }
+            
+            // Adicionar o link
+            if (match.type === 'normal') {
+              parts.push({
+                type: 'link',
+                content: match.text,
+                url: match.url,
+                mediaType: identifyMediaType(match.url)
+              });
+            } else { // direct
+              // Para URLs diretas, usar parte do nome do arquivo como texto
+              const urlParts = match.url.split('/');
+              const fileName = urlParts[urlParts.length - 1].split('?')[0]; // Remove query params
+              
+              parts.push({
+                type: 'link',
+                content: fileName || 'Arquivo',
+                url: match.url,
+                mediaType: identifyMediaType(match.url)
+              });
+            }
+            
+            // Atualizar lastIndex considerando pontuação após o link
+            const afterLink = text.slice(match.endIndex);
+            const punctuationMatch = afterLink.match(/^[.,!?;:]/);
+            if (punctuationMatch) {
+              lastIndex = match.endIndex + punctuationMatch[0].length;
+            } else {
+              lastIndex = match.endIndex;
+            }
+          }
+          
+          // Adiciona o texto restante após todos os matches
+          if (lastIndex < text.length) {
+            const textContent = text.slice(lastIndex);
+            if (textContent.trim()) {
+              parts.push({
+                type: 'text',
+                content: textContent
+              });
             }
           }
           
@@ -682,7 +611,9 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
         // 2. Se não tem JSON, verifica se deve extrair links
         else if (node.data.extractLinks) {
           // console.log('Processando texto com extração de links');
+          // console.log(processedText)
           const parts = extractLinks(processedText);
+          // console.log(parts)
           const metadata = node.data.listOptions ? { list: node.data.listOptions } : null;
           await processAndSendParts(parts, metadata);
         } 
