@@ -1541,3 +1541,91 @@ export async function validateWhatsAppNumberV2025_1(channel, phoneNumber) {
     throw error;
   }
 }
+
+export async function updateCallRejectV2025_1(channel, rejectCalls, rejectCallsMessage = 'Por enquanto esse número só aceita mensagens') {
+  try {
+
+    const credentials = channel.credentials;
+    const instanceId = credentials.instanceId || null;
+    const apiToken = credentials.apiToken ? decrypt(credentials.apiToken) : null;
+
+    // console.log('updateCallRejectV2025_1: apiToken', apiToken);
+    if(!instanceId || !apiToken) {
+      const error = new Error('Instance ID or API Token not found');
+      console.error('Instance ID or API Token not found', error);
+      Sentry.captureException(error, {
+        extra: {
+          channelId: channel.id
+        }
+      });
+      throw error;
+    }
+
+    const baseUrl = 'https://api.w-api.app/v1';
+
+    //Atualiza pra true ou false
+    const response = await fetch(`${baseUrl}/instance/update-call-reject-auto?instanceId=${instanceId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiToken}`
+      },
+      body: JSON.stringify({
+        value: rejectCalls
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      const error = new Error(errorData.message || 'Failed to update call reject');
+      Sentry.captureException(error, {
+        extra: {
+          channelId: channel.id,
+          instanceId,
+          rejectCalls,
+          errorData
+        }
+      });
+      throw error;
+    }
+
+    //Atualiza a mensagem de rejeição de chamadas
+    if (rejectCallsMessage) {
+      //Atualiza pra true ou false
+      const responseMessage = await fetch(`${baseUrl}/instance/update-call-reject-message?instanceId=${instanceId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiToken}`
+        },
+        body: JSON.stringify({
+          value: rejectCallsMessage
+        })
+      });
+
+      if (!responseMessage.ok) {
+        const errorData = await responseMessage.json();
+        const error = new Error(errorData.message || 'Failed to update call reject message');
+        Sentry.captureException(error, {
+          extra: {
+            channelId: channel.id,
+            instanceId,
+            rejectCallsMessage,
+            errorData
+          }
+        });
+      }
+    }
+
+    return true;
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        channelId: channel.id,
+        instanceId,
+        rejectCalls
+      }
+    });
+    throw error;
+  }
+}

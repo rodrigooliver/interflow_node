@@ -39,7 +39,8 @@ import {
   deleteInterflowChannelV2025_1,
   disconnectWapiInstanceV2025_1,
   restartWapiInstanceV2025_1,
-  validateWhatsAppNumberV2025_1
+  validateWhatsAppNumberV2025_1,
+  updateCallRejectV2025_1
 } from './wapi/wapi-handlers-v2025_1.js';
 import { registerUsageOrganizationByChannel } from '../organizations/usage.js';
 
@@ -818,6 +819,18 @@ export async function updateWapiChannel(req, res) {
         success: false,
         error: 'Channel not found'
       });
+    }
+
+    //Verificar se houve alteração em settings.rejectCalls se for versão 2025_1
+    if (existingChannel.settings.version === '2025_1' && channelData.settings.rejectCalls !== existingChannel.settings.rejectCalls) {
+      //Alterar na api
+      const response = await updateCallRejectV2025_1(existingChannel, channelData.settings.rejectCalls, channelData.settings.rejectCallsMessage);
+      if (!response) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to update call reject'
+        });
+      }
     }
 
     // Preparar dados para atualização
