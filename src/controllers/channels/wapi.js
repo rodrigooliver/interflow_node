@@ -822,7 +822,7 @@ export async function updateWapiChannel(req, res) {
     }
 
     //Verificar se houve alteração em settings.rejectCalls se for versão 2025_1
-    if (existingChannel.settings.version === '2025_1' && channelData.settings.rejectCalls !== existingChannel.settings.rejectCalls) {
+    if (existingChannel.is_tested && existingChannel.settings.version === '2025_1' && channelData.settings.rejectCalls !== existingChannel.settings.rejectCalls) {
       //Alterar na api
       const response = await updateCallRejectV2025_1(existingChannel, channelData.settings.rejectCalls, channelData.settings.rejectCallsMessage);
       if (!response) {
