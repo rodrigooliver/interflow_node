@@ -27,7 +27,7 @@ export async function normalizeWapiMessageV2025_1(webhookData, channel = null) {
   const externalData = webhookData.fromMe
     ? {
       externalId: webhookData.chat.id,
-      externalName: webhookData.chat.pushName || null,
+      externalName: webhookData.chat.pushName || webhookData.chat.name || null,
       externalProfilePicture: webhookData.chat.profilePicture
     }
     : {
