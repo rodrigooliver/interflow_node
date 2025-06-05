@@ -88,6 +88,11 @@ export const processAgentIA = async (node, session, sendMessage, updateSession) 
 
     session.prompt = prompt;
 
+    if(!prompt.integration_id) {
+      console.error('[processAgentIA] Integração com OpenAI não está vinculada ao AgentIA');
+      throw new Error('Integração com OpenAI não está vinculada ao AgentIA');
+    }
+
     // Buscar a integração associada ao prompt
     const { data: integration, error: integrationError } = await supabase
       .from('integrations')
