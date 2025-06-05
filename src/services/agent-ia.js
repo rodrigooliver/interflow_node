@@ -825,6 +825,7 @@ const prepareContextMessages = async (prompt, session) => {
     // .in('sender_type', ['customer', 'agent', 'system'])
     // .not('content', 'is', null)
     .neq('status', 'deleted')
+    .neq('status', 'scheduled')
     .order('created_at', { ascending: true });
 
   // console.log('[prepareContextMessages] chatMessages', chatMessages)

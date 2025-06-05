@@ -182,12 +182,14 @@ export async function handleIncomingMessage(channel, messageData) {
       if (findMessageError && findMessageError.code !== 'PGRST116') throw findMessageError;
 
       if (existingMessage) {
-        const { error: updateError } = await supabase
-          .from('messages')
-          .update({ status: 'sent' })
-          .eq('id', existingMessage.id);
+        if (existingMessage.status === 'pending') {
+          const { error: updateError } = await supabase
+            .from('messages')
+            .update({ status: 'sent' })
+            .eq('id', existingMessage.id);
 
-        if (updateError) throw updateError;
+          if (updateError) throw updateError;
+        }
         return;
       }
     }
@@ -233,6 +235,10 @@ export async function handleIncomingMessage(channel, messageData) {
 
       if (chat) {
         customer = chat.customers;
+        
+        // Preparar atualizações do customer
+        const customerUpdates = {};
+        
         if (messageData.externalProfilePicture) {
           // Atualizar o profile_picture do chat
           const { error: updateError } = await supabase
@@ -246,10 +252,19 @@ export async function handleIncomingMessage(channel, messageData) {
             });
           }
 
-          //Atualizar o profile_picture do customer
-          supabase
+          customerUpdates.profile_picture = messageData.externalProfilePicture;
+        }
+
+        // Verificar se externalId é igual customer.name e externalName é diferente de externalId
+        if (messageData.externalId === customer.name && messageData.externalName !== messageData.externalId) {
+          customerUpdates.name = messageData.externalName;
+        }
+
+        // Fazer uma única atualização do customer se houver mudanças
+        if (Object.keys(customerUpdates).length > 0) {
+          await supabase
             .from('customers')
-            .update({ profile_picture: messageData.externalProfilePicture })
+            .update(customerUpdates)
             .eq('id', customer.id);
         }
       } else {
@@ -434,7 +449,7 @@ export async function handleIncomingMessage(channel, messageData) {
                   } catch (transcriptionError) {
                     lastError = transcriptionError;
                     console.log(`Tentativa ${attempt}/${maxAttempts} de transcrição falhou:`, transcriptionError.message);
-                    
+
                     // Se não é a última tentativa, aguarda um pouco antes de tentar novamente
                     if (attempt < maxAttempts) {
                       await new Promise(resolve => setTimeout(resolve, 4000)); // Aguarda 2 segundos
@@ -1134,9 +1149,9 @@ export async function handleStatusUpdate(channel, normalizedData) {
     // Se não encontrou mensagens na primeira tentativa, aguardar 5 segundos e tentar novamente
     if (!messages || messages.length === 0) {
       // console.log(`Mensagem ${messageId} não encontrada na primeira tentativa, aguardando 5 segundos para segunda tentativa...`);
-      
+
       await new Promise(resolve => setTimeout(resolve, 8000)); // Aguarda 8 segundos
-      
+
       // Segunda tentativa
       const secondAttempt = await findMessages();
       messages = secondAttempt.messages;
@@ -1500,8 +1515,8 @@ async function disconnectChannel(channelId, errorMessage) {
  * @returns {Promise<Object>} - Resultado do envio com messageId externo
  */
 export async function sendSystemMessage(messageId, attempt = 1) {
-  const MAX_ATTEMPTS = 3;
-  const RETRY_DELAY = 4000; // 2 segundos entre tentativas
+  const MAX_ATTEMPTS = 2;
+  const RETRY_DELAY = 5000; // 5 segundos entre tentativas
 
   try {
     // Busca a mensagem com dados do chat e do canal
@@ -1747,6 +1762,9 @@ export async function createMessageRoute(req, res) {
     // Obter chatId e organizationId dos parâmetros da rota
     const { chatId, organizationId } = req.params;
 
+    //Aguardar 30 segundos
+    // await new Promise(resolve => setTimeout(resolve, 30000));
+
     // Em requisições multipart/form-data, os campos de texto estão em req.body
     const content = req.body.content || null;
     const replyToMessageId = req.body.replyToMessageId || null;
@@ -1984,6 +2002,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
             organization_id: organizationId,
             sender_agent_id: userId ?? null,
             sender_type: 'agent',
+            sent_from_system: true,
             content: null, // Sem conteúdo de texto
             type: messageType,
             response_message_id: replyToMessageId ?? null,
@@ -2016,6 +2035,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
+          sent_from_system: true,
           content: formattedContent,
           type: 'text',
           response_message_id: replyToMessageId ?? null,
@@ -2031,6 +2051,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
+          sent_from_system: true,
           content: formattedContent,
           type: 'email',
           response_message_id: replyToMessageId ?? null,
@@ -2046,6 +2067,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           organization_id: organizationId,
           sender_agent_id: userId,
           sender_type: 'agent',
+          sent_from_system: true,
           content: formattedContent,
           type: isSocialChannel ? 'text' : 'email',
           response_message_id: replyToMessageId ?? null,
@@ -2070,6 +2092,7 @@ export async function createMessageToSend(chatId, organizationId, content, reply
         organization_id: organizationId,
         sender_agent_id: userId,
         sender_type: 'agent',
+        sent_from_system: true,
         content: null,
         type: 'email',
         response_message_id: replyToMessageId ?? null,
@@ -2362,13 +2385,13 @@ export async function deleteMessageRoute(req, res) {
       throw updateError;
     }
 
-    
+
     // Se a mensagem deletada for a última mensagem do chat
     if (message.chat.last_message_id === messageId) {
       // Busca a mensagem anterior não deletada
 
-       // Prepara metadata do chat com a última reação
-       const updatedChatMetadata = {
+      // Prepara metadata do chat com a última reação
+      const updatedChatMetadata = {
         ...(message.chat.metadata || {}),
         last_message: {
           type: 'deleted',
@@ -2380,7 +2403,7 @@ export async function deleteMessageRoute(req, res) {
       // Atualiza o last_message_id do chat
       const { error: chatUpdateError } = await supabase
         .from('chats')
-        .update({ 
+        .update({
           last_message_id: null,
           last_message_at: new Date().toISOString(),
           metadata: updatedChatMetadata
@@ -2508,7 +2531,7 @@ export async function updateMessageRoute(req, res) {
       });
     }
 
-    if(!existingMessage.chat.channel){
+    if (!existingMessage.chat.channel) {
       return res.status(400).json({
         error: 'Channel not found',
         message: 'Canal não encontrado'
@@ -2537,7 +2560,7 @@ export async function updateMessageRoute(req, res) {
       });
     }
 
-    if(!existingMessage.chat.external_id) {
+    if (!existingMessage.chat.external_id) {
       return res.status(400).json({
         error: 'Channel does not support message editing',
         message: 'Este canal não suporta edição de mensagens'
@@ -2545,7 +2568,7 @@ export async function updateMessageRoute(req, res) {
     }
 
     try {
-        //Atualizar a mensagem no canal
+      //Atualizar a mensagem no canal
       const response = await channelConfig.updateHandler(existingMessage.chat.channel, existingMessage.chat.external_id, existingMessage.external_id, content.trim());
       res.json({
         success: true,
@@ -2585,12 +2608,12 @@ export async function updateMessageRoute(req, res) {
     //   });
     // }
 
-    
+
 
   } catch (error) {
     console.error('Erro na função updateMessageRoute:', error);
     Sentry.captureException(error, {
-      extra: { 
+      extra: {
         organizationId: req.user?.organizationId,
         chatId: req.params?.chatId,
         messageId: req.params?.messageId
@@ -2725,7 +2748,7 @@ export async function handleUpdateEditedMessage(channel, originalMessageId, newC
  */
 export async function handleUpdateDeletedMessage(channel, messageId) {
 
-  if(!channel) {
+  if (!channel) {
     console.error('Canal não encontrado para mensagem apagada');
     return;
   }
@@ -2836,12 +2859,12 @@ export async function handleUpdateMessageReaction(channel, messageExternalId, re
       return;
     }
 
-    if(!reaction) {
+    if (!reaction) {
       console.error('Reação não encontrada para atualização');
       return;
     }
 
-    if(!senderId) {
+    if (!senderId) {
       senderId = 'unknown_sender';
     }
 
@@ -2957,5 +2980,344 @@ export async function handleUpdateMessageReaction(channel, messageExternalId, re
       }
     });
     console.error('Erro ao processar reação V2025.1:', error);
+  }
+}
+
+/**
+ * Processa mensagens agendadas que estão prontas para serem enviadas
+ * 
+ * Busca mensagens com status 'scheduled' e scheduled_at <= agora,
+ * e envia cada uma com um intervalo de 1 segundo entre elas.
+ * 
+ * @returns {Promise<Object>} - Resultado do processamento
+ */
+export async function processScheduledMessages() {
+  try {
+    // console.log('[CRON] Iniciando verificação de mensagens agendadas...');
+
+    // Buscar mensagens agendadas prontas para envio (apenas de canais conectados)
+    const { data: scheduledMessages, error: findError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        chat:chats!messages_chat_id_fkey (
+          id,
+          external_id,
+          channel_id,
+          channel:chat_channels!chats_channel_id_fkey (
+            id,
+            type,
+            is_connected
+          )
+        )
+      `)
+      .eq('status', 'scheduled')
+      .not('scheduled_at', 'is', null)
+      .lte('scheduled_at', new Date().toISOString())
+      .eq('chat.channel.is_connected', true)
+      .order('scheduled_at', { ascending: true })
+      .limit(50); // Limitar a 50 mensagens por execução para evitar sobrecarga
+
+    if (findError) {
+      // console.error('[CRON] Erro ao buscar mensagens agendadas:', findError);
+      Sentry.captureException(findError, {
+        extra: {
+          context: 'finding_scheduled_messages'
+        }
+      });
+      return {
+        success: false,
+        error: findError.message,
+        processed: 0
+      };
+    }
+
+    if (!scheduledMessages || scheduledMessages.length === 0) {
+      // console.log('[CRON] Nenhuma mensagem agendada encontrada para envio');
+      return {
+        success: true,
+        processed: 0,
+        message: 'Nenhuma mensagem agendada encontrada'
+      };
+    }
+
+    // console.log(`[CRON] Encontradas ${scheduledMessages.length} mensagens agendadas para envio`);
+
+    let processedCount = 0;
+    let errorCount = 0;
+    const errors = [];
+
+    // Processar cada mensagem com intervalo de 1 segundo
+    for (let i = 0; i < scheduledMessages.length; i++) {
+      const message = scheduledMessages[i];
+
+      try {
+        // console.log(`[CRON] Enviando mensagem agendada ${message.id} (${i + 1}/${scheduledMessages.length})`);
+
+        // Copiar todos os dados da mensagem original, removendo campos que não devem ser copiados
+        const { id, created_at, updated_at, chat, ...messageData } = message;
+
+        // Preparar metadados com informações da mensagem agendada
+        const updatedMetadata = {
+          ...(messageData.metadata || {}),
+          scheduled_message: {
+            is_from_scheduled: true,
+            original_message_id: id,
+            original_created_at: created_at,
+            original_scheduled_at: message.scheduled_at,
+            processed_at: new Date().toISOString()
+          }
+        };
+
+        // Criar nova mensagem com os mesmos dados, mas status pending e sem scheduled_at
+        const { data: newMessage, error: createError } = await supabase
+          .from('messages')
+          .insert({
+            ...messageData,
+            status: 'pending',
+            scheduled_at: null,
+            sent_from_system: true,
+            metadata: updatedMetadata,
+            created_at: new Date().toISOString()
+          })
+          .select('id')
+          .single();
+
+        if (createError) {
+          // console.error(`[CRON] Erro ao criar nova mensagem para agendada ${message.id}:`, createError);
+          Sentry.captureException(createError, {
+            extra: {
+              messageId: message.id,
+              context: 'creating_new_scheduled_message'
+            }
+          });
+          errorCount++;
+          continue;
+        }
+
+        // Deletar a mensagem agendada original (sem aguardar, mas com tratamento adequado)
+        await supabase
+          .from('messages')
+          .delete()
+          .eq('id', message.id)
+          .then(({ error: deleteError }) => {
+            if (deleteError) {
+              console.error(`[CRON] Erro ao deletar mensagem agendada original ${message.id}:`, deleteError);
+              Sentry.captureException(deleteError, {
+                extra: {
+                  messageId: message.id,
+                  context: 'deleting_original_scheduled_message'
+                }
+              });
+            }
+          })
+          .catch((error) => {
+            console.error(`[CRON] Erro inesperado ao deletar mensagem agendada ${message.id}:`, error);
+            Sentry.captureException(error, {
+              extra: {
+                messageId: message.id,
+                context: 'deleting_original_scheduled_message_catch'
+              }
+            });
+          });
+
+        // Enviar a nova mensagem (aguarda o processamento completo antes de prosseguir)
+        const sendResult = await sendSystemMessage(newMessage.id);
+
+        if (sendResult.error) {
+          // console.error(`[CRON] Erro ao enviar mensagem agendada ${newMessage.id} (original: ${message.id}):`, sendResult.error);
+          errors.push({
+            messageId: newMessage.id,
+            originalMessageId: message.id,
+            error: sendResult.error
+          });
+          errorCount++;
+        } else {
+          // console.log(`[CRON] Mensagem agendada ${newMessage.id} (original: ${message.id}) enviada com sucesso`);
+          processedCount++;
+        }
+
+      } catch (messageError) {
+        // console.error(`[CRON] Erro ao processar mensagem agendada ${message.id}:`, messageError);
+        Sentry.captureException(messageError, {
+          extra: {
+            messageId: message.id,
+            context: 'processing_individual_scheduled_message'
+          }
+        });
+
+        errors.push({
+          messageId: message.id,
+          error: messageError.message
+        });
+        errorCount++;
+
+        // Se houve erro geral, apenas deletar a mensagem agendada original
+        try {
+          await supabase
+            .from('messages')
+            .delete()
+            .eq('id', message.id);
+        } catch (deleteError) {
+          // console.error(`[CRON] Erro ao deletar mensagem agendada com falha ${message.id}:`, deleteError);
+        }
+      }
+    }
+
+    const result = {
+      success: true,
+      processed: processedCount,
+      errors: errorCount,
+      total: scheduledMessages.length,
+      message: `Processadas ${processedCount} mensagens agendadas com sucesso, ${errorCount} falharam`
+    };
+
+    if (errors.length > 0) {
+      result.errorDetails = errors;
+    }
+
+    // console.log(`[CRON] Processamento de mensagens agendadas concluído: ${result.message}`);
+
+    return result;
+
+  } catch (error) {
+    // console.error('[CRON] Erro geral ao processar mensagens agendadas:', error);
+    Sentry.captureException(error, {
+      extra: {
+        context: 'process_scheduled_messages_general_error'
+      }
+    });
+
+    return {
+      success: false,
+      error: error.message,
+      processed: 0
+    };
+  }
+}
+
+/**
+ * Agenda uma mensagem para envio futuro
+ * 
+ * @param {string} chatId - ID do chat
+ * @param {string} organizationId - ID da organização  
+ * @param {string} content - Conteúdo da mensagem
+ * @param {string} scheduledAt - Data/hora do agendamento (ISO string)
+ * @param {string} [userId] - ID do usuário que está agendando
+ * @param {Object} [metadata] - Metadados adicionais
+ * @returns {Promise<Object>} - Resultado do agendamento
+ */
+export async function scheduleMessage(chatId, organizationId, content, scheduledAt, userId = null, metadata = null) {
+  try {
+    // Validar se o chat pertence à organização
+    const { data: chatData, error: chatError } = await supabase
+      .from('chats')
+      .select(`
+        id, 
+        organization_id,
+        channel_id,
+        channel_details:channel_id (
+          id,
+          type,
+          is_connected
+        )
+      `)
+      .eq('id', chatId)
+      .eq('organization_id', organizationId)
+      .single();
+
+    if (chatError || !chatData) {
+      return {
+        success: false,
+        error: 'Chat não encontrado ou sem permissão'
+      };
+    }
+
+    // Verificar se o canal está conectado
+    if (!chatData.channel_details?.is_connected) {
+      return {
+        success: false,
+        error: 'Canal desconectado. Não é possível agendar mensagens.'
+      };
+    }
+
+    // Validar data de agendamento
+    const scheduledDate = new Date(scheduledAt);
+    const now = new Date();
+
+    if (scheduledDate <= now) {
+      return {
+        success: false,
+        error: 'A data de agendamento deve ser no futuro'
+      };
+    }
+
+    // Determinar o tipo de canal
+    const channelType = chatData.channel_details?.type || 'email';
+    const isSocialChannel = [
+      'whatsapp_official',
+      'whatsapp_wapi',
+      'whatsapp_zapi',
+      'whatsapp_evo',
+      'instagram',
+      'facebook'
+    ].includes(channelType);
+
+    // Criar a mensagem agendada
+    const { data: message, error: messageError } = await supabase
+      .from('messages')
+      .insert({
+        chat_id: chatId,
+        organization_id: organizationId,
+        sender_agent_id: userId,
+        sender_type: 'agent',
+        content: content,
+        type: isSocialChannel ? 'text' : 'email',
+        status: 'scheduled',
+        scheduled_at: scheduledDate.toISOString(),
+        metadata: metadata
+      })
+      .select('*')
+      .single();
+
+    if (messageError) {
+      console.error('Erro ao agendar mensagem:', messageError);
+      Sentry.captureException(messageError, {
+        extra: {
+          chatId,
+          organizationId,
+          scheduledAt,
+          context: 'scheduling_message'
+        }
+      });
+      return {
+        success: false,
+        error: 'Erro ao agendar mensagem'
+      };
+    }
+
+    console.log(`Mensagem agendada com sucesso: ${message.id} para ${scheduledAt}`);
+
+    return {
+      success: true,
+      message: message,
+      scheduledAt: scheduledDate.toISOString()
+    };
+
+  } catch (error) {
+    console.error('Erro ao agendar mensagem:', error);
+    Sentry.captureException(error, {
+      extra: {
+        chatId,
+        organizationId,
+        scheduledAt,
+        context: 'schedule_message_general_error'
+      }
+    });
+
+    return {
+      success: false,
+      error: 'Erro interno ao agendar mensagem'
+    };
   }
 }

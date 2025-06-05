@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase.js';
 import Sentry from '../lib/sentry.js';
 import { OpenAI } from 'openai';
-import { createMessageToSend, sendSystemMessage } from '../controllers/chat/message-handlers.js';
+import { createMessageToSend } from '../controllers/chat/message-handlers.js';
 import crypto from 'crypto';
 import { decrypt } from '../utils/crypto.js';
 import { processAgentIA } from './agent-ia.js';
@@ -1295,23 +1295,6 @@ export const createFlowEngine = (organization, channel, customer, chatId, option
           Sentry.captureException(error);
           throw error;
         }
-        
-        // // Aguardar que todas as mensagens sejam realmente enviadas para o canal
-        // if (result.messages && result.messages.length > 0) {
-        //   // Criar uma cadeia de promises para enviar as mensagens em ordem
-        //   let sendChain = Promise.resolve();
-          
-        //   for (const message of result.messages) {
-        //     sendChain = sendChain.then(() => {
-        //       return sendSystemMessage(message.id).catch(error => {
-        //         console.error('Erro ao enviar mensagem para o canal:', error);
-        //       });
-        //     });
-        //   }
-          
-        //   // Aguardar a conclusão da cadeia antes de retornar
-        //   await sendChain;
-        // }
         
         return result;
       }

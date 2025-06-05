@@ -8,6 +8,7 @@ import {
   processDailyFinancialJobs 
 } from './financial-jobs.js';
 import { processScheduledNotifications } from '../controllers/schedules/scheduleNotifications.js';
+import { processScheduledMessages } from '../controllers/chat/message-handlers.js';
 
 /**
  * Configura todos os cron jobs da aplicação
@@ -74,6 +75,19 @@ export const setupCronJobs = () => {
         Sentry.captureException(error);
       }
     });
+
+    // Job para processar mensagens agendadas (executa a cada minuto)
+    const scheduledMessagesCron = cron.schedule('* * * * *', async () => {
+      try {
+        const result = await processScheduledMessages();
+        if (result.processed > 0) {
+          console.log(`[CRON] Mensagens agendadas processadas: ${result.processed} enviadas, ${result.errors || 0} falharam`);
+        }
+      } catch (error) {
+        console.error('Erro ao processar mensagens agendadas:', error);
+        Sentry.captureException(error);
+      }
+    });
     
     // Retorna os cron jobs para que possam ser parados se necessário
     return {
@@ -82,7 +96,8 @@ export const setupCronJobs = () => {
       overdueTransactionsCron,
       recurringTransactionsCron,
       dailyFinancialJobsCron,
-      notificationsCron
+      notificationsCron,
+      scheduledMessagesCron
     };
   } catch (error) {
     Sentry.captureException(error);

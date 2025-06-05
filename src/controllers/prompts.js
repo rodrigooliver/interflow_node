@@ -398,6 +398,8 @@ export const improveTextWithOpenAI = async (req, res) => {
         .select('*')
         .eq('chat_id', chatId)
         .in('sender_type', ['agent', 'user'])
+        .neq('status', 'scheduled')
+        .neq('status', 'deleted')
         .order('created_at', { ascending: true });
 
       if (chatError) {
