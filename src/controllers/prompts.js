@@ -425,11 +425,11 @@ export const improveTextWithOpenAI = async (req, res) => {
       switch (improveOption) {
         case 'improve':
           if (language === 'en') {
-            basePrompt = 'Improve the provided text while maintaining the original meaning, but making it clearer, more concise, and more professional.';
+            basePrompt = 'Improve the provided text with primary focus on correcting spelling, grammar, and punctuation errors, while also making it clearer, more concise, and more professional. Maintain the original meaning.';
           } else if (language === 'es') {
-            basePrompt = 'Mejora el texto proporcionado manteniendo el significado original, pero haciéndolo más claro, conciso y profesional.';
+            basePrompt = 'Mejora el texto proporcionado con foco principal en corregir errores de ortografía, gramática y puntuación, haciéndolo también más claro, conciso y profesional. Mantén el significado original.';
           } else {
-            basePrompt = 'Melhore o texto fornecido mantendo o significado original, mas tornando-o mais claro, conciso e profissional.';
+            basePrompt = 'Melhore o texto fornecido com foco principal na correção de erros de ortografia, gramática e pontuação, tornando-o também mais claro, conciso e profissional. Mantenha o significado original.';
           }
           break;
         case 'expand':

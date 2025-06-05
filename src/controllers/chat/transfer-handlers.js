@@ -310,6 +310,7 @@ export async function transferToTeamRoute(req, res) {
   }
 }
 
+// Rota para sair do atendimento
 export async function leaveAttendanceRoute(req, res) {
   const { organizationId, chatId } = req.params;
   const { title } = req.body;
