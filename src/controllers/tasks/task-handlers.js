@@ -66,7 +66,7 @@ export const startTaskRoute = async (req, res) => {
 
     if (userIds.length > 0) {
       sendNotificationWithFilters(userIds, {
-        heading: req.t('tasks.notifications.started_title', { agentName: profile.nickname || profile.full_name }) || 'Tarefa iniciada',
+        heading: '✍️ ' + req.t('tasks.notifications.started_title', { agentName: profile.nickname || profile.full_name }) || 'Tarefa iniciada',
         content: task.title || 'Tarefa iniciada',
         data: {
           url: `${FRONT_URL}/app/tasks/${task.id}`,
@@ -147,8 +147,8 @@ export const completeTaskRoute = async (req, res) => {
 
     if (userIds.length > 0) {
       sendNotificationWithFilters(userIds, {
-        heading: req.t('tasks.notifications.completed_title', { agentName: profile.nickname || profile.full_name }),
-        content: task.title || 'Tarefa concluída',
+        heading: '✅ ' + req.t('tasks.notifications.completed_title', { agentName: profile.nickname || profile.full_name }),
+        content: (task.title || 'Tarefa concluída'),
         data: {
           url: `${FRONT_URL}/app/tasks/${task.id}`,
           task_id: task.id,
@@ -228,8 +228,8 @@ export const cancelTaskRoute = async (req, res) => {
 
     if (userIds.length > 0) {
       sendNotificationWithFilters(userIds, {
-        heading: req.t('tasks.notifications.cancelled_title', { agentName: profile.nickname || profile.full_name }),
-        content: task.title || 'Tarefa cancelada',
+        heading: '❌ ' + req.t('tasks.notifications.cancelled_title', { agentName: profile.nickname || profile.full_name }),
+        content: (task.title || 'Tarefa cancelada'),
         data: {
           url: `${FRONT_URL}/app/tasks/${task.id}`,
           task_id: task.id,
