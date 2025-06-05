@@ -154,7 +154,7 @@ export async function verifyAuth(req, res, next) {
 
       const { data: apiKeyData } = await supabase
         .from('api_keys')
-        .select('organization_id, profile_id, organization:organizations(*), profiles(is_superadmin)')
+        .select('organization_id, profile_id, organization:organizations(*), profiles(*)')
         .eq('key_hash', keyHash)
         .eq('is_active', true)
         .single();
@@ -169,8 +169,10 @@ export async function verifyAuth(req, res, next) {
       }
 
       req.organizationId = organizationId;
+      // req.roleMembership = 'member'; //Consultar se o perfil é membro da organização
       req.organization = apiKeyData.organization;
       req.profileId = apiKeyData.profile_id;
+      req.profile = apiKeyData.profiles;
       req.is_superadmin = apiKeyData.profiles?.is_superadmin || false;
       req.usage = apiKeyData.organization?.usage || null;
       
@@ -198,7 +200,7 @@ export async function verifyAuth(req, res, next) {
         // Primeiro verifica se o usuário é superadmin
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('id, is_superadmin')
+          .select('*')
           .eq('id', user.id)
           .single();
 
@@ -215,7 +217,9 @@ export async function verifyAuth(req, res, next) {
             .eq('id', organizationId)
             .single();
 
+          req.roleMembership = 'superadmin';
           req.profileId = user.id;
+          req.profile = profile;
           req.organizationId = organizationId;
           req.organization = organization;
           req.language = req.language ?? organization?.settings?.language ?? 'pt';
@@ -225,7 +229,7 @@ export async function verifyAuth(req, res, next) {
           // Se não é superadmin, verifica se é membro da organização
           const { data: membership, error: membershipError } = await supabase
             .from('organization_members')
-            .select('organization_id, organization:organizations(*)')
+            .select('organization_id, role, organization:organizations(*), profile:profiles(*)')
             .eq('profile_id', user.id)
             .eq('organization_id', organizationId)
             .single();
@@ -235,7 +239,9 @@ export async function verifyAuth(req, res, next) {
             return res.status(403).json({ error: 'User does not have access to this organization' });
           }
 
+          req.roleMembership = membership.role;
           req.profileId = user.id;
+          req.profile = membership.profile;
           req.organizationId = organizationId;
           req.organization = membership.organization;
           req.language = req.language ?? membership.organization?.settings?.language ?? 'pt';

@@ -1,10 +1,10 @@
 export const tasks = {
   notifications: {
-    started_title: 'Tarea iniciada',
-    started_message: 'La tarea "{{taskTitle}}" ha sido iniciada',
-    completed_title: 'Tarea completada',
-    completed_message: 'La tarea "{{taskTitle}}" ha sido completada',
-    cancelled_title: 'Tarea cancelada',
-    cancelled_message: 'La tarea "{{taskTitle}}" ha sido cancelada'
+    started_title: 'Tarea iniciada por {{agentName}}',
+    started_message: 'La tarea "{{taskTitle}}" ha sido iniciada por {{agentName}}',
+    completed_title: 'Tarea completada por {{agentName}}',
+    completed_message: 'La tarea "{{taskTitle}}" ha sido completada por {{agentName}}',
+    cancelled_title: 'Tarea cancelada por {{agentName}}',
+    cancelled_message: 'La tarea "{{taskTitle}}" ha sido cancelada por {{agentName}}'
   }
 }; 

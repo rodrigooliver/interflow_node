@@ -9,9 +9,8 @@ const FRONT_URL = process.env.FRONTEND_URL || 'https://app.interflow.ai';
 
 // Iniciar tarefa (pending -> in_progress)
 export const startTaskRoute = async (req, res) => {
-  console.log('Iniciando tarefa');
   try {
-    const { profileId } = req;
+    const { profile } = req;
     const { language } = req;
     const { id: taskId, organizationId } = req.params;
 
@@ -66,22 +65,17 @@ export const startTaskRoute = async (req, res) => {
     }
 
     if (userIds.length > 0) {
-      try {
-        sendNotificationWithFilters(userIds, {
-          heading: req.t('tasks.notifications.started_title') || 'Tarefa iniciada',
-          content: task.title || 'Tarefa iniciada',
-          data: {
-            url: `${FRONT_URL}/app/tasks/${task.id}`,
-            task_id: task.id,
-            organizationId,
-            type: 'task_started',
-            language
-          }
-        });
-      } catch (notificationError) {
-        console.error('Erro ao enviar notificação:', notificationError);
-        // Não falha a operação se a notificação falhar
-      }
+      sendNotificationWithFilters(userIds, {
+        heading: req.t('tasks.notifications.started_title', { agentName: profile.nickname || profile.full_name }) || 'Tarefa iniciada',
+        content: task.title || 'Tarefa iniciada',
+        data: {
+          url: `${FRONT_URL}/app/tasks/${task.id}`,
+          task_id: task.id,
+          organizationId,
+          type: 'task_started',
+          language
+        }
+      });
     }
 
     res.json({
@@ -99,7 +93,7 @@ export const startTaskRoute = async (req, res) => {
 // Concluir tarefa (in_progress -> completed)
 export const completeTaskRoute = async (req, res) => {
   try {
-    const { language } = req;
+    const { language, profile } = req;
     const { id: taskId, organizationId } = req.params;
 
     // Verificar se a tarefa existe e pertence à organização
@@ -152,22 +146,17 @@ export const completeTaskRoute = async (req, res) => {
     }
 
     if (userIds.length > 0) {
-      try {
-        sendNotificationWithFilters(userIds, {
-          heading: req.t('tasks.notifications.completed_title'),
-          content: task.title || 'Tarefa concluída',
-          data: {
-            url: `${FRONT_URL}/app/tasks/${task.id}`,
-            task_id: task.id,
-            organizationId,
-            type: 'task_completed',
-            language
-          }
-        });
-      } catch (notificationError) {
-        console.error('Erro ao enviar notificação:', notificationError);
-        // Não falha a operação se a notificação falhar
-      }
+      sendNotificationWithFilters(userIds, {
+        heading: req.t('tasks.notifications.completed_title', { agentName: profile.nickname || profile.full_name }),
+        content: task.title || 'Tarefa concluída',
+        data: {
+          url: `${FRONT_URL}/app/tasks/${task.id}`,
+          task_id: task.id,
+          organizationId,
+          type: 'task_completed',
+          language
+        }
+      });
     }
 
     res.json({
@@ -185,7 +174,7 @@ export const completeTaskRoute = async (req, res) => {
 // Cancelar tarefa (qualquer status -> cancelled)
 export const cancelTaskRoute = async (req, res) => {
   try {
-    const { language } = req;
+    const { language, profile } = req;
     const { id: taskId, organizationId } = req.params;
 
     // Verificar se a tarefa existe e pertence à organização
@@ -238,22 +227,17 @@ export const cancelTaskRoute = async (req, res) => {
     }
 
     if (userIds.length > 0) {
-      try {
-        sendNotificationWithFilters(userIds, {
-          heading: req.t('tasks.notifications.cancelled_title'),
-          content: task.title || 'Tarefa cancelada',
-          data: {
-            url: `${FRONT_URL}/app/tasks/${task.id}`,
-            task_id: task.id,
-            organizationId,
-            type: 'task_cancelled',
-            language
-          }
-        });
-      } catch (notificationError) {
-        console.error('Erro ao enviar notificação:', notificationError);
-        // Não falha a operação se a notificação falhar
-      }
+      sendNotificationWithFilters(userIds, {
+        heading: req.t('tasks.notifications.cancelled_title', { agentName: profile.nickname || profile.full_name }),
+        content: task.title || 'Tarefa cancelada',
+        data: {
+          url: `${FRONT_URL}/app/tasks/${task.id}`,
+          task_id: task.id,
+          organizationId,
+          type: 'task_cancelled',
+          language
+        }
+      });
     }
 
     res.json({
