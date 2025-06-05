@@ -407,18 +407,42 @@ export async function handleIncomingMessage(channel, messageData) {
             // Se for um arquivo de áudio, tentar fazer a transcrição
             if (mediaResult.attachment.type.startsWith('audio') ||
               mediaResult.attachment.mime_type === 'audio/ogg; codecs=opus') {
-              try {
-                // Buscar integração OpenAI ativa
-                const openaiIntegration = await getActiveOpenAIIntegration(organization.id);
+              // Buscar integração OpenAI ativa
+              const openaiIntegration = await getActiveOpenAIIntegration(organization.id);
 
-                if (openaiIntegration) {
-                  // Fazer a transcrição
-                  const transcription = await transcribeAudio(
-                    mediaResult.attachment.url,
-                    openaiIntegration.api_key,
-                    mediaResult.attachment.mime_type
-                  );
+              if (openaiIntegration) {
+                let transcription = null;
+                let lastError = null;
+                const maxAttempts = 2;
 
+                // Tentar transcrição com retry
+                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                  try {
+                    // Fazer a transcrição
+                    transcription = await transcribeAudio(
+                      mediaResult.attachment.url,
+                      openaiIntegration.api_key,
+                      mediaResult.attachment.mime_type
+                    );
+
+                    if (transcription) {
+                      // Sucesso na transcrição
+                      break;
+                    } else {
+                      throw new Error('Transcrição retornou null ou vazio');
+                    }
+                  } catch (transcriptionError) {
+                    lastError = transcriptionError;
+                    console.log(`Tentativa ${attempt}/${maxAttempts} de transcrição falhou:`, transcriptionError.message);
+                    
+                    // Se não é a última tentativa, aguarda um pouco antes de tentar novamente
+                    if (attempt < maxAttempts) {
+                      await new Promise(resolve => setTimeout(resolve, 4000)); // Aguarda 2 segundos
+                    }
+                  }
+                }
+
+                if (transcription) {
                   // Adicionar a transcrição aos metadados e remover audioBase64
                   const metadataRaw = { ...messageData.message.raw };
 
@@ -430,16 +454,20 @@ export async function handleIncomingMessage(channel, messageData) {
                     ...metadataRaw,
                     transcription
                   };
+
+                  console.log('Transcrição de áudio realizada com sucesso');
+                } else {
+                  // Se todas as tentativas falharam, registrar o erro
+                  Sentry.captureException(lastError, {
+                    extra: {
+                      organizationId: organization.id,
+                      audioType: mediaResult.attachment.type,
+                      maxAttempts,
+                      context: 'audio_transcription_failed_after_retries'
+                    }
+                  });
+                  console.error('Falha na transcrição após todas as tentativas:', lastError?.message);
                 }
-              } catch (transcriptionError) {
-                Sentry.captureException(transcriptionError, {
-                  extra: {
-                    organizationId: organization.id,
-                    audioType: mediaResult.attachment.type,
-                    context: 'audio_transcription'
-                  }
-                });
-                // Continuar mesmo se a transcrição falhar
               }
             }
           }
@@ -1063,7 +1091,12 @@ async function processMessageMedia(messageData, organizationId, chatId) {
 export async function handleStatusUpdate(channel, normalizedData) {
   try {
     // Os dados já vêm normalizados pelos canais específicos
-    const { messageId, status, error, timestamp, metadata } = normalizedData;
+    let { messageId, status, error, timestamp, metadata } = normalizedData;
+
+    // Converter status "played" para "read"
+    if (status === 'played') {
+      status = 'read';
+    }
 
     // Função auxiliar para buscar mensagens (múltiplas se existirem)
     const findMessages = async () => {
@@ -1125,17 +1158,17 @@ export async function handleStatusUpdate(channel, normalizedData) {
     if (messages && messages.length > 0) {
       // Log se múltiplas mensagens foram encontradas
       if (messages.length > 1) {
-        console.log(`Encontradas ${messages.length} mensagens com external_id ${messageId} no canal ${channel.id}`);
-        Sentry.captureMessage('Múltiplas mensagens encontradas para mesmo external_id', {
-          level: 'warning',
-          extra: {
-            messageId,
-            channelId: channel.id,
-            messageCount: messages.length,
-            messageIds: messages.map(m => m.id),
-            context: 'multiple_messages_found'
-          }
-        });
+        // console.log(`Encontradas ${messages.length} mensagens com external_id ${messageId} no canal ${channel.id}`);
+        // Sentry.captureMessage('Múltiplas mensagens encontradas para mesmo external_id', {
+        //   level: 'warning',
+        //   extra: {
+        //     messageId,
+        //     channelId: channel.id,
+        //     messageCount: messages.length,
+        //     messageIds: messages.map(m => m.id),
+        //     context: 'multiple_messages_found'
+        //   }
+        // });
       }
 
       // Processar cada mensagem encontrada
