@@ -240,7 +240,7 @@ export const generateTaskContentRoute = async (req, res) => {
     }
 
     // Gerar conteúdo da tarefa
-    const taskContent = await generateTaskContent(chatId, apiKey, keyDefault, language, organizationId, openAIIntegration.id);
+    const taskContent = await generateTaskContent(chatId, apiKey, keyDefault, language, organizationId, openAIIntegration?.id ?? null);
 
     return res.json({
       success: true,

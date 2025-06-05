@@ -235,10 +235,10 @@ export async function handleIncomingMessage(channel, messageData) {
 
       if (chat) {
         customer = chat.customers;
-        
+
         // Preparar atualizações do customer
         const customerUpdates = {};
-        
+
         if (messageData.externalProfilePicture) {
           // Atualizar o profile_picture do chat
           const { error: updateError } = await supabase
@@ -1767,6 +1767,7 @@ export async function createMessageRoute(req, res) {
 
     // Em requisições multipart/form-data, os campos de texto estão em req.body
     const content = req.body.content || null;
+    const scheduledFor = req.body.scheduledFor || null;
     const replyToMessageId = req.body.replyToMessageId || null;
 
     // Extrair o campo metadata se existir
@@ -1823,7 +1824,7 @@ export async function createMessageRoute(req, res) {
     }
 
     const userId = req.profileId;
-    const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata);
+    const result = await createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata, scheduledFor);
     return res.status(result.status).json(result);
   } catch (error) {
     Sentry.captureException(error, {
@@ -1841,7 +1842,7 @@ export async function createMessageRoute(req, res) {
   }
 }
 
-export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata) {
+export async function createMessageToSend(chatId, organizationId, content, replyToMessageId, files, userId, metadata, scheduledFor) {
   try {
     // Validar se o chat pertence à organização e obter informações do canal
     const { data: chatData, error: chatError } = await supabase
@@ -2118,6 +2119,10 @@ export async function createMessageToSend(chatId, organizationId, content, reply
     // Cadastrar e enviar mensagens uma por uma
     for (const message of messages) {
       try {
+        if (scheduledFor) {
+          message.status = 'scheduled';
+          message.scheduled_at = scheduledFor;
+        }
         const { data: messageData, error: messageError } = await supabase
           .from('messages')
           .insert(message)
@@ -2177,17 +2182,26 @@ export async function createMessageToSend(chatId, organizationId, content, reply
           }
         }
 
-        // Atualiza o last_message_id do chat
-        await supabase
-          .from('chats')
-          .update({
-            last_message_id: messageData.id,
-            last_message_at: new Date().toISOString()
-          })
-          .eq('id', chatId);
+        if (scheduledFor) {
+          // Envia a mensagem imediatamente após cadastro, não espera o resultado
+          return {
+            status: 201,
+            success: true,
+            messages: messagesData
+          }
+        } else {
+          // Atualiza o last_message_id do chat
+          await supabase
+            .from('chats')
+            .update({
+              last_message_id: messageData.id,
+              last_message_at: new Date().toISOString()
+            })
+            .eq('id', chatId);
 
-        // Envia a mensagem imediatamente após cadastro, não espera o resultado
-        await sendSystemMessage(messageData.id);
+          // Envia a mensagem imediatamente após cadastro, não espera o resultado
+          await sendSystemMessage(messageData.id);
+        }
       } catch (error) {
         Sentry.captureException(error, {
           extra: {
@@ -3083,6 +3097,7 @@ export async function processScheduledMessages() {
           .select('id')
           .single();
 
+          // Atualiza o last_message_id do chat
         if (createError) {
           // console.error(`[CRON] Erro ao criar nova mensagem para agendada ${message.id}:`, createError);
           Sentry.captureException(createError, {
@@ -3094,6 +3109,16 @@ export async function processScheduledMessages() {
           errorCount++;
           continue;
         }
+
+        // console.log('Atualizando last_message_id do chat:', chat.id);
+        await supabase
+          .from('chats')
+          .update({
+            last_message_id: newMessage.id,
+            last_message_at: new Date().toISOString()
+          })
+          .eq('id', chat.id);
+
 
         // Deletar a mensagem agendada original (sem aguardar, mas com tratamento adequado)
         await supabase
