@@ -1135,7 +1135,7 @@ export async function handleStatusUpdate(channel, normalizedData) {
     if (!messages || messages.length === 0) {
       // console.log(`Mensagem ${messageId} não encontrada na primeira tentativa, aguardando 5 segundos para segunda tentativa...`);
       
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Aguarda 5 segundos
+      await new Promise(resolve => setTimeout(resolve, 8000)); // Aguarda 8 segundos
       
       // Segunda tentativa
       const secondAttempt = await findMessages();
