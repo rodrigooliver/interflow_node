@@ -1023,7 +1023,7 @@ export async function createInterflowChannelV2025_1(organizationId, name, organi
         webhookDeliveryUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onMessageDelivered`,
         webhookDisconnectedUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onDisconnected`,
         webhookStatusUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onStatus`,
-        webhookPresenceUrl: '',
+        webhookPresenceUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onPresence`,
         webhookReceivedUrl: `${process.env.API_URL}/api/${organizationId}/webhook/wapi/${channelId}?action=onMessageReceived`
       })
     });
@@ -1624,6 +1624,91 @@ export async function updateCallRejectV2025_1(channel, rejectCalls, rejectCallsM
         channelId: channel.id,
         instanceId,
         rejectCalls
+      }
+    });
+    throw error;
+  }
+}
+
+export async function getWapiChannelsV2025_1(page) {
+  try {
+    if (!process.env.WAPI_TOKEN_V2025_1) {
+      const error = new Error('WAPI_TOKEN_V2025_1 não definido');
+      Sentry.captureException(error);
+      throw error;
+    }
+
+    const baseUrl = 'https://api.w-api.app/v1';
+    
+    // Construir URL com parâmetros de paginação
+    const url = new URL(`${baseUrl}/integrator/instances`);
+    if (page) {
+      url.searchParams.append('page', page);
+    }
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.WAPI_TOKEN_V2025_1}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      try {
+        const errorData = JSON.parse(errorText);
+        const error = new Error(errorData.message || errorData.error || 'Falha ao buscar instâncias W-API');
+        Sentry.captureException(error, {
+          extra: {
+            page,
+            errorData,
+            status: response.status
+          }
+        });
+        throw error;
+      } catch (parseError) {
+        const error = new Error(`Erro ao buscar instâncias: ${errorText}`);
+        Sentry.captureException(error, {
+          extra: {
+            page,
+            errorText,
+            status: response.status
+          }
+        });
+        throw error;
+      }
+    }
+
+    const responseData = await response.json();
+
+    if (responseData.error) {
+      const error = new Error(responseData.message || 'Erro retornado pela W-API');
+      Sentry.captureException(error, {
+        extra: {
+          page,
+          responseData
+        }
+      });
+      throw error;
+    }
+
+    // Retornar dados formatados da resposta
+    return {
+      success: true,
+      data: responseData.data,
+      pagination: {
+        total: responseData.total,
+        totalPage: responseData.totalPage,
+        pageSize: responseData.pageSize,
+        page: responseData.page
+      }
+    };
+
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: {
+        page
       }
     });
     throw error;

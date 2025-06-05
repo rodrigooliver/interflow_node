@@ -1,6 +1,6 @@
 import express from 'express';
 import { verifyAuthSuperAdmin } from '../middleware/auth.js';
-import { deleteOrganizationRoute, updateOrganizationRoute, createOrganizationRoute } from '../controllers/organizations/organizations-handlers.js';
+import { deleteOrganizationRoute, updateOrganizationRoute, createOrganizationRoute, getWapiChannelsRoute } from '../controllers/organizations/organizations-handlers.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -15,6 +15,9 @@ router.delete('/:organizationId', deleteOrganizationRoute);
 
 //Atualizar organização
 router.put('/:organizationId', updateOrganizationRoute);
+
+//Consultar canais api wapi 
+router.get('/wapi-channels', getWapiChannelsRoute);
 
 
 export default router;

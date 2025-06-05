@@ -70,10 +70,10 @@ export async function handleWapiWebhook(req, res) {
 
   // console.log(`webhookData`, webhookData);
 
+  // console.log(`webhookData ${action}`, webhookData);
   if (action && (action === 'onConnected' || action === 'onDisconnected' || action === 'onMessageDelivered' || action === 'onMessageReceived' || action === 'onPresence' || action === 'onStatus')) {
     //Nova versão do webhook
     try {
-      // console.log(`webhookData ${action}`, webhookData);
       if (webhookData.isGroup) return res.json({ success: true });
 
       const channel = await validateChannel(channelId, 'whatsapp_wapi');

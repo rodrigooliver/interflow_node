@@ -4,6 +4,7 @@ import { generateSlug } from '../../utils/string.js';
 import { registerLimitsOrganizationByPlan } from './usage.js';
 import { startSignupChatFlow } from '../chat/signup-flow.js';
 import dotenv from 'dotenv';
+import { getWapiChannelsV2025_1 } from '../channels/wapi/wapi-handlers-v2025_1.js';
 
 // Carregar variáveis de ambiente
 dotenv.config();
@@ -629,5 +630,23 @@ export async function updateOrganization(organizationId, updateData) {
   } catch (error) {
     Sentry.captureException(error);
     return { status: 500, error: error.message };
+  }
+}
+
+export async function getWapiChannelsRoute(req, res) {
+  try {
+    const { page } = req.query;
+    const result = await getWapiChannelsV2025_1(page);
+    return res.status(200).json({
+      success: true,
+      data: result.data,
+      pagination: result.pagination
+    });
+  } catch (error) {
+    console.error('Erro ao buscar canais WAPI:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro interno do servidor'
+    });
   }
 }
