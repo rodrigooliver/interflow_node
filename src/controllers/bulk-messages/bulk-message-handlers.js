@@ -7,7 +7,7 @@ import { getBulkMessageProcessor } from '../../services/bulk-message-processor.j
 export const getBulkMessageCampaignsRoute = async (req, res) => {
   try {
     const { organizationId } = req.params;
-    
+
     const { data, error } = await supabase
       .from('bulk_message_campaigns')
       .select(`
@@ -36,7 +36,7 @@ export const getBulkMessageCampaignRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const { organizationId } = req.params;
-    
+
     const { data, error } = await supabase
       .from('bulk_message_campaigns')
       .select(`
@@ -74,8 +74,8 @@ export const createBulkMessageCampaignRoute = async (req, res) => {
 
     // Validações básicas
     if (!campaignData.name || !campaignData.content || !campaignData.channel_ids?.length) {
-      return res.status(400).json({ 
-        error: 'Nome, conteúdo e pelo menos um canal são obrigatórios' 
+      return res.status(400).json({
+        error: 'Nome, conteúdo e pelo menos um canal são obrigatórios'
       });
     }
 
@@ -113,7 +113,7 @@ export const updateBulkMessageCampaignRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const { organizationId } = req.params;
-    
+
     // Verificar se a campanha pode ser editada
     const { data: existingCampaign, error: fetchError } = await supabase
       .from('bulk_message_campaigns')
@@ -125,8 +125,8 @@ export const updateBulkMessageCampaignRoute = async (req, res) => {
     if (fetchError) throw fetchError;
 
     if (existingCampaign.status === 'processing') {
-      return res.status(400).json({ 
-        error: 'Não é possível editar uma campanha em processamento' 
+      return res.status(400).json({
+        error: 'Não é possível editar uma campanha em processamento'
       });
     }
 
@@ -155,7 +155,7 @@ export const deleteBulkMessageCampaignRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const { organizationId } = req.params;
-    
+
     // Verificar se a campanha pode ser excluída
     const { data: existingCampaign, error: fetchError } = await supabase
       .from('bulk_message_campaigns')
@@ -167,10 +167,26 @@ export const deleteBulkMessageCampaignRoute = async (req, res) => {
     if (fetchError) throw fetchError;
 
     if (existingCampaign.status === 'processing') {
-      return res.status(400).json({ 
-        error: 'Não é possível excluir uma campanha em processamento' 
+      return res.status(400).json({
+        error: 'Não é possível excluir uma campanha em processamento'
       });
     }
+
+    //Deletar logs da campanha
+    const { error: errorLogs } = await supabase
+      .from('bulk_message_logs')
+      .delete()
+      .eq('campaign_id', id);
+
+    if (errorLogs) throw errorLogs;
+
+    // Deletar a fila de mensagens da campanha
+    const { error: errorQueue } = await supabase
+      .from('bulk_message_queue')
+      .delete()
+      .eq('campaign_id', id);
+
+    if (errorQueue) throw errorQueue;
 
     const { error } = await supabase
       .from('bulk_message_campaigns')
@@ -194,7 +210,7 @@ export const deleteBulkMessageCampaignRoute = async (req, res) => {
 export const startBulkMessageCampaignRoute = async (req, res) => {
   try {
     const { id, organizationId } = req.params;
-    
+
     // Verificar se a campanha existe e pode ser iniciada
     const { data: campaign, error: fetchError } = await supabase
       .from('bulk_message_campaigns')
@@ -208,15 +224,15 @@ export const startBulkMessageCampaignRoute = async (req, res) => {
     // console.log(campaign);
 
     if (!['draft', 'scheduled'].includes(campaign.status)) {
-      return res.status(400).json({ 
-        error: 'Campanha não pode ser iniciada no status atual' 
+      return res.status(400).json({
+        error: 'Campanha não pode ser iniciada no status atual'
       });
     }
 
     // Atualizar status para 'processing'
     const { error: updateError } = await supabase
       .from('bulk_message_campaigns')
-      .update({ 
+      .update({
         status: 'processing',
         started_at: new Date().toISOString()
       })
@@ -241,7 +257,7 @@ export const startBulkMessageCampaignRoute = async (req, res) => {
         details: { recipients_queued: queueResult }
       }]);
 
-    res.json({ 
+    res.json({
       success: true,
       message: 'Campanha iniciada com sucesso',
       recipients_queued: queueResult
@@ -249,7 +265,7 @@ export const startBulkMessageCampaignRoute = async (req, res) => {
   } catch (error) {
     console.error('Erro ao iniciar campanha:', error);
     Sentry.captureException(error);
-    
+
     // Reverter status em caso de erro
     await supabase
       .from('bulk_message_campaigns')
@@ -267,11 +283,11 @@ export const cancelBulkMessageCampaignRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const { organizationId } = req.params;
-    
+
     // Atualizar status da campanha
     const { error: campaignError } = await supabase
       .from('bulk_message_campaigns')
-      .update({ 
+      .update({
         status: 'cancelled',
         completed_at: new Date().toISOString()
       })
@@ -331,7 +347,7 @@ export const pauseBulkMessageCampaignRoute = async (req, res) => {
     // Atualizar status da campanha
     const { error: campaignError } = await supabase
       .from('bulk_message_campaigns')
-      .update({ 
+      .update({
         status: 'paused'
       })
       .eq('id', id)
@@ -396,7 +412,7 @@ export const resumeBulkMessageCampaignRoute = async (req, res) => {
     // Atualizar status da campanha para processing
     const { error: campaignError } = await supabase
       .from('bulk_message_campaigns')
-      .update({ 
+      .update({
         status: 'processing'
       })
       .eq('id', id)
@@ -445,7 +461,7 @@ export const getBulkMessageQueueRoute = async (req, res) => {
     const { id } = req.params;
     const { organizationId } = req.params;
     const { page = 1, limit = 50, status } = req.query;
-    
+
     let query = supabase
       .from('bulk_message_queue')
       .select(`
@@ -489,7 +505,7 @@ export const getBulkMessageLogsRoute = async (req, res) => {
     const { id } = req.params;
     const { organizationId } = req.params;
     const { page = 1, limit = 50, level } = req.query;
-    
+
     let query = supabase
       .from('bulk_message_logs')
       .select('*')
@@ -528,7 +544,7 @@ export const estimateRecipientsRoute = async (req, res) => {
   try {
     const { organizationId } = req.params;
     const { channel_id, stage_ids, tag_ids, custom_field_filters } = req.body;
-    
+
     if (!channel_id) {
       return res.json({ estimate: 0 });
     }
