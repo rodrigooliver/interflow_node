@@ -20,6 +20,7 @@ import agentIARoutes from './routes/agent-ia.js';
 import scheduleRoutes from './routes/schedules.js';
 import customerRoutes from './routes/customer.js';
 import taskRoutes from './routes/tasks.js';
+import bulkMessageRoutes from './routes/bulk-messages.js';
 import { setupCronJobs } from './cron/index.js';
 import { handleWebhook } from './controllers/stripe.js';
 import { testEmailConnection } from './controllers/member.js';
@@ -28,6 +29,7 @@ import { i18nMiddleware } from './middleware/i18n.js';
 import medicalRoutes from './routes/medical.js';
 import organizationRoutes from './routes/organizations.js';
 import profileRoutes from './routes/profile.js';
+import { stopBulkMessageProcessor } from './services/bulk-message-processor.js';
 // Load environment variables
 dotenv.config();
 
@@ -95,6 +97,7 @@ app.use('/api/:organizationId/agent-ia', agentIARoutes);
 app.use('/api/:organizationId/schedules', scheduleRoutes);
 app.use('/api/:organizationId/customers', customerRoutes);
 app.use('/api/:organizationId/tasks', taskRoutes);
+app.use('/api/:organizationId/bulk-messages', bulkMessageRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/agent-ia', agentIARoutes);
 app.post('/api/test-email-connection', testEmailConnection);
@@ -118,7 +121,7 @@ let cronJobs;
 async function initializeSubscriptions() {
   try {
     // Inicializa todos os cron jobs
-    cronJobs = setupCronJobs();
+    cronJobs = await setupCronJobs();
     console.log('Cron jobs initialized successfully');
   } catch (error) {
     console.error('Error initializing subscriptions:', error);
@@ -139,6 +142,9 @@ process.on('SIGTERM', async () => {
     });
   }
   
+  // Para o processador de mensagens em massa
+  stopBulkMessageProcessor();
+  
   await cleanupEmailConnections();
   
   process.exit(0);
@@ -156,6 +162,7 @@ app.listen(port, async () => {
      // Inicializa os canais de email
     await initializeEmailChannels();
   } else {
+    // await initializeSubscriptions();
     console.log('Skipping subscriptions initialization in development mode');
   }
   

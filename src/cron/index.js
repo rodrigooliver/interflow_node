@@ -9,11 +9,13 @@ import {
 } from './financial-jobs.js';
 import { processScheduledNotifications } from '../controllers/schedules/scheduleNotifications.js';
 import { processScheduledMessages } from '../controllers/chat/message-handlers.js';
+import { startBulkMessageProcessor, stopBulkMessageProcessor } from '../services/bulk-message-processor.js';
+import { processScheduledCampaigns } from './scheduled-campaigns.js';
 
 /**
  * Configura todos os cron jobs da aplicação
  */
-export const setupCronJobs = () => {
+export const setupCronJobs = async () => {
   try {
     // Verifica timeouts a cada minuto
     const timeoutCron = cron.schedule('* * * * *', async () => {
@@ -81,13 +83,29 @@ export const setupCronJobs = () => {
       try {
         const result = await processScheduledMessages();
         if (result.processed > 0) {
-          console.log(`[CRON] Mensagens agendadas processadas: ${result.processed} enviadas, ${result.errors || 0} falharam`);
+          // console.log(`[CRON] Mensagens agendadas processadas: ${result.processed} enviadas, ${result.errors || 0} falharam`);
         }
       } catch (error) {
         console.error('Erro ao processar mensagens agendadas:', error);
         Sentry.captureException(error);
       }
     });
+
+    // Job para processar campanhas agendadas (executa a cada minuto)
+    const scheduledCampaignsCron = cron.schedule('* * * * *', async () => {
+      try {
+        const result = await processScheduledCampaigns();
+        if (result.processed > 0) {
+          // console.log(`[CRON] Campanhas agendadas processadas: ${result.processed} iniciadas, ${result.errors || 0} falharam`);
+        }
+      } catch (error) {
+        console.error('Erro ao processar campanhas agendadas:', error);
+        Sentry.captureException(error);
+      }
+    });
+
+    // Iniciar o processador de mensagens em massa
+    const bulkMessageProcessor = await startBulkMessageProcessor();
     
     // Retorna os cron jobs para que possam ser parados se necessário
     return {
@@ -97,7 +115,9 @@ export const setupCronJobs = () => {
       recurringTransactionsCron,
       dailyFinancialJobsCron,
       notificationsCron,
-      scheduledMessagesCron
+      scheduledMessagesCron,
+      scheduledCampaignsCron,
+      bulkMessageProcessor
     };
   } catch (error) {
     Sentry.captureException(error);
